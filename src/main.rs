@@ -19,13 +19,84 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use enigo::{Coordinate, Enigo, Mouse, Settings as EnigoSettings};
 use minifb::{MouseMode, Scale, ScaleMode, Window, WindowOptions};
 
-use raycast_blocks::audio::Audio;
+use raycast_blocks::audio::{Audio, AudioAmbience, AudioBackend, AudioEvent};
 use raycast_blocks::game::{Game, PAGES_TOTAL};
 use raycast_blocks::input::{Input, MouseSource};
 use raycast_blocks::renderer::Framebuffer;
 use raycast_blocks::settings::Settings;
 
 const TARGET_FRAME: Duration = Duration::from_micros(16_000);
+
+struct RodioBackend {
+    output: rodio::MixerDeviceSink,
+    ambience: Option<(AudioAmbience, rodio::Player)>,
+}
+
+impl RodioBackend {
+    fn new() -> Result<Self, rodio::DeviceSinkError> {
+        Ok(Self {
+            output: rodio::DeviceSinkBuilder::open_default_sink()?,
+            ambience: None,
+        })
+    }
+}
+
+impl AudioBackend for RodioBackend {
+    fn play(&mut self, event: AudioEvent, volume: f32) {
+        use rodio::source::Source;
+        use std::io::Cursor;
+
+        let (data, gain): (&'static [u8], f32) = match event {
+            AudioEvent::Footstep => (include_bytes!("../assets/audio/footstep.wav"), 0.32),
+            AudioEvent::Jump => (include_bytes!("../assets/audio/jump.wav"), 0.48),
+            AudioEvent::Land => (include_bytes!("../assets/audio/footstep.wav"), 0.28),
+            AudioEvent::PageCollected => (include_bytes!("../assets/audio/page_collect.wav"), 0.62),
+            AudioEvent::EnemySting => (include_bytes!("../assets/audio/enemy_sting.wav"), 0.68),
+            AudioEvent::Caught => (include_bytes!("../assets/audio/death.wav"), 0.72),
+            AudioEvent::Won => (include_bytes!("../assets/audio/victory.wav"), 0.72),
+        };
+
+        match rodio::Decoder::try_from(Cursor::new(data)) {
+            Ok(source) => self.output.mixer().add(source.amplify(volume * gain)),
+            Err(error) => eprintln!("could not decode {event:?} audio: {error}"),
+        }
+    }
+
+    fn set_ambience(&mut self, ambience: Option<AudioAmbience>, volume: f32) {
+        use rodio::source::Source;
+        use std::io::Cursor;
+
+        let Some(ambience) = ambience.filter(|_| volume > 0.0) else {
+            if let Some((_, player)) = self.ambience.take() {
+                player.stop();
+            }
+            return;
+        };
+
+        if let Some((current, player)) = &self.ambience {
+            if *current == ambience {
+                player.set_volume(volume);
+                return;
+            }
+        }
+        if let Some((_, player)) = self.ambience.take() {
+            player.stop();
+        }
+
+        let data = match ambience {
+            AudioAmbience::Enemy => include_bytes!("../assets/audio/enemy_ambient.wav"),
+        };
+        let player = rodio::Player::connect_new(self.output.mixer());
+        player.set_volume(volume);
+        match rodio::Decoder::try_from(Cursor::new(data)) {
+            Ok(source) => {
+                player.append(source.repeat_infinite());
+                self.ambience = Some((ambience, player));
+            }
+            Err(error) => eprintln!("could not decode {ambience:?} audio: {error}"),
+        }
+    }
+}
 
 /// Cursor capture built on `enigo` (minifb has no pointer lock).
 ///
@@ -190,7 +261,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings.invert_y,
     );
     let mut mouse = CursorMouse::new();
-    let mut audio = Audio::null(settings.master_volume);
+    let mut audio = match RodioBackend::new() {
+        Ok(backend) => Audio::new(Box::new(backend), settings.master_volume),
+        Err(error) => {
+            eprintln!("audio output unavailable; continuing silently: {error}");
+            Audio::null(settings.master_volume)
+        }
+    };
     let hfov = settings.hfov_radians();
 
     let mut frame_no: u32 = 0;
@@ -232,6 +309,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if game.state != raycast_blocks::game::State::Playing {
             mouse.release(&mut window);
         }
+        let ambience = if game.state == raycast_blocks::game::State::Playing && game.enemy_awake() {
+            Some(AudioAmbience::Enemy)
+        } else {
+            None
+        };
+        let ambience_volume = if ambience.is_some() {
+            0.025 + game.proximity() * 0.11
+        } else {
+            0.0
+        };
+        audio.set_ambience(ambience, ambience_volume);
         audio.play_all(&mut game.events);
         game.draw(&mut fb, frame_no, hfov);
 

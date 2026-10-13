@@ -122,9 +122,13 @@ impl Game {
     }
 
     fn update_playing(&mut self, controls: &Controls, dt: f32) {
+        let enemy_was_awake = self.enemy_awake();
         self.time += dt;
 
         let pe = self.player.update(&self.world, controls, dt);
+        if pe.footstep {
+            self.events.push(AudioEvent::Footstep);
+        }
         if pe.jumped {
             self.events.push(AudioEvent::Jump);
         }
@@ -147,6 +151,9 @@ impl Game {
         // enemy
         let awake = self.enemy_awake();
         if awake {
+            if !enemy_was_awake {
+                self.events.push(AudioEvent::EnemySting);
+            }
             let seen = self.enemy.is_seen_from(
                 self.player.pos,
                 self.player.view,

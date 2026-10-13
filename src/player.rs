@@ -15,6 +15,7 @@ pub const TURN_SPEED: f32 = 2.2;
 pub const GRAVITY: f32 = 20.0;
 pub const JUMP_SPEED: f32 = 6.5;
 pub const PSI_LIMIT: f32 = 1.4;
+const FOOTSTEP_DISTANCE: f32 = 1.2;
 
 pub struct Player {
     pub pos: Vect, // eye position
@@ -23,6 +24,7 @@ pub struct Player {
     pub on_ground: bool,
     pub stamina: f32,
     pub exhausted: bool,
+    footstep_distance: f32,
 }
 
 /// Things that happened during one `Player::update`, for audio / effects.
@@ -30,6 +32,7 @@ pub struct Player {
 pub struct PlayerEvents {
     pub jumped: bool,
     pub landed: bool,
+    pub footstep: bool,
 }
 
 impl Player {
@@ -42,6 +45,7 @@ impl Player {
             on_ground: true,
             stamina: 1.0,
             exhausted: false,
+            footstep_distance: 0.0,
         }
     }
 
@@ -67,6 +71,8 @@ impl Player {
 
         // ---- horizontal movement + stamina
         let (sin, cos) = self.view.phi.sin_cos();
+        let was_grounded = self.on_ground;
+        let previous_xy = (self.pos.x, self.pos.y);
         let mut mx = 0.0;
         let mut my = 0.0;
         if c.forward {
@@ -116,12 +122,20 @@ impl Player {
             }
         }
 
+        let moved = (self.pos.x - previous_xy.0).hypot(self.pos.y - previous_xy.1);
+        if was_grounded && moved > 0.0 {
+            self.footstep_distance += moved;
+            if self.footstep_distance >= FOOTSTEP_DISTANCE {
+                events.footstep = true;
+                self.footstep_distance -= FOOTSTEP_DISTANCE;
+            }
+        }
+
         // ---- vertical movement
         if c.jump && self.on_ground {
             self.vz = JUMP_SPEED;
             events.jumped = true;
         }
-        let was_grounded = self.on_ground;
         self.vz = (self.vz - GRAVITY * dt).max(-30.0);
         let mut np = self.pos;
         np.z += self.vz * dt;

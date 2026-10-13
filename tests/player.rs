@@ -1,7 +1,7 @@
 use raycast_blocks::input::Controls;
 use raycast_blocks::math::{Angles, Rng};
 use raycast_blocks::player::{Player, EYE_HEIGHT};
-use raycast_blocks::world::{World, FLOOR_TOP};
+use raycast_blocks::world::{World, FLOOR_TOP, X_BLOCKS, Y_BLOCKS};
 
 fn setup() -> (World, Player) {
     let w = World::generate(&mut Rng::new(42));
@@ -93,4 +93,36 @@ fn walls_stop_the_player() {
         p.update(&w, &walk, 0.02);
     }
     assert!(p.pos.x > 1.0, "player escaped the maze: x = {}", p.pos.x);
+}
+
+#[test]
+fn footsteps_are_reported_by_distance_not_every_frame() {
+    let world = World::generate(&mut Rng::new(19));
+    let mut path = None;
+    for y in 1..Y_BLOCKS as i32 - 1 {
+        for x in 1..X_BLOCKS as i32 - 1 {
+            if world.tile_open(x, y) && world.tile_open(x + 1, y) {
+                path = Some((x, y, 0.0));
+                break;
+            }
+            if world.tile_open(x, y) && world.tile_open(x, y + 1) {
+                path = Some((x, y, std::f32::consts::FRAC_PI_2));
+                break;
+            }
+        }
+        if path.is_some() {
+            break;
+        }
+    }
+    let (x, y, phi) = path.expect("generated maze has an open path");
+    let mut player = Player::new(x as f32 + 0.5, y as f32 + 0.5, Angles { psi: 0.0, phi });
+    let walk = Controls {
+        forward: true,
+        ..Controls::default()
+    };
+    let events: Vec<_> = (0..30)
+        .map(|_| player.update(&world, &walk, 0.02).footstep)
+        .collect();
+    assert!(events.iter().any(|&footstep| footstep));
+    assert!(events.iter().filter(|&&footstep| footstep).count() < events.len());
 }

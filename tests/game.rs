@@ -77,6 +77,7 @@ fn collecting_every_page_wins() {
     assert_eq!(g.collected, PAGES_TOTAL);
     assert_eq!(g.state, State::Won);
     assert!(g.events.contains(&AudioEvent::PageCollected));
+    assert!(g.events.contains(&AudioEvent::EnemySting));
     assert!(g.events.contains(&AudioEvent::Won));
 }
 

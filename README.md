@@ -9,6 +9,7 @@ A monochrome first-person horror game built with a software raycaster. Explore a
 - Software-rendered, voxel-style world with a DDA raycaster
 - Creature navigation with BFS pathfinding and line-of-sight behavior
 - Sprint stamina, flashlight, configurable controls, and saved settings
+- Spatially responsive horror ambience, footsteps, and gameplay sound effects
 - Rust unit and integration tests, with cross-platform CI builds
 
 ## Requirements
@@ -64,6 +65,8 @@ src/
 tests/                 Integration tests
 assets/                Runtime assets
 ```
+
+Gameplay WAV assets in `assets/audio/` are embedded in the game binary and played through Rodio. The optional menu ambience is reserved because the game has no title screen yet. Linux builds require ALSA development files (`libasound2-dev`).
 
 Modules are kept independent: the world and math layers do not depend on rendering or player state. The executable entry point handles the window while the game logic remains in the library crate.
 
