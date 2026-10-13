@@ -6,7 +6,8 @@
 
 use std::collections::HashMap;
 
-use minifb::{Key, Window};
+pub use minifb::Key;
+use minifb::Window;
 
 /// Everything the player can ask the game to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -168,7 +169,7 @@ impl Default for KeyBindings {
         map.insert(Action::Sprint, vec![Key::LeftShift, Key::RightShift]);
         map.insert(Action::Flashlight, vec![Key::F]);
         map.insert(Action::Restart, vec![Key::R]);
-        map.insert(Action::Quit, vec![Key::Escape, Key::Q]);
+        map.insert(Action::Quit, vec![Key::Q]);
         map.insert(Action::ToggleMouseLook, vec![Key::Tab, Key::M]);
         KeyBindings { map }
     }
@@ -268,6 +269,28 @@ impl Input {
 
     pub fn mouse_look_enabled(&self) -> bool {
         self.mouse_look_enabled
+    }
+
+    /// Whether mouse look is enabled and has a usable sensitivity.
+    pub fn mouse_look_active(&self) -> bool {
+        self.mouse_look_enabled && self.mouse_sensitivity > 0.0
+    }
+
+    pub fn set_bindings(&mut self, bindings: KeyBindings) {
+        self.bindings = bindings;
+    }
+
+    pub fn set_mouse_sensitivity(&mut self, sensitivity: f32) {
+        self.mouse_sensitivity = sensitivity.clamp(0.0, 0.05);
+    }
+
+    pub fn set_invert_y(&mut self, invert_y: bool) {
+        self.invert_y = invert_y;
+    }
+
+    pub fn synchronize_keys<K: KeyState + ?Sized>(&mut self, keys: &K) {
+        self.prev_flashlight = self.bindings.is_down(keys, Action::Flashlight);
+        self.prev_mouse_look = self.bindings.is_down(keys, Action::ToggleMouseLook);
     }
 
     /// Poll keyboard controls and a cursor source that reports relative deltas.

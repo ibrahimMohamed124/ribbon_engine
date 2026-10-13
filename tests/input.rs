@@ -60,7 +60,7 @@ fn flashlight_toggles_on_press_edge_only() {
 fn quit_and_restart_keys() {
     let mut i = input();
     assert!(i.poll(&FakeKeys(vec![Key::Q]), None).quit);
-    assert!(i.poll(&FakeKeys(vec![Key::Escape]), None).quit);
+    assert!(!i.poll(&FakeKeys(vec![Key::Escape]), None).quit);
     assert!(i.poll(&FakeKeys(vec![Key::R]), None).restart);
     assert!(!i.poll(&FakeKeys(vec![]), None).quit);
 }
@@ -179,4 +179,11 @@ fn disabled_mouse_look_ignores_mouse_motion() {
     let frame = input.poll_with_mouse_source(&FakeKeys(vec![]), &mut mouse, true);
     assert_eq!(frame.controls.mouse_yaw, 0.0);
     assert_eq!(frame.controls.mouse_pitch, 0.0);
+}
+
+#[test]
+fn zero_sensitivity_does_not_capture_mouse_look() {
+    let input = Input::with_mouse_look(KeyBindings::default(), 0.0, true, false);
+    assert!(input.mouse_look_enabled());
+    assert!(!input.mouse_look_active());
 }

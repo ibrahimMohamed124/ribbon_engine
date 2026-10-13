@@ -11,6 +11,7 @@
 //!     world.rs      maze generation, voxel storage, voxel ray queries
 //!     renderer/     raycaster, lighting, post-processing, entities, HUD
 //!     audio.rs      backend-agnostic sound events
+//!     ui/           menus, controls, settings, and pixel UI theme
 //!     settings.rs   persisted user settings
 //!   math.rs    Vect / Angles / Rng / hash (no dependencies)
 //! ```
@@ -23,4 +24,5 @@ pub mod math;
 pub mod player;
 pub mod renderer;
 pub mod settings;
+pub mod ui;
 pub mod world;

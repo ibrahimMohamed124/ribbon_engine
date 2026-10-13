@@ -9,6 +9,9 @@ fn empty_text_gives_defaults() {
     assert_eq!(s.render_width, d.render_width);
     assert_eq!(s.window_scale, d.window_scale);
     assert!((s.master_volume - d.master_volume).abs() < 1e-6);
+    assert!((s.effects_volume - d.effects_volume).abs() < 1e-6);
+    assert!((s.ambient_volume - d.ambient_volume).abs() < 1e-6);
+    assert!(!s.mute_all);
     assert!(!s.mouse_look_on_start);
     assert!((s.mouse_sensitivity - 0.0025).abs() < 1e-6);
 }
@@ -91,6 +94,15 @@ fn mouse_settings_parse_and_serialize() {
 }
 
 #[test]
+fn old_zero_mouse_sensitivity_migrates_to_a_usable_default() {
+    let settings = Settings::parse("settings_version = 3\nmouse_sensitivity = 0\n");
+    assert!((settings.mouse_sensitivity - Settings::default().mouse_sensitivity).abs() < 1e-6);
+
+    let current = Settings::parse("settings_version = 4\nmouse_sensitivity = 0\n");
+    assert_eq!(current.mouse_sensitivity, 0.0);
+}
+
+#[test]
 fn bad_binding_keeps_the_default() {
     let s = Settings::parse("key.forward = Banana\n");
     let keys = s.bindings.keys(Action::Forward);
@@ -119,6 +131,28 @@ fn missing_file_falls_back_to_defaults() {
     let path = std::env::temp_dir().join("raycast_blocks_definitely_missing.cfg");
     let s = Settings::load_or_default(&path);
     assert_eq!(s.window_scale, Settings::default().window_scale);
+}
+
+#[test]
+fn audio_bus_settings_round_trip_and_clamp() {
+    let settings = Settings::parse(
+        "master_volume = 0.5\neffects_volume = 0.65\nambient_volume = 0.2\nmute_all = true\n",
+    );
+    assert!((settings.effects_volume - 0.65).abs() < 1e-6);
+    assert!((settings.ambient_volume - 0.2).abs() < 1e-6);
+    assert!(settings.mute_all);
+
+    let restored = Settings::parse(&settings.to_text());
+    assert!((restored.effects_volume - 0.65).abs() < 1e-6);
+    assert!((restored.ambient_volume - 0.2).abs() < 1e-6);
+    assert!(restored.mute_all);
+}
+
+#[test]
+fn version_two_settings_keep_custom_movement_but_reset_escape_quit() {
+    let settings = Settings::parse("settings_version = 2\nkey.forward = I\nkey.quit = Escape,Q\n");
+    assert!(matches!(settings.bindings.keys(Action::Forward)[0], Key::I));
+    assert_eq!(settings.bindings.keys(Action::Quit), &[Key::Q]);
 }
 
 #[test]

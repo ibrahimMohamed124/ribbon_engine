@@ -18,6 +18,7 @@ pub enum AudioEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AudioAmbience {
+    Menu,
     Enemy,
 }
 
@@ -39,6 +40,9 @@ impl AudioBackend for NullBackend {
 pub struct Audio {
     backend: Box<dyn AudioBackend>,
     master_volume: f32,
+    effects_volume: f32,
+    ambient_volume: f32,
+    muted: bool,
     ambience: Option<(AudioAmbience, f32)>,
 }
 
@@ -47,6 +51,9 @@ impl Audio {
         Audio {
             backend,
             master_volume: master_volume.clamp(0.0, 1.0),
+            effects_volume: 1.0,
+            ambient_volume: 1.0,
+            muted: false,
             ambience: None,
         }
     }
@@ -61,24 +68,52 @@ impl Audio {
 
     pub fn set_volume(&mut self, volume: f32) {
         self.master_volume = volume.clamp(0.0, 1.0);
+        self.update_ambience();
+    }
+
+    pub fn set_effects_volume(&mut self, volume: f32) {
+        self.effects_volume = volume.clamp(0.0, 1.0);
+    }
+
+    pub fn set_ambient_volume(&mut self, volume: f32) {
+        self.ambient_volume = volume.clamp(0.0, 1.0);
+        self.update_ambience();
+    }
+
+    pub fn set_muted(&mut self, muted: bool) {
+        self.muted = muted;
+        self.update_ambience();
+    }
+
+    fn effective_master_volume(&self) -> f32 {
+        if self.muted {
+            0.0
+        } else {
+            self.master_volume
+        }
+    }
+
+    fn update_ambience(&mut self) {
         let (ambience, relative_volume) = self
             .ambience
             .map(|(ambience, volume)| (Some(ambience), volume))
             .unwrap_or((None, 0.0));
-        self.backend
-            .set_ambience(ambience, relative_volume * self.master_volume);
+        self.backend.set_ambience(
+            ambience,
+            relative_volume * self.ambient_volume * self.effective_master_volume(),
+        );
     }
 
     pub fn set_ambience(&mut self, ambience: Option<AudioAmbience>, volume: f32) {
         let volume = volume.clamp(0.0, 1.0);
         self.ambience = ambience.map(|ambience| (ambience, volume));
-        self.backend
-            .set_ambience(ambience, volume * self.master_volume);
+        self.update_ambience();
     }
 
     pub fn play(&mut self, event: AudioEvent) {
-        if self.master_volume > 0.0 {
-            self.backend.play(event, self.master_volume);
+        let volume = self.effective_master_volume() * self.effects_volume;
+        if volume > 0.0 {
+            self.backend.play(event, volume);
         }
     }
 

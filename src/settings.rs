@@ -23,6 +23,9 @@ use crate::renderer::{DEFAULT_HEIGHT, DEFAULT_HFOV, DEFAULT_WIDTH};
 pub struct Settings {
     /// 0..=1
     pub master_volume: f32,
+    pub effects_volume: f32,
+    pub ambient_volume: f32,
+    pub mute_all: bool,
     /// Horizontal field of view in degrees.
     pub hfov_degrees: f32,
     /// Internal render resolution (the window scales it up).
@@ -42,6 +45,9 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             master_volume: 0.8,
+            effects_volume: 1.0,
+            ambient_volume: 1.0,
+            mute_all: false,
             hfov_degrees: DEFAULT_HFOV.to_degrees(),
             render_width: DEFAULT_WIDTH,
             render_height: DEFAULT_HEIGHT,
@@ -57,7 +63,7 @@ impl Default for Settings {
 
 /// Bumped when default key bindings change. Files without this key were written
 /// by an older version and may hold stale movement/look bindings.
-pub const SETTINGS_VERSION: u32 = 2;
+pub const SETTINGS_VERSION: u32 = 4;
 
 fn is_movement_or_look(action: Action) -> bool {
     matches!(
@@ -95,11 +101,15 @@ impl Settings {
     /// Parse settings text; anything missing or invalid keeps its default.
     pub fn parse(text: &str) -> Settings {
         let mut s = Settings::default();
-        let current = format!("settings_version = {SETTINGS_VERSION}");
-        let legacy = !text.lines().any(|raw| {
-            let line = raw.split('#').next().unwrap_or("");
-            line.split_whitespace().collect::<Vec<_>>().join(" ") == current
+        let stored_version = text.lines().find_map(|raw| {
+            let line = raw.split('#').next().unwrap_or("").trim();
+            let (key, value) = line.split_once('=')?;
+            (key.trim() == "settings_version")
+                .then(|| value.trim().parse::<u32>().ok())
+                .flatten()
         });
+        let legacy = stored_version.unwrap_or(0) < 2;
+        let legacy_quit_binding = stored_version.unwrap_or(0) < 3;
         for raw in text.lines() {
             let line = raw.split('#').next().unwrap_or("").trim();
             let (key, value) = match line.split_once('=') {
@@ -110,6 +120,21 @@ impl Settings {
                 "master_volume" => {
                     if let Some(v) = parse_finite(value) {
                         s.master_volume = v.clamp(0.0, 1.0);
+                    }
+                }
+                "effects_volume" => {
+                    if let Some(v) = parse_finite(value) {
+                        s.effects_volume = v.clamp(0.0, 1.0);
+                    }
+                }
+                "ambient_volume" => {
+                    if let Some(v) = parse_finite(value) {
+                        s.ambient_volume = v.clamp(0.0, 1.0);
+                    }
+                }
+                "mute_all" => {
+                    if let Ok(value) = value.parse::<bool>() {
+                        s.mute_all = value;
                     }
                 }
                 "hfov_degrees" => {
@@ -158,7 +183,9 @@ impl Settings {
                     if let Some(action) = key.strip_prefix("key.").and_then(Action::from_name) {
                         // Old files hold the previous default movement/look keys
                         // (IJKL / WASD-look); keep the new defaults instead.
-                        if legacy && is_movement_or_look(action) {
+                        if (legacy && is_movement_or_look(action))
+                            || (legacy_quit_binding && action == Action::Quit)
+                        {
                             continue;
                         }
                         let keys: Vec<_> = value.split(',').filter_map(parse_key).collect();
@@ -169,6 +196,13 @@ impl Settings {
                 }
             }
         }
+        // Before mouse look had its own toggle, a saved zero sensitivity could
+        // make the cursor hide while producing no camera movement. Version 4
+        // migrates those old files to the usable default; zero remains available
+        // in current files as an explicit way to disable mouse movement.
+        if stored_version.unwrap_or(0) < 4 && s.mouse_sensitivity == 0.0 {
+            s.mouse_sensitivity = Settings::default().mouse_sensitivity;
+        }
         s
     }
 
@@ -178,6 +212,9 @@ impl Settings {
         out.push_str("# raycast_blocks settings\n");
         out.push_str(&format!("settings_version = {}\n", SETTINGS_VERSION));
         out.push_str(&format!("master_volume = {}\n", self.master_volume));
+        out.push_str(&format!("effects_volume = {}\n", self.effects_volume));
+        out.push_str(&format!("ambient_volume = {}\n", self.ambient_volume));
+        out.push_str(&format!("mute_all = {}\n", self.mute_all));
         out.push_str(&format!("hfov_degrees = {}\n", self.hfov_degrees));
         out.push_str(&format!("render_width = {}\n", self.render_width));
         out.push_str(&format!("render_height = {}\n", self.render_height));

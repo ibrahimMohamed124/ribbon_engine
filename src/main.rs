@@ -9,7 +9,7 @@
 //   Up / Down       look up / down             Left / Right  look left / right
 //   Left Shift      sprint (limited stamina)   e       jump
 //   f               flashlight on / off        r       restart (after dying / winning)
-//   Esc / q         quit
+//   Esc             pause menu              q       quit
 //
 // This file is only the OS glue: window, clock, and the frame loop.
 // All game logic lives in the library crate (see lib.rs for the module map).
@@ -17,13 +17,14 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use enigo::{Coordinate, Enigo, Mouse, Settings as EnigoSettings};
-use minifb::{MouseMode, Scale, ScaleMode, Window, WindowOptions};
+use minifb::{KeyRepeat, MouseMode, Scale, ScaleMode, Window, WindowOptions};
 
 use raycast_blocks::audio::{Audio, AudioAmbience, AudioBackend, AudioEvent};
 use raycast_blocks::game::{Game, PAGES_TOTAL};
-use raycast_blocks::input::{Input, MouseSource};
+use raycast_blocks::input::{Input, InputFrame, MouseSource};
 use raycast_blocks::renderer::Framebuffer;
 use raycast_blocks::settings::Settings;
+use raycast_blocks::ui::{Screen as UiScreen, Ui, UiInput};
 
 const TARGET_FRAME: Duration = Duration::from_micros(16_000);
 
@@ -47,7 +48,7 @@ impl AudioBackend for RodioBackend {
         use std::io::Cursor;
 
         let (data, gain): (&'static [u8], f32) = match event {
-            AudioEvent::Footstep => (include_bytes!("../assets/audio/footstep.wav"), 0.32),
+            AudioEvent::Footstep => (include_bytes!("../assets/audio/footstep.wav"), 0.20),
             AudioEvent::Jump => (include_bytes!("../assets/audio/jump.wav"), 0.48),
             AudioEvent::Land => (include_bytes!("../assets/audio/footstep.wav"), 0.28),
             AudioEvent::PageCollected => (include_bytes!("../assets/audio/page_collect.wav"), 0.62),
@@ -83,7 +84,8 @@ impl AudioBackend for RodioBackend {
             player.stop();
         }
 
-        let data = match ambience {
+        let data: &'static [u8] = match ambience {
+            AudioAmbience::Menu => include_bytes!("../assets/audio/menu_ambience.wav"),
             AudioAmbience::Enemy => include_bytes!("../assets/audio/enemy_ambient.wav"),
         };
         let player = rodio::Player::connect_new(self.output.mixer());
@@ -179,9 +181,10 @@ impl CursorMouse {
     }
 
     fn release(&mut self, window: &mut Window) {
-        if self.captured {
-            window.set_cursor_visibility(true);
-        }
+        // `capture_step` hides the cursor before the first fallible OS call.
+        // Always restore visibility on release, including a partially failed
+        // capture where `captured` was never set.
+        window.set_cursor_visibility(true);
         self.captured = false;
         self.delta = (0.0, 0.0);
     }
@@ -210,13 +213,26 @@ fn scale_from(factor: u32) -> Scale {
     }
 }
 
+fn create_window(settings: &Settings) -> Result<Window, minifb::Error> {
+    Window::new(
+        "STUDS",
+        settings.render_width,
+        settings.render_height,
+        WindowOptions {
+            scale: scale_from(settings.window_scale),
+            scale_mode: ScaleMode::AspectRatioStretch,
+            resize: true,
+            ..WindowOptions::default()
+        },
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("STUDS - find all {PAGES_TOTAL} pages and don't get caught.");
-    println!("w/a/s/d move | arrows look | shift sprint | e jump | f flashlight | r restart | tab/m mouse look | esc/q quit");
 
     // settings (write the defaults out once so the file is there to edit)
     let settings_path = Settings::default_path();
-    let settings = Settings::load_or_default(&settings_path);
+    let mut settings = Settings::load_or_default(&settings_path);
     if !settings_path.exists() {
         let _ = settings.save(&settings_path);
     } else if std::fs::read_to_string(&settings_path)
@@ -229,34 +245,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = settings.save(&settings_path);
     }
 
-    let mut window = Window::new(
-        "STUDS",
-        settings.render_width,
-        settings.render_height,
-        WindowOptions {
-            scale: scale_from(settings.window_scale),
-            scale_mode: ScaleMode::AspectRatioStretch,
-            resize: true,
-            ..WindowOptions::default()
-        },
-    )?;
+    let mut window = create_window(&settings)?;
     window.set_cursor_visibility(true);
 
     let mut game = Game::new(seed_now());
     game.flashlight_on = settings.flashlight_on_start;
     let mut fb = Framebuffer::new(settings.render_width, settings.render_height);
-    // Older settings files were written with `mouse_sensitivity = 0` (the old
-    // default), which silently zeroes all mouse movement. Mouse look now has its
-    // own toggle, so treat 0 as "use the default".
-    let mouse_sensitivity = if settings.mouse_sensitivity > 0.0 {
-        settings.mouse_sensitivity
-    } else {
-        eprintln!("mouse_sensitivity = 0 in settings.cfg; using 0.0025 instead");
-        0.0025
-    };
     let mut input = Input::with_mouse_look(
         settings.bindings.clone(),
-        mouse_sensitivity,
+        settings.mouse_sensitivity,
         settings.mouse_look_on_start,
         settings.invert_y,
     );
@@ -268,7 +265,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Audio::null(settings.master_volume)
         }
     };
-    let hfov = settings.hfov_radians();
+    audio.set_effects_volume(settings.effects_volume);
+    audio.set_ambient_volume(settings.ambient_volume);
+    audio.set_muted(settings.mute_all);
+    let mut ui = Ui::new();
 
     let mut frame_no: u32 = 0;
     let mut last = Instant::now();
@@ -284,51 +284,90 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         frame_no = frame_no.wrapping_add(1);
 
-        let capture_mouse = input.mouse_look_enabled()
-            && window.is_active()
-            && game.state == raycast_blocks::game::State::Playing;
-        let frame_input = input.poll_with_mouse_source(&window, &mut mouse, capture_mouse);
-        if frame_input.quit {
+        let ui_input = UiInput::from_keys(window.get_keys_pressed(KeyRepeat::No));
+        let ui_outcome = ui.update(&ui_input, &mut settings);
+        if ui_outcome.quit {
             break;
         }
-        if frame_input.toggle_mouse_look {
-            eprintln!(
-                "mouse look {}",
-                if input.mouse_look_enabled() {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-            );
+        if ui_outcome.settings_changed {
+            let _ = settings.save(&settings_path);
+            input.set_bindings(settings.bindings.clone());
+            input.set_mouse_sensitivity(settings.mouse_sensitivity);
+            input.set_invert_y(settings.invert_y);
+            audio.set_volume(settings.master_volume);
+            audio.set_effects_volume(settings.effects_volume);
+            audio.set_ambient_volume(settings.ambient_volume);
+            audio.set_muted(settings.mute_all);
         }
-        if frame_input.restart && game.can_restart() {
+        if ui_outcome.window_changed {
+            mouse.release(&mut window);
+            window = create_window(&settings)?;
+            window.set_cursor_visibility(true);
+            fb = Framebuffer::new(settings.render_width, settings.render_height);
+        }
+        if ui_outcome.start_game {
+            game = Game::new(seed_now());
+            game.flashlight_on = settings.flashlight_on_start;
+        } else if ui_outcome.restart_game {
             game.restart(seed_now());
         }
 
-        game.update(&frame_input, dt);
-        if game.state != raycast_blocks::game::State::Playing {
+        if ui.is_playing() && game.state == raycast_blocks::game::State::Playing {
+            let capture_mouse = input.mouse_look_active() && window.is_active();
+            let frame_input = input.poll_with_mouse_source(&window, &mut mouse, capture_mouse);
+            if frame_input.quit {
+                break;
+            }
+            game.update(&frame_input, dt);
+            if game.state != raycast_blocks::game::State::Playing {
+                ui.show_result();
+            }
+        } else {
+            input.synchronize_keys(&window);
+        }
+        if !ui.is_playing() || game.state != raycast_blocks::game::State::Playing {
             mouse.release(&mut window);
         }
-        let ambience = if game.state == raycast_blocks::game::State::Playing && game.enemy_awake() {
-            Some(AudioAmbience::Enemy)
-        } else {
-            None
-        };
-        let ambience_volume = if ambience.is_some() {
-            0.025 + game.proximity() * 0.11
-        } else {
-            0.0
+        let (ambience, ambience_volume) = match ui.screen() {
+            UiScreen::Playing
+                if game.state == raycast_blocks::game::State::Playing && game.enemy_awake() =>
+            {
+                (Some(AudioAmbience::Enemy), 0.025 + game.proximity() * 0.11)
+            }
+            UiScreen::MainMenu
+            | UiScreen::Pause
+            | UiScreen::Settings
+            | UiScreen::Controls
+            | UiScreen::ConfirmMainMenu => (Some(AudioAmbience::Menu), 0.12),
+            _ => (None, 0.0),
         };
         audio.set_ambience(ambience, ambience_volume);
         audio.play_all(&mut game.events);
-        game.draw(&mut fb, frame_no, hfov);
+        if ui.is_playing() {
+            game.draw(&mut fb, frame_no, settings.hfov_radians());
+        } else {
+            if ui.screen() == UiScreen::Result {
+                game.update(&InputFrame::default(), dt);
+                game.draw(&mut fb, frame_no, settings.hfov_radians());
+            } else if matches!(
+                ui.screen(),
+                UiScreen::Pause
+                    | UiScreen::Settings
+                    | UiScreen::Controls
+                    | UiScreen::ConfirmMainMenu
+            ) {
+                game.draw(&mut fb, frame_no, settings.hfov_radians());
+            }
+            ui.draw(&mut fb, frame_no, &game, &settings);
+        }
 
         window.update_with_buffer(&fb.pixels, fb.width, fb.height)?;
 
         // minifb refreshes its cached mouse position during update_with_buffer.
         // Sample and recenter only after that event pump, then consume this
         // delta during the next frame's input poll.
-        let capture_mouse = input.mouse_look_enabled()
+        let capture_mouse = ui.is_playing()
+            && input.mouse_look_active()
             && window.is_active()
             && game.state == raycast_blocks::game::State::Playing;
         mouse.update(&mut window, capture_mouse);
@@ -336,7 +375,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         title_timer += dt;
         if title_timer > 0.4 {
             title_timer = 0.0;
-            window.set_title(&game.window_title(fps));
+            let title = match ui.screen() {
+                UiScreen::MainMenu => "STUDS | main menu".to_owned(),
+                UiScreen::Pause => "STUDS | paused".to_owned(),
+                UiScreen::Settings => "STUDS | settings".to_owned(),
+                UiScreen::Controls => "STUDS | controls".to_owned(),
+                UiScreen::ConfirmMainMenu => "STUDS | confirm".to_owned(),
+                UiScreen::Result => game.window_title(fps),
+                UiScreen::Playing => game.window_title(fps),
+            };
+            window.set_title(&title);
         }
 
         let elapsed = frame_start.elapsed();

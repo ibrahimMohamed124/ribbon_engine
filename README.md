@@ -40,11 +40,14 @@ cargo test --locked
 | Jump | E |
 | Sprint | Left or right Shift |
 | Flashlight | F |
-| Restart | R |
+| Restart (pause / result screens) | R |
 | Toggle mouse look | Tab or M |
-| Quit | Esc or Q |
+| Pause / Back | Esc |
+| Quit | Q |
 
 Bindings are configurable and saved in `settings.cfg` (`%APPDATA%\raycast_blocks\` on Windows, `~/.config/raycast_blocks/` on Linux/macOS, or `$XDG_CONFIG_HOME`). Mouse look starts disabled. Press `Tab` or `M` to toggle it; while active, the cursor is hidden and recentered so you can turn continuously. Adjust `mouse_sensitivity` (default `0.0025` radians/pixel), `mouse_look_on_start`, and `invert_y` in `settings.cfg`.
+
+The game opens on a main menu. Press `Esc` during a run to pause it; simulation and gameplay timers stay frozen until you resume. Settings and controls are available from both menus and are saved when changed. The settings screen exposes the currently supported audio buses, mouse options, FOV, window scale, and render resolution.
 
 Cursor recentering uses Enigo. On Wayland, cursor warping may be restricted or experimental depending on the compositor and Enigo backend. macOS may request Accessibility permission to control the cursor. If cursor warping is denied, use the keyboard look controls or disable mouse look.
 
@@ -53,6 +56,15 @@ Cursor recentering uses Enigo. On Wayland, cursor warping may be restricted or e
 ```text
 src/
   main.rs              Window and frame loop
+  ui/
+    menu.rs            Main menu entries
+    pause.rs           Pause screen labels
+    settings.rs        Supported option values and adjustments
+    controls.rs        Control labels and rebind order
+    dialogs.rs         Confirmation and result text
+    layout.rs          Shared menu panel layout
+    theme.rs           Pixel font, colors, and menu backgrounds
+    mod.rs             UI navigation and drawing
   game.rs              Game state and update loop
   player.rs            Movement, physics, and stamina
   enemy.rs             Enemy behavior and pathfinding
@@ -66,7 +78,9 @@ tests/                 Integration tests
 assets/                Runtime assets
 ```
 
-Gameplay WAV assets in `assets/audio/` are embedded in the game binary and played through Rodio. The optional menu ambience is reserved because the game has no title screen yet. Linux builds require ALSA development files (`libasound2-dev`).
+WAV assets in `assets/audio/` are embedded in the game binary and played through Rodio. The menu ambience plays in menus; the enemy drone loops after the enemy wakes and grows louder with proximity. Linux builds require ALSA development files (`libasound2-dev`).
+
+The main menu starts each run explicitly. During play, `Esc` opens a pause screen; simulation and gameplay timers remain frozen until resume. Settings and controls can be edited in either menu. Only supported options are shown: audio buses and mute, mouse look, FOV, render resolution, and window scaling. There is no saved-run system, so the main menu does not show a Continue option.
 
 Modules are kept independent: the world and math layers do not depend on rendering or player state. The executable entry point handles the window while the game logic remains in the library crate.
 
@@ -98,7 +112,9 @@ cargo test --locked
 - الحركة: `W / A / S / D`
 - النظر: الأسهم أو الماوس
 - القفز: `E`، الجري: `Shift`، الكشاف: `F`
-- تشغيل/إيقاف النظر بالماوس: `Tab` أو `M` (يبدأ متوقفًا افتراضيًا)
-- إعادة اللعب: `R`، الخروج: `Esc` أو `Q`
+- الإيقاف المؤقت: `Esc`، تشغيل/إيقاف النظر بالماوس: `Tab` أو `M`
+- إعادة اللعب: `R`، الخروج: `Q`
 
 يمكن تعديل الأزرار، وتُحفظ الإعدادات في `settings.cfg` (في `%APPDATA%\raycast_blocks\` على ويندوز، أو `~/.config/raycast_blocks/` على لينكس/ماك).
+
+تظهر القائمة الرئيسية عند التشغيل. اضغط `Esc` أثناء اللعب للإيقاف المؤقت؛ تتوقف حركة اللاعب والوحش ومؤقتات اللعب حتى الاستئناف. يمكن تغيير الإعدادات وإعادة ربط الأزرار من القائمتين، وتُحفظ التعديلات مباشرة. شاشة الفوز تعرض وقت الجولة والصفحات التي جُمعت. لا يوجد نظام حفظ للجولات حاليًا، لذلك لا يظهر خيار «استكمال».

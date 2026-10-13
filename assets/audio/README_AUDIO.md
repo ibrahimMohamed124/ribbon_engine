@@ -24,6 +24,6 @@ generated WAV files as part of STUDS, including in commercial builds.
 ## Integration
 The game embeds the gameplay WAV files in the executable and plays them through Rodio. One-shot effects are triggered by gameplay events. Footsteps play by distance traveled, not every frame. `enemy_ambient.wav` loops after the enemy wakes and its volume rises with proximity. Only ambience is looped.
 
-The game currently starts directly in the maze and has no title/menu screen, so `menu_ambience.wav` is reserved for a future menu. If the system has no audio output device, the game continues silently.
+`menu_ambience.wav` loops in the main menu and menu screens. If the system has no audio output device, the game continues silently.
 
 Linux builds require ALSA development headers (`libasound2-dev` on Debian/Ubuntu, `alsa-lib-devel` on Fedora).
