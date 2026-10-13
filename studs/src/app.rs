@@ -205,21 +205,33 @@ impl App for StudsApp {
 
     fn render(&mut self, framebuffer: &mut Framebuffer, ctx: &Ctx<'_>) {
         if self.ui.is_playing() {
-            self.game
-                .draw(framebuffer, ctx.frame, self.settings.hfov_radians());
+            self.game.draw_styled(
+                framebuffer,
+                ctx.frame,
+                self.settings.hfov_radians(),
+                self.settings.visual_style.render_style(),
+            );
             adjust_brightness(framebuffer, self.settings.brightness);
         } else {
             if self.ui.screen() == Screen::Result {
                 self.game.update(&InputFrame::default(), ctx.dt);
-                self.game
-                    .draw(framebuffer, ctx.frame, self.settings.hfov_radians());
+                self.game.draw_styled(
+                    framebuffer,
+                    ctx.frame,
+                    self.settings.hfov_radians(),
+                    self.settings.visual_style.render_style(),
+                );
                 adjust_brightness(framebuffer, self.settings.brightness);
             } else if matches!(
                 self.ui.screen(),
                 Screen::Pause | Screen::Settings | Screen::Controls | Screen::ConfirmMainMenu
             ) {
-                self.game
-                    .draw(framebuffer, ctx.frame, self.settings.hfov_radians());
+                self.game.draw_styled(
+                    framebuffer,
+                    ctx.frame,
+                    self.settings.hfov_radians(),
+                    self.settings.visual_style.render_style(),
+                );
                 adjust_brightness(framebuffer, self.settings.brightness);
             }
             self.ui

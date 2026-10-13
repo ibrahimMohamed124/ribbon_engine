@@ -1,6 +1,6 @@
 use raycast_blocks::input::Action;
 use raycast_blocks::input::Key;
-use raycast_blocks::settings::Settings;
+use raycast_blocks::settings::{Settings, VisualStyle};
 
 #[test]
 fn empty_text_gives_defaults() {
@@ -146,6 +146,27 @@ fn audio_bus_settings_round_trip_and_clamp() {
     assert!((restored.effects_volume - 0.65).abs() < 1e-6);
     assert!((restored.ambient_volume - 0.2).abs() < 1e-6);
     assert!(restored.mute_all);
+}
+
+#[test]
+fn visual_style_round_trips_and_invalid_values_use_the_default() {
+    let classic = Settings::parse("visual_style = classic\n");
+    assert_eq!(classic.visual_style, VisualStyle::Classic);
+    assert_eq!(
+        Settings::parse(&classic.to_text()).visual_style,
+        VisualStyle::Classic
+    );
+
+    let moody = Settings::parse("visual_style = MOODY\n");
+    assert_eq!(moody.visual_style, VisualStyle::Moody);
+    assert_eq!(
+        Settings::parse("visual_style = film-noir\n").visual_style,
+        Settings::default().visual_style
+    );
+    assert_eq!(
+        Settings::parse("").visual_style,
+        Settings::default().visual_style
+    );
 }
 
 #[test]

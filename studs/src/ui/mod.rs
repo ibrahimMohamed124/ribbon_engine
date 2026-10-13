@@ -280,7 +280,7 @@ impl Ui {
                         -1
                     } else if mouse_clicked {
                         match mouse_target {
-                            Some((3 | 5 | 7 | 8, _)) => 1,
+                            Some((3 | 5 | 7 | 8 | 12, _)) => 1,
                             Some((index, row)) if index < settings_page::ITEM_COUNT - 1 => {
                                 if let Some((x, _)) = input.mouse_position {
                                     let value_width =
@@ -314,7 +314,7 @@ impl Ui {
                             settings_page::adjust(settings, self.selected, direction);
                         outcome.settings_changed |= changed;
                         outcome.window_changed |= window_changed;
-                    } else if confirm && matches!(self.selected, 3 | 5 | 7 | 8) {
+                    } else if confirm && matches!(self.selected, 3 | 5 | 7 | 8 | 12) {
                         let (changed, window_changed) =
                             settings_page::adjust(settings, self.selected, 1);
                         outcome.settings_changed |= changed;
@@ -430,7 +430,7 @@ impl Ui {
                 row_target(
                     panel,
                     panel.y + 25,
-                    11,
+                    10,
                     10,
                     settings_page::ITEM_COUNT,
                     12,
@@ -647,7 +647,7 @@ impl Ui {
             PANEL_EDGE,
         );
         for index in 0..settings_page::ITEM_COUNT {
-            let y = panel.y + 27 + index as i32 * 11;
+            let y = panel.y + 27 + index as i32 * 10;
             if index == 4 || index == 9 {
                 fill_rect(fb, panel.x + 16, y - 4, panel.width - 32, 1, PANEL_EDGE);
             }

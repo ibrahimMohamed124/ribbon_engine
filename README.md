@@ -11,6 +11,7 @@ A monochrome first-person horror game built with a software raycaster. Explore a
 - Sprint stamina, flashlight, configurable controls, and saved settings
 - Directional enemy footsteps, proximity-scaled ambience, and gameplay sound effects
 - Rust unit and integration tests, with cross-platform CI builds
+- Classic grayscale and Moody cold-tinted rendering styles with procedural surfaces
 
 ## Requirements
 
@@ -48,6 +49,8 @@ cargo test --locked
 Bindings are configurable and saved in `settings.cfg` (`%APPDATA%\raycast_blocks\` on Windows, `~/.config/raycast_blocks/` on Linux/macOS, or `$XDG_CONFIG_HOME`). Mouse look starts enabled automatically when a run begins; press `Tab` or `M` only if you want to turn it off or back on. During active play, the cursor is hidden and recentered so you can turn continuously. Adjust `mouse_sensitivity` (default `0.0025` radians/pixel), `mouse_look_on_start`, and `invert_y` in `settings.cfg`.
 
 The game opens on a main menu. Hover over an item and click to select it; the keyboard remains available. In settings, click the value area to change a value, and use the mouse wheel to move through long control lists. Press `Esc` during a run to pause it; simulation and gameplay timers stay frozen until you resume. Settings and controls are available from both menus and are saved when changed. The settings screen exposes the currently supported audio buses, mouse options, FOV, brightness, window scale, and render resolution. Window scale choices adjust to the render resolution and keep the initial window at or below 1280x720. Mouse sensitivity is shown as an easy-to-read 0-10 level.
+
+The **Visual Style** setting switches between **Moody** (the default, with a cold green-gray palette, tone mapping, subtle procedural surface texture, and voxel ambient occlusion) and **Classic** (the original grayscale look). HUD and menu layers remain unchanged. To capture deterministic renderer samples, run `cargo run --locked -p blocks_engine --example screenshot`; PNGs are written under `target/shots/`. Compare renderer cost with `cargo run --release --locked -p blocks_engine --example render_bench -- 30`.
 
 Selecting **New Game** opens a difficulty screen. **Easy** gives more time before the enemy wakes and reduces its chase speed; **Normal** preserves the original balance; **Hard** wakes the enemy sooner and increases its speed. Looking at the enemy still slows it on every difficulty. New runs randomize the player and enemy's starting cells and place pages apart. The HUD teaches the objective and the enemy's sight rule, while a won run records the best time for its difficulty in `settings.cfg`.
 
@@ -112,6 +115,8 @@ No license has been added yet. Until the project owner selects one, all rights a
 cargo run --release
 cargo test --locked
 ```
+
+يضيف خيار **Visual Style** نمط **Moody** الافتراضي بلوحة باردة وخامات خفيفة وـ ambient occlusion، مع إمكانية الرجوع إلى **Classic** الرمادي الأصلي. القوائم وواجهة اللعب تظل كما هي. لإنشاء صور مقارنة ثابتة شغّل `cargo run --locked -p blocks_engine --example screenshot`؛ تحفظ الصور في `target/shots/`.
 
 ### أزرار التحكم الافتراضية
 

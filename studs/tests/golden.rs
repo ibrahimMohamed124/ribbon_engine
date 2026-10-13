@@ -75,9 +75,20 @@ fn golden_render_world_simulation_and_settings() {
     }
     let simulation_hash = simulation_fingerprint(&simulated);
 
-    let settings = Settings::default().to_text();
+    // Keep this golden pinned to the settings text before visual styles were
+    // added; the new setting has dedicated round-trip coverage.
+    let legacy_settings = |text: String| {
+        let mut lines: Vec<_> = text
+            .lines()
+            .filter(|line| !line.starts_with("visual_style ="))
+            .collect();
+        lines.push("");
+        lines.join("\n")
+    };
+    let settings = legacy_settings(Settings::default().to_text());
     let settings_hash = fnv1a(settings.bytes());
-    let round_trip_hash = fnv1a(Settings::parse(&settings).to_text().bytes());
+    let round_trip = legacy_settings(Settings::parse(&settings).to_text());
+    let round_trip_hash = fnv1a(round_trip.bytes());
 
     println!("framebuffer_hash={framebuffer_hash:#018x}");
     println!("world_hashes={world_hashes:#x?}");
@@ -97,4 +108,23 @@ fn golden_render_world_simulation_and_settings() {
     assert_eq!(simulation_hash, 0x36aa7954b0bb41c6);
     assert_eq!(settings_hash, 0x7f0672c7d565fef9);
     assert_eq!(round_trip_hash, settings_hash);
+}
+
+#[test]
+fn moody_render_is_deterministic_and_matches_its_golden() {
+    let game = Game::new(42);
+    let mut first = Framebuffer::new(160, 90);
+    let mut second = Framebuffer::new(160, 90);
+    game.draw_styled(&mut first, 137, DEFAULT_HFOV, RenderStyle::moody());
+    game.draw_styled(&mut second, 137, DEFAULT_HFOV, RenderStyle::moody());
+
+    let first_hash = pixels_hash(&first.pixels);
+    let second_hash = pixels_hash(&second.pixels);
+    println!("moody_framebuffer_hash={first_hash:#018x}");
+    assert_eq!(
+        first_hash, second_hash,
+        "rayon rendering must be deterministic"
+    );
+    // Re-bless intentionally with `cargo test -p studs --test golden -- --nocapture`.
+    assert_eq!(first_hash, 0x3b54f837c2b1f245);
 }

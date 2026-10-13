@@ -2,7 +2,7 @@ use crate::settings::Settings;
 
 pub const TITLE: &str = "SETTINGS / AUDIO / GAME / DISPLAY";
 pub const HINT: &str = "CLICK SELECT   L/R CHANGE   ESC BACK";
-pub const ITEM_COUNT: usize = 13;
+pub const ITEM_COUNT: usize = 14;
 
 pub fn label(index: usize) -> &'static str {
     match index {
@@ -18,6 +18,7 @@ pub fn label(index: usize) -> &'static str {
         9 => "WINDOW SCALE",
         10 => "RENDER RESOLUTION",
         11 => "BRIGHTNESS",
+        12 => "VISUAL STYLE",
         _ => "BACK",
     }
 }
@@ -57,6 +58,7 @@ pub fn value(settings: &Settings, index: usize) -> String {
         9 => format!("{}X", settings.window_scale),
         10 => format!("{}X{}", settings.render_width, settings.render_height),
         11 => format!("{:.0}%", settings.brightness * 100.0),
+        12 => settings.visual_style.as_str().to_ascii_uppercase(),
         _ => String::new(),
     }
 }
@@ -111,6 +113,7 @@ pub fn adjust(settings: &mut Settings, index: usize, direction: i32) -> (bool, b
             ));
         }
         11 => settings.brightness = (settings.brightness + direction as f32 * 0.1).clamp(0.5, 1.5),
+        12 => settings.visual_style.toggle(),
         _ => return (false, false),
     }
     let window_changed = settings.window_scale != old_scale

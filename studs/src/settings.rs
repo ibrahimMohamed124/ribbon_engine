@@ -20,6 +20,44 @@ use crate::game::Difficulty;
 use crate::input::{key_name, parse_key, Action, KeyBindings};
 use crate::renderer::{DEFAULT_HEIGHT, DEFAULT_HFOV, DEFAULT_WIDTH};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VisualStyle {
+    Classic,
+    #[default]
+    Moody,
+}
+
+impl VisualStyle {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "classic" => Some(Self::Classic),
+            "moody" => Some(Self::Moody),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Classic => "classic",
+            Self::Moody => "moody",
+        }
+    }
+
+    pub fn render_style(self) -> blocks_engine::render::RenderStyle {
+        match self {
+            Self::Classic => blocks_engine::render::RenderStyle::classic(),
+            Self::Moody => blocks_engine::render::RenderStyle::moody(),
+        }
+    }
+
+    pub fn toggle(&mut self) {
+        *self = match self {
+            Self::Classic => Self::Moody,
+            Self::Moody => Self::Classic,
+        };
+    }
+}
+
 #[derive(Clone)]
 pub struct Settings {
     /// 0..=1
@@ -36,6 +74,7 @@ pub struct Settings {
     pub window_scale: u32,
     /// Linear display brightness: 0.5 is dim, 1.0 is unchanged, 1.5 is bright.
     pub brightness: f32,
+    pub visual_style: VisualStyle,
     /// Best completion time in seconds, indexed by Easy / Normal / Hard.
     pub best_times: [f32; 3],
     pub flashlight_on_start: bool,
@@ -58,6 +97,7 @@ impl Default for Settings {
             render_height: DEFAULT_HEIGHT,
             window_scale: 4,
             brightness: 1.0,
+            visual_style: VisualStyle::default(),
             best_times: [0.0; 3],
             flashlight_on_start: true,
             mouse_look_on_start: true,
@@ -208,6 +248,11 @@ impl Settings {
                         s.brightness = v.clamp(0.5, 1.5);
                     }
                 }
+                "visual_style" => {
+                    if let Some(style) = VisualStyle::parse(value) {
+                        s.visual_style = style;
+                    }
+                }
                 "best_time_easy" | "best_time_normal" | "best_time_hard" => {
                     if let Some(v) = parse_finite(value) {
                         let index = match key {
@@ -287,6 +332,7 @@ impl Settings {
         out.push_str(&format!("render_height = {}\n", self.render_height));
         out.push_str(&format!("window_scale = {}\n", self.window_scale));
         out.push_str(&format!("brightness = {}\n", self.brightness));
+        out.push_str(&format!("visual_style = {}\n", self.visual_style.as_str()));
         out.push_str(&format!("best_time_easy = {}\n", self.best_times[0]));
         out.push_str(&format!("best_time_normal = {}\n", self.best_times[1]));
         out.push_str(&format!("best_time_hard = {}\n", self.best_times[2]));
