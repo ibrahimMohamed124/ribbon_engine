@@ -40,9 +40,20 @@ impl Enemy {
 
     /// Chase speed: faster with every page, nearly frozen while being looked at.
     pub fn speed(pages_collected: usize, seen: bool) -> f32 {
+        Self::speed_with_tuning(pages_collected, seen, 1.0, SEEN_SPEED_FACTOR)
+    }
+
+    /// Chase speed with per-run tuning; the default `speed` retains normal behavior.
+    pub fn speed_with_tuning(
+        pages_collected: usize,
+        seen: bool,
+        multiplier: f32,
+        seen_factor: f32,
+    ) -> f32 {
         let mut speed = ENEMY_BASE_SPEED + ENEMY_SPEED_PER_PAGE * pages_collected as f32;
+        speed *= multiplier;
         if seen {
-            speed *= SEEN_SPEED_FACTOR;
+            speed *= seen_factor;
         }
         speed
     }

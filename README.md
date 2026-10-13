@@ -49,6 +49,8 @@ Bindings are configurable and saved in `settings.cfg` (`%APPDATA%\raycast_blocks
 
 The game opens on a main menu. Hover over an item and click to select it; the keyboard remains available. In settings, click the value area to change a value, and use the mouse wheel to move through long control lists. Press `Esc` during a run to pause it; simulation and gameplay timers stay frozen until you resume. Settings and controls are available from both menus and are saved when changed. The settings screen exposes the currently supported audio buses, mouse options, FOV, window scale, and render resolution.
 
+Selecting **New Game** opens a difficulty screen. **Easy** gives more time before the enemy wakes and reduces its chase speed; **Normal** preserves the original balance; **Hard** wakes the enemy sooner and increases its speed. Looking at the enemy still slows it on every difficulty.
+
 Cursor recentering uses Enigo. On Wayland, cursor warping may be restricted or experimental depending on the compositor and Enigo backend. macOS may request Accessibility permission to control the cursor. If cursor warping is denied, use the keyboard look controls or disable mouse look.
 
 ## Project layout
@@ -58,6 +60,7 @@ src/
   main.rs              Window and frame loop
   ui/
     menu.rs            Main menu entries
+    difficulty.rs      Difficulty choices and descriptions
     pause.rs           Pause screen labels
     settings.rs        Supported option values and adjustments
     controls.rs        Control labels and rebind order
@@ -118,3 +121,5 @@ cargo test --locked
 يمكن تعديل الأزرار، وتُحفظ الإعدادات في `settings.cfg` (في `%APPDATA%\raycast_blocks\` على ويندوز، أو `~/.config/raycast_blocks/` على لينكس/ماك).
 
 تظهر القائمة الرئيسية عند التشغيل. اضغط `Esc` أثناء اللعب للإيقاف المؤقت؛ تتوقف حركة اللاعب والوحش ومؤقتات اللعب حتى الاستئناف. يمكن تغيير الإعدادات وإعادة ربط الأزرار من القائمتين، وتُحفظ التعديلات مباشرة. شاشة الفوز تعرض وقت الجولة والصفحات التي جُمعت. لا يوجد نظام حفظ للجولات حاليًا، لذلك لا يظهر خيار «استكمال».
+
+عند اختيار «لعبة جديدة» تظهر شاشة اختيار المستوى: السهل يمنحك وقتًا أطول قبل استيقاظ الوحش ويقلل سرعته، والعادي يحافظ على التوازن الحالي، والصعب يجعل الوحش يستيقظ أسرع ويزيد سرعته. يظل الوحش أبطأ عندما تنظر إليه في كل المستويات.

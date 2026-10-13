@@ -26,7 +26,51 @@ pub enum State {
     Won,
 }
 
+/// Run difficulty controls the enemy's grace period and chase pressure.
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Default)]
+pub enum Difficulty {
+    Easy,
+    #[default]
+    Normal,
+    Hard,
+}
+
+impl Difficulty {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Easy => "EASY",
+            Self::Normal => "NORMAL",
+            Self::Hard => "HARD",
+        }
+    }
+
+    pub const fn enemy_wake_time(self) -> f32 {
+        match self {
+            Self::Easy => 18.0,
+            Self::Normal => crate::enemy::ENEMY_AWAKE_AFTER,
+            Self::Hard => 8.0,
+        }
+    }
+
+    pub const fn enemy_speed_multiplier(self) -> f32 {
+        match self {
+            Self::Easy => 0.70,
+            Self::Normal => 1.0,
+            Self::Hard => 1.35,
+        }
+    }
+
+    pub const fn seen_speed_factor(self) -> f32 {
+        match self {
+            Self::Easy => 0.08,
+            Self::Normal => crate::enemy::SEEN_SPEED_FACTOR,
+            Self::Hard => 0.14,
+        }
+    }
+}
+
 pub struct Game {
+    pub difficulty: Difficulty,
     pub world: World,
     pub player: Player,
     pub enemy: Enemy,
@@ -43,6 +87,10 @@ pub struct Game {
 
 impl Game {
     pub fn new(seed: u32) -> Game {
+        Self::new_with_difficulty(seed, Difficulty::Normal)
+    }
+
+    pub fn new_with_difficulty(seed: u32, difficulty: Difficulty) -> Game {
         let mut rng = Rng::new(seed);
         let world = World::generate(&mut rng);
 
@@ -61,6 +109,7 @@ impl Game {
         let start = cell_center(0);
         let far = cell_center(CELLS - 1);
         Game {
+            difficulty,
             world,
             player: Player::new(
                 start,
@@ -85,7 +134,8 @@ impl Game {
     /// Start a fresh run on a new maze, keeping the flashlight setting.
     pub fn restart(&mut self, seed: u32) {
         let flashlight_on = self.flashlight_on;
-        *self = Game::new(seed);
+        let difficulty = self.difficulty;
+        *self = Game::new_with_difficulty(seed, difficulty);
         self.flashlight_on = flashlight_on;
     }
 
@@ -95,7 +145,7 @@ impl Game {
     }
 
     pub fn enemy_awake(&self) -> bool {
-        Enemy::awake(self.time, self.collected)
+        self.time > self.difficulty.enemy_wake_time() || self.collected > 0
     }
 
     pub fn enemy_distance(&self) -> f32 {
@@ -160,7 +210,12 @@ impl Game {
                 &self.world,
                 RENDER_DIST,
             );
-            let speed = Enemy::speed(self.collected, seen);
+            let speed = Enemy::speed_with_tuning(
+                self.collected,
+                seen,
+                self.difficulty.enemy_speed_multiplier(),
+                self.difficulty.seen_speed_factor(),
+            );
             let pp = self.player.pos;
             self.enemy.update(&self.world, pp, speed, dt);
         }

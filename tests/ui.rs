@@ -1,5 +1,5 @@
 use minifb::Key;
-use raycast_blocks::game::Game;
+use raycast_blocks::game::{Difficulty, Game};
 use raycast_blocks::input::Action;
 use raycast_blocks::renderer::Framebuffer;
 use raycast_blocks::settings::Settings;
@@ -13,20 +13,71 @@ fn pointer(x: f32, y: f32, down: bool, scroll: f32) -> UiInput {
     UiInput::from_keys(vec![]).with_mouse(Some((x, y)), down, scroll, (320, 180))
 }
 
+fn start_normal(ui: &mut Ui, settings: &mut Settings) {
+    ui.update(&press(Key::Enter), settings);
+    assert_eq!(ui.screen(), Screen::Difficulty);
+    ui.update(&press(Key::Down), settings);
+    ui.update(&press(Key::Enter), settings);
+}
+
 #[test]
 fn main_menu_starts_a_new_run() {
     let mut ui = Ui::new();
     let mut settings = Settings::default();
+    let opened = ui.update(&press(Key::Enter), &mut settings);
+    assert!(!opened.start_game);
+    assert_eq!(ui.screen(), Screen::Difficulty);
+    ui.update(&press(Key::Down), &mut settings);
     let outcome = ui.update(&press(Key::Enter), &mut settings);
     assert!(outcome.start_game);
+    assert_eq!(outcome.difficulty, Some(Difficulty::Normal));
     assert_eq!(ui.screen(), Screen::Playing);
+}
+
+#[test]
+fn difficulty_screen_selects_modes_and_can_return_to_main_menu() {
+    for (down_count, expected) in [
+        (0, Difficulty::Easy),
+        (1, Difficulty::Normal),
+        (2, Difficulty::Hard),
+    ] {
+        let mut ui = Ui::new();
+        let mut settings = Settings::default();
+        ui.update(&press(Key::Enter), &mut settings);
+        for _ in 0..down_count {
+            ui.update(&press(Key::Down), &mut settings);
+        }
+        let selected = ui.update(&press(Key::Enter), &mut settings);
+        assert!(selected.start_game);
+        assert_eq!(selected.difficulty, Some(expected));
+    }
+
+    let mut ui = Ui::new();
+    let mut settings = Settings::default();
+    ui.update(&press(Key::Enter), &mut settings);
+    ui.update(&press(Key::Escape), &mut settings);
+    assert_eq!(ui.screen(), Screen::MainMenu);
+}
+
+#[test]
+fn mouse_can_select_a_difficulty() {
+    let mut ui = Ui::new();
+    let mut settings = Settings::default();
+    ui.update(&pointer(160.0, 90.0, false, 0.0), &mut settings);
+    ui.update(&pointer(160.0, 90.0, true, 0.0), &mut settings);
+    assert_eq!(ui.screen(), Screen::Difficulty);
+
+    ui.update(&pointer(160.0, 100.0, false, 0.0), &mut settings);
+    let hard = ui.update(&pointer(160.0, 100.0, true, 0.0), &mut settings);
+    assert!(hard.start_game);
+    assert_eq!(hard.difficulty, Some(Difficulty::Hard));
 }
 
 #[test]
 fn escape_pauses_and_resumes_without_a_restart() {
     let mut ui = Ui::new();
     let mut settings = Settings::default();
-    ui.update(&press(Key::Enter), &mut settings);
+    start_normal(&mut ui, &mut settings);
     ui.update(&press(Key::Escape), &mut settings);
     assert_eq!(ui.screen(), Screen::Pause);
     ui.update(&press(Key::Escape), &mut settings);
@@ -37,7 +88,7 @@ fn escape_pauses_and_resumes_without_a_restart() {
 fn restart_key_restarts_from_pause_and_result_screens() {
     let mut ui = Ui::new();
     let mut settings = Settings::default();
-    ui.update(&press(Key::Enter), &mut settings);
+    start_normal(&mut ui, &mut settings);
     ui.update(&press(Key::Escape), &mut settings);
     let paused = ui.update(&press(Key::R), &mut settings);
     assert!(paused.restart_game);
@@ -91,7 +142,7 @@ fn controls_can_rebind_and_return_to_their_parent() {
 fn leaving_a_paused_run_requires_confirmation() {
     let mut ui = Ui::new();
     let mut settings = Settings::default();
-    ui.update(&press(Key::Enter), &mut settings);
+    start_normal(&mut ui, &mut settings);
     ui.update(&press(Key::Escape), &mut settings);
     for _ in 0..4 {
         ui.update(&press(Key::Down), &mut settings);
@@ -114,7 +165,7 @@ fn menu_layers_render_without_changing_the_game_framebuffer_size() {
     ui.draw(&mut framebuffer, 0, &game, &settings);
     assert!(framebuffer.pixels.iter().any(|&pixel| pixel != 0));
 
-    ui.update(&press(Key::Enter), &mut settings);
+    start_normal(&mut ui, &mut settings);
     ui.update(&press(Key::Escape), &mut settings);
     game.draw(&mut framebuffer, 1, settings.hfov_radians());
     ui.draw(&mut framebuffer, 1, &game, &settings);
@@ -171,7 +222,7 @@ fn mouse_can_rebind_controls_and_scroll_to_back() {
 fn mouse_navigates_pause_confirmation_and_result_screens() {
     let mut ui = Ui::new();
     let mut settings = Settings::default();
-    ui.update(&press(Key::Enter), &mut settings);
+    start_normal(&mut ui, &mut settings);
     ui.update(&press(Key::Escape), &mut settings);
     assert_eq!(ui.screen(), Screen::Pause);
 

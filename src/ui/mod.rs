@@ -1,5 +1,6 @@
 pub mod controls;
 pub mod dialogs;
+pub mod difficulty;
 pub mod layout;
 pub mod menu;
 pub mod pause;
@@ -8,7 +9,7 @@ pub mod theme;
 
 use self::settings as settings_page;
 
-use crate::game::{Game, State};
+use crate::game::{Difficulty, Game, State};
 use crate::input::{key_name, Action, Key};
 use crate::renderer::hud::fill_rect;
 use crate::renderer::Framebuffer;
@@ -21,6 +22,7 @@ const SETTINGS_PARENT_DEFAULT: Screen = Screen::MainMenu;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
     MainMenu,
+    Difficulty,
     Playing,
     Pause,
     Settings,
@@ -101,6 +103,7 @@ pub struct UiOutcome {
     pub quit: bool,
     pub settings_changed: bool,
     pub window_changed: bool,
+    pub difficulty: Option<Difficulty>,
 }
 
 pub struct Ui {
@@ -211,12 +214,34 @@ impl Ui {
                     if confirm {
                         match self.selected {
                             0 => {
-                                self.screen = Screen::Playing;
-                                outcome.start_game = true;
+                                self.screen = Screen::Difficulty;
+                                self.selected = 0;
                             }
                             1 => self.open_settings(Screen::MainMenu),
                             2 => self.open_controls(Screen::MainMenu),
                             _ => outcome.quit = true,
+                        }
+                    }
+                }
+            }
+            Screen::Difficulty => {
+                if input.back() {
+                    self.screen = Screen::MainMenu;
+                    self.selected = 0;
+                } else {
+                    self.navigate(input, difficulty::ITEMS.len());
+                    if confirm {
+                        match self.selected {
+                            0..=2 => {
+                                outcome.difficulty = Some(difficulty::OPTIONS[self.selected]);
+                                outcome.start_game = true;
+                                self.screen = Screen::Playing;
+                                self.selected = 0;
+                            }
+                            _ => {
+                                self.screen = Screen::MainMenu;
+                                self.selected = 0;
+                            }
                         }
                     }
                 }
@@ -392,6 +417,10 @@ impl Ui {
                 let panel = Self::menu_panel(size, menu::MAIN_ITEMS.len(), 0.63);
                 row_target(panel, panel.y + 27, 15, 13, menu::MAIN_ITEMS.len(), 14, 14)
             }
+            Screen::Difficulty => {
+                let panel = Self::menu_panel(size, difficulty::ITEMS.len(), 0.5);
+                row_target(panel, panel.y + 27, 15, 13, difficulty::ITEMS.len(), 14, 14)
+            }
             Screen::Pause => {
                 let panel = Self::menu_panel(size, menu::PAUSE_ITEMS.len(), 0.5);
                 row_target(panel, panel.y + 27, 15, 13, menu::PAUSE_ITEMS.len(), 14, 14)
@@ -478,6 +507,7 @@ impl Ui {
         }
         match self.screen {
             Screen::MainMenu => theme::fog_background(fb, frame),
+            Screen::Difficulty => theme::fog_background(fb, frame),
             Screen::Settings if self.settings_return == Screen::MainMenu => {
                 theme::fog_background(fb, frame)
             }
@@ -491,6 +521,12 @@ impl Ui {
 
         match self.screen {
             Screen::MainMenu => self.draw_main(fb),
+            Screen::Difficulty => self.draw_menu(
+                fb,
+                difficulty::TITLE,
+                difficulty::ITEMS,
+                difficulty::hint(self.selected),
+            ),
             Screen::Pause => self.draw_menu(fb, pause::TITLE, menu::PAUSE_ITEMS, pause::HINT),
             Screen::Settings => self.draw_settings(fb, settings),
             Screen::Controls => self.draw_controls(fb, settings),

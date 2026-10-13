@@ -24,6 +24,18 @@ fn speed_rules() {
 }
 
 #[test]
+fn tuned_speed_scales_chase_and_watched_speed() {
+    let easy = Enemy::speed_with_tuning(2, false, 0.70, 0.08);
+    let normal = Enemy::speed(2, false);
+    let hard = Enemy::speed_with_tuning(2, false, 1.35, 0.14);
+    assert!(easy < normal);
+    assert!(hard > normal);
+
+    assert!(Enemy::speed_with_tuning(2, true, 0.70, 0.08) < easy);
+    assert!(Enemy::speed_with_tuning(2, true, 1.35, 0.14) < hard);
+}
+
+#[test]
 fn catch_radius() {
     let e = Enemy::new(2.0, 2.0);
     assert!(e.has_caught(Vect::new(2.0 + CATCH_DIST * 0.5, 2.0, 2.5)));

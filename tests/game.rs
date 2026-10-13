@@ -1,6 +1,6 @@
 use raycast_blocks::audio::AudioEvent;
 use raycast_blocks::enemy::ENEMY_AWAKE_AFTER;
-use raycast_blocks::game::{Game, State, PAGES_TOTAL};
+use raycast_blocks::game::{Difficulty, Game, State, PAGES_TOTAL};
 use raycast_blocks::input::InputFrame;
 use raycast_blocks::math::Vect;
 use raycast_blocks::world::FLOOR_TOP;
@@ -28,6 +28,34 @@ fn same_seed_gives_same_layout() {
     let b = Game::new(99);
     assert_eq!(a.pages, b.pages);
     assert_eq!(a.world.blocks(), b.world.blocks());
+}
+
+#[test]
+fn difficulties_change_enemy_grace_period_and_chase_pressure() {
+    let easy = Game::new_with_difficulty(17, Difficulty::Easy);
+    let normal = Game::new(17);
+    let hard = Game::new_with_difficulty(17, Difficulty::Hard);
+
+    assert!(!easy.enemy_awake());
+    assert!(!normal.enemy_awake());
+    assert!(!hard.enemy_awake());
+    assert!(Difficulty::Easy.enemy_wake_time() > Difficulty::Normal.enemy_wake_time());
+    assert!(Difficulty::Hard.enemy_wake_time() < Difficulty::Normal.enemy_wake_time());
+    assert!(
+        Difficulty::Easy.enemy_speed_multiplier() < Difficulty::Normal.enemy_speed_multiplier()
+    );
+    assert!(
+        Difficulty::Hard.enemy_speed_multiplier() > Difficulty::Normal.enemy_speed_multiplier()
+    );
+    assert!(Difficulty::Easy.seen_speed_factor() < Difficulty::Normal.seen_speed_factor());
+    assert!(Difficulty::Hard.seen_speed_factor() > Difficulty::Normal.seen_speed_factor());
+
+    let mut easy = easy;
+    let mut hard = hard;
+    easy.time = Difficulty::Easy.enemy_wake_time() + 0.1;
+    hard.time = Difficulty::Hard.enemy_wake_time() + 0.1;
+    assert!(easy.enemy_awake());
+    assert!(hard.enemy_awake());
 }
 
 #[test]
@@ -93,7 +121,7 @@ fn enemy_touching_the_player_catches_them() {
 
 #[test]
 fn restart_needs_a_delay_and_keeps_the_flashlight_setting() {
-    let mut g = Game::new(5);
+    let mut g = Game::new_with_difficulty(5, Difficulty::Hard);
     g.flashlight_on = false;
     g.time = ENEMY_AWAKE_AFTER + 1.0;
     g.enemy.pos = Vect::new(g.player.pos.x, g.player.pos.y, FLOOR_TOP);
@@ -110,6 +138,7 @@ fn restart_needs_a_delay_and_keeps_the_flashlight_setting() {
     assert_eq!(g.state, State::Playing);
     assert_eq!(g.collected, 0);
     assert!(!g.flashlight_on);
+    assert_eq!(g.difficulty, Difficulty::Hard);
 }
 
 #[test]

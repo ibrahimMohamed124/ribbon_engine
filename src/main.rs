@@ -335,7 +335,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fb = Framebuffer::new(settings.render_width, settings.render_height);
         }
         if ui_outcome.start_game {
-            game = Game::new(seed_now());
+            game = Game::new_with_difficulty(
+                seed_now(),
+                ui_outcome.difficulty.unwrap_or(game.difficulty),
+            );
             game.flashlight_on = settings.flashlight_on_start;
         } else if ui_outcome.restart_game {
             game.restart(seed_now());
@@ -365,6 +368,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             UiScreen::MainMenu
             | UiScreen::Pause
+            | UiScreen::Difficulty
             | UiScreen::Settings
             | UiScreen::Controls
             | UiScreen::ConfirmMainMenu => (Some(AudioAmbience::Menu), 0.12),
@@ -406,6 +410,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             title_timer = 0.0;
             let title = match ui.screen() {
                 UiScreen::MainMenu => "STUDS | main menu".to_owned(),
+                UiScreen::Difficulty => "STUDS | choose difficulty".to_owned(),
                 UiScreen::Pause => "STUDS | paused".to_owned(),
                 UiScreen::Settings => "STUDS | settings".to_owned(),
                 UiScreen::Controls => "STUDS | controls".to_owned(),
