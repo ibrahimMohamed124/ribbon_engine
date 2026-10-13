@@ -225,4 +225,24 @@ mod tests {
             wall_texture_modulation(&right, &texture, 1.0)
         );
     }
+
+    #[test]
+    fn procedural_wall_and_floor_modulation_stays_in_range() {
+        let bricks = Texture::bricks(64, 32, 17);
+        let noise = Texture::noise(64, 64, 41);
+        for row in 0..4 {
+            for step in 0..32 {
+                let height = step as f32 / 32.0;
+                let hit = Hit {
+                    cell: (2, 4, 1),
+                    normal: [1, 0, 0],
+                    dist: 1.0,
+                    point: Vect::new(3.0, height, row as f32 * 0.5 + 0.13),
+                };
+                assert!((0.7..=1.3).contains(&wall_texture_modulation(&hit, &bricks, 1.0)));
+                let floor_factor = noise.sample_nearest(height, row as f32 / 4.0) / noise.average();
+                assert!((0.7..=1.3).contains(&floor_factor));
+            }
+        }
+    }
 }

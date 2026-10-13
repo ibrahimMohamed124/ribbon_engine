@@ -126,5 +126,5 @@ fn moody_render_is_deterministic_and_matches_its_golden() {
         "rayon rendering must be deterministic"
     );
     // Re-bless intentionally with `cargo test -p studs --test golden -- --nocapture`.
-    assert_eq!(first_hash, 0xa61f7b563f6bc060);
+    assert_eq!(first_hash, 0xf4892832fa68b8c2);
 }

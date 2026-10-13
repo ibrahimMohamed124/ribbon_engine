@@ -35,3 +35,7 @@ Thanks for considering a contribution to STUDS.
 - Follow standard Rust formatting and keep module boundaries clear.
 - Prefer deterministic tests for gameplay and rendering logic.
 - Avoid adding dependencies unless they provide a clear benefit.
+
+- Before re-blessing a Moody golden, run cargo run --release -p blocks_engine --example level_probe and confirm every lighting target passes. The Classic framebuffer hash must remain unchanged.
+
+- cargo run --release -p blocks_engine --example level_probe prints the Classic/Moody reference levels and exits nonzero if a Moody target regresses.

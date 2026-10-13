@@ -2,6 +2,7 @@
 
 use super::RENDER_DIST;
 use crate::math::pack_gray;
+use std::sync::{Arc, OnceLock};
 
 pub const LEVEL_COUNT: usize = 14;
 const LEVEL_LUT_SIZE: usize = 1024;
@@ -132,33 +133,97 @@ impl RenderStyle {
 
     pub(crate) fn level_lut(&self) -> LevelLut {
         let bypass = matches!(self.tonemap, Tonemap::None) && self.gamma == 1.0;
-        let values = if bypass {
-            [0.0; LEVEL_LUT_SIZE]
+        if bypass {
+            return LevelLut {
+                tone: None,
+                gamma: None,
+                bypass: true,
+            };
+        }
+        let is_moody = matches!(self.tonemap, Tonemap::Exp { exposure } if exposure == 2.0)
+            && self.gamma == 1.6;
+        static MOODY_TONE: OnceLock<Arc<[f32; LEVEL_LUT_SIZE]>> = OnceLock::new();
+        static MOODY_GAMMA: OnceLock<Arc<[f32; LEVEL_LUT_SIZE]>> = OnceLock::new();
+        let tone = if is_moody {
+            MOODY_TONE
+                .get_or_init(|| Arc::new(self.build_tone_table()))
+                .clone()
         } else {
-            std::array::from_fn(|i| self.level_for(i as f32 * 2.0 / (LEVEL_LUT_SIZE - 1) as f32))
+            Arc::new(self.build_tone_table())
         };
-        LevelLut { values, bypass }
+        let gamma = if is_moody {
+            MOODY_GAMMA
+                .get_or_init(|| Arc::new(self.build_gamma_table()))
+                .clone()
+        } else {
+            Arc::new(self.build_gamma_table())
+        };
+        LevelLut {
+            tone: Some(tone),
+            gamma: Some(gamma),
+            bypass: false,
+        }
+    }
+
+    fn build_tone_table(&self) -> [f32; LEVEL_LUT_SIZE] {
+        std::array::from_fn(|i| {
+            self.tonemap
+                .apply(i as f32 * 2.0 / (LEVEL_LUT_SIZE - 1) as f32)
+                .clamp(0.0, 1.0)
+        })
+    }
+
+    fn build_gamma_table(&self) -> [f32; LEVEL_LUT_SIZE] {
+        let gamma = if self.gamma.is_finite() && self.gamma > 0.0 {
+            self.gamma
+        } else {
+            1.0
+        };
+        std::array::from_fn(|i| {
+            let mapped = i as f32 / (LEVEL_LUT_SIZE - 1) as f32;
+            let encoded = if gamma == 1.0 {
+                mapped
+            } else {
+                mapped.powf(1.0 / gamma)
+            };
+            encoded * (LEVEL_COUNT - 1) as f32
+        })
     }
 }
 
 pub(crate) struct LevelLut {
-    values: [f32; LEVEL_LUT_SIZE],
+    tone: Option<Arc<[f32; LEVEL_LUT_SIZE]>>,
+    gamma: Option<Arc<[f32; LEVEL_LUT_SIZE]>>,
     bypass: bool,
 }
 
 impl LevelLut {
-    pub(crate) fn level_for(&self, style: &RenderStyle, gray: f32) -> f32 {
+    fn sample(table: &[f32; LEVEL_LUT_SIZE], value: f32, max: f32) -> f32 {
+        let position = value.clamp(0.0, max) * (LEVEL_LUT_SIZE - 1) as f32 / max;
+        let low = position.floor() as usize;
+        let high = (low + 1).min(LEVEL_LUT_SIZE - 1);
+        let fraction = position - low as f32;
+        table[low] * (1.0 - fraction) + table[high] * fraction
+    }
+
+    pub(crate) fn tone(&self, style: &RenderStyle, gray: f32) -> f32 {
         if !gray.is_finite() {
             return 0.0;
         }
         if self.bypass {
-            return style.level_for(gray);
+            return style.tonemap.apply(gray);
         }
-        let position = gray.clamp(0.0, 2.0) * (LEVEL_LUT_SIZE - 1) as f32 / 2.0;
-        let low = position.floor() as usize;
-        let high = (low + 1).min(LEVEL_LUT_SIZE - 1);
-        let fraction = position - low as f32;
-        self.values[low] * (1.0 - fraction) + self.values[high] * fraction
+        Self::sample(self.tone.as_ref().expect("tone table"), gray, 2.0)
+    }
+
+    pub(crate) fn level(&self, gray: f32) -> f32 {
+        if !gray.is_finite() {
+            return 0.0;
+        }
+        if self.bypass {
+            return gray.clamp(0.0, 1.0) * (LEVEL_COUNT - 1) as f32;
+        }
+        Self::sample(self.gamma.as_ref().expect("gamma table"), gray, 1.0)
     }
 }
 
@@ -218,7 +283,9 @@ mod tests {
         let lut = style.level_lut();
         for i in 0..=1000 {
             let gray = i as f32 * 1.9 / 1000.0;
-            assert!((lut.level_for(&style, gray) - style.level_for(gray)).abs() < 0.02);
+            let exact = style.level_for(gray);
+            let sampled = lut.level(lut.tone(&style, gray));
+            assert!((sampled - exact).abs() < 0.02);
         }
         assert!(RenderStyle::classic().level_lut().bypass);
     }

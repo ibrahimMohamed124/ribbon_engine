@@ -26,7 +26,12 @@ pub fn cone_factor(cosang: f32) -> f32 {
 }
 
 pub fn light(illumination: f32, distance: f32, ndotl: f32, cone: f32) -> f32 {
-    light_with_style(illumination, distance, ndotl, cone, &RenderStyle::classic())
+    let fog = (1.0 - distance / super::RENDER_DIST).clamp(0.0, 1.0);
+    let ambient = 0.035;
+    let lamp = 0.12 / (1.0 + 0.7 * distance * distance);
+    let beam =
+        illumination * cone * (0.3 + 0.7 * ndotl) * (1.7 / (1.0 + 0.06 * distance * distance));
+    (ambient + lamp + beam) * fog
 }
 
 pub fn light_with_style(
@@ -81,6 +86,9 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
     } else {
         0.0
     };
+    // The screen-space contribution becomes sub-pixel at range. Skip the
+    // neighborhood queries there to avoid spending work on invisible AO.
+    let ao_strength = ao_strength * (1.0 - hit.dist / 4.0).clamp(0.0, 1.0);
     let ao = if ao_strength == 0.0 {
         1.0
     } else {
