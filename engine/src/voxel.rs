@@ -68,7 +68,7 @@ pub fn face_ao(world: &VoxelWorld, hit: &Hit, empty: u8) -> f32 {
             corner[axes[1]] += sv;
             let solid = |cell: [i32; 3]| {
                 world
-                    .get_checked(cell[2], cell[1], cell[0])
+                    .get(cell[0], cell[1], cell[2])
                     .is_none_or(|block| block != empty)
             };
             let a = solid(side_u);
@@ -113,32 +113,37 @@ impl VoxelWorld {
         &self.blocks
     }
 
-    pub fn get_checked(&self, z: i32, y: i32, x: i32) -> Option<u8> {
-        if z < 0 || y < 0 || x < 0 {
+    /// Get a voxel by world coordinates `(x, y, z)`, returning `None` outside the grid.
+    pub fn get(&self, x: i32, y: i32, z: i32) -> Option<u8> {
+        if x < 0 || y < 0 || z < 0 {
             return None;
         }
-        let (z, y, x) = (z as usize, y as usize, x as usize);
-        if z >= self.depth || y >= self.height || x >= self.width {
+        let (x, y, z) = (x as usize, y as usize, z as usize);
+        if x >= self.width || y >= self.height || z >= self.depth {
             return None;
         }
         Some(self.blocks[Self::idx(self.width, self.height, z, y, x)])
     }
 
     pub fn tile_open(&self, x: i32, y: i32, z: i32, empty: u8) -> bool {
-        self.get_checked(z, y, x) == Some(empty)
+        self.get(x, y, z) == Some(empty)
     }
 
+    /// Test a point against the world. Out-of-range x/y and negative z are solid;
+    /// z at or above the world depth is open space.
     pub fn is_solid_at(&self, x: f32, y: f32, z: f32, empty: u8) -> bool {
         let (cx, cy, cz) = (x.floor() as i32, y.floor() as i32, z.floor() as i32);
         if cx < 0 || cy < 0 || cx >= self.width as i32 || cy >= self.height as i32 || cz < 0 {
             return true;
         }
-        match self.get_checked(cz, cy, cx) {
+        match self.get(cx, cy, cz) {
             Some(block) => block != empty,
             None => false,
         }
     }
 
+    /// Cast a ray through the grid, returning the first non-empty voxel up to `max_dist`.
+    /// Rays whose origin cell lies outside the grid return `None`.
     pub fn cast(&self, origin: Vect, dir: Vect, max_dist: f32, empty: u8) -> Option<Hit> {
         let o = [origin.x, origin.y, origin.z];
         let d = [dir.x, dir.y, dir.z];
@@ -166,7 +171,7 @@ impl VoxelWorld {
         let mut t = 0.0f32;
         let mut normal = [0i32; 3];
         loop {
-            let block = self.get_checked(cell[2], cell[1], cell[0])?;
+            let block = self.get(cell[0], cell[1], cell[2])?;
             if block != empty {
                 return Some(Hit {
                     cell: (cell[0], cell[1], cell[2]),
@@ -197,6 +202,7 @@ impl VoxelWorld {
         }
     }
 
+    /// Convert `(z, y, x)` storage coordinates into the z-major flat buffer index.
     pub fn idx(width: usize, height: usize, z: usize, y: usize, x: usize) -> usize {
         (z * height + y) * width + x
     }
@@ -297,5 +303,63 @@ mod tests {
         let a = face_ao(&world, &x_face(Vect::new(4.0, 3.25, 3.75)), EMPTY);
         let b = face_ao(&world, &x_face(Vect::new(4.0, 3.75, 3.25)), EMPTY);
         assert!((a - b).abs() < 1e-6);
+    }
+
+    #[test]
+    fn canonical_get_uses_xyz_order_and_returns_none_outside() {
+        let world = world_with_solids(&[(3, 4, 5)]);
+        assert_eq!(world.get(3, 4, 5), Some(SOLID));
+        assert_eq!(world.get(5, 4, 3), Some(EMPTY));
+        assert_eq!(world.get(-1, 4, 5), None);
+        assert_eq!(world.get(3, 8, 5), None);
+        assert_eq!(world.get(3, 4, 8), None);
+    }
+
+    #[test]
+    fn point_query_keeps_its_asymmetric_vertical_bounds() {
+        let world = world_with_solids(&[]);
+        assert!(world.is_solid_at(-0.1, 1.0, 2.0, EMPTY));
+        assert!(world.is_solid_at(1.0, -0.1, 2.0, EMPTY));
+        assert!(world.is_solid_at(1.0, 1.0, -0.1, EMPTY));
+        assert!(!world.is_solid_at(1.0, 1.0, 8.0, EMPTY));
+    }
+
+    #[test]
+    fn cast_documents_origin_hit_and_distance_limit() {
+        let world = world_with_solids(&[(3, 3, 3), (5, 3, 3)]);
+        let origin_hit = world
+            .cast(
+                Vect::new(3.5, 3.5, 3.5),
+                Vect::new(1.0, 0.0, 0.0),
+                8.0,
+                EMPTY,
+            )
+            .unwrap();
+        assert_eq!(origin_hit.dist, 0.0);
+        assert_eq!(origin_hit.normal, [0, 0, 0]);
+        assert!(world
+            .cast(
+                Vect::new(-0.5, 3.5, 3.5),
+                Vect::new(1.0, 0.0, 0.0),
+                8.0,
+                EMPTY
+            )
+            .is_none());
+        assert!(world
+            .cast(
+                Vect::new(4.5, 3.5, 3.5),
+                Vect::new(1.0, 0.0, 0.0),
+                0.49,
+                EMPTY
+            )
+            .is_none());
+        assert!(world
+            .cast(
+                Vect::new(4.5, 3.5, 3.5),
+                Vect::new(1.0, 0.0, 0.0),
+                0.5,
+                EMPTY
+            )
+            .is_some());
     }
 }

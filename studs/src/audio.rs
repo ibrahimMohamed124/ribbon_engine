@@ -5,6 +5,28 @@ use blocks_engine::audio::{
     SoundId,
 };
 
+/// Game-specific sound IDs. Numeric values remain stable for saved/debugged data.
+pub mod sounds {
+    use blocks_engine::audio::SoundId;
+
+    pub const FOOTSTEP: SoundId = SoundId(0);
+    pub const CHASE_FOOTSTEP: SoundId = SoundId(1);
+    pub const JUMP: SoundId = SoundId(2);
+    pub const LAND: SoundId = SoundId(3);
+    pub const COLLECT: SoundId = SoundId(4);
+    pub const STING: SoundId = SoundId(5);
+    pub const CAUGHT: SoundId = SoundId(6);
+    pub const VICTORY: SoundId = SoundId(7);
+}
+
+/// Game-specific ambience IDs.
+pub mod ambiences {
+    use blocks_engine::audio::AmbienceId;
+
+    pub const MENU: AmbienceId = AmbienceId(0);
+    pub const THREAT: AmbienceId = AmbienceId(1);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AudioEvent {
     Footstep,
@@ -43,15 +65,19 @@ struct EventBackend(Box<dyn AudioBackend>);
 
 impl MixerBackend for EventBackend {
     fn play(&mut self, sound: SoundId, volume: f32) {
-        self.0.play(event_for(sound), volume);
+        if let Some(event) = event_for(sound) {
+            self.0.play(event, volume);
+        }
     }
 
     fn play_spatial(&mut self, sound: SoundId, volume: f32, pan: f32) {
-        self.0.play_spatial(event_for(sound), volume, pan);
+        if let Some(event) = event_for(sound) {
+            self.0.play_spatial(event, volume, pan);
+        }
     }
 
     fn set_ambience(&mut self, ambience: Option<AmbienceId>, volume: f32) {
-        self.0.set_ambience(ambience.map(ambience_for), volume);
+        self.0.set_ambience(ambience.and_then(ambience_for), volume);
     }
 }
 
@@ -128,41 +154,43 @@ impl Audio {
 
 fn sound_for(event: AudioEvent) -> SoundId {
     match event {
-        AudioEvent::Footstep => SoundId::Footstep,
-        AudioEvent::Jump => SoundId::Jump,
-        AudioEvent::Land => SoundId::Land,
-        AudioEvent::PageCollected => SoundId::Collect,
-        AudioEvent::EnemySting => SoundId::Sting,
-        AudioEvent::EnemyFootstep => SoundId::ChaseFootstep,
-        AudioEvent::Caught => SoundId::Caught,
-        AudioEvent::Won => SoundId::Victory,
+        AudioEvent::Footstep => sounds::FOOTSTEP,
+        AudioEvent::Jump => sounds::JUMP,
+        AudioEvent::Land => sounds::LAND,
+        AudioEvent::PageCollected => sounds::COLLECT,
+        AudioEvent::EnemySting => sounds::STING,
+        AudioEvent::EnemyFootstep => sounds::CHASE_FOOTSTEP,
+        AudioEvent::Caught => sounds::CAUGHT,
+        AudioEvent::Won => sounds::VICTORY,
     }
 }
 
-fn event_for(sound: SoundId) -> AudioEvent {
+fn event_for(sound: SoundId) -> Option<AudioEvent> {
     match sound {
-        SoundId::Footstep => AudioEvent::Footstep,
-        SoundId::Jump => AudioEvent::Jump,
-        SoundId::Land => AudioEvent::Land,
-        SoundId::Collect => AudioEvent::PageCollected,
-        SoundId::Sting => AudioEvent::EnemySting,
-        SoundId::ChaseFootstep => AudioEvent::EnemyFootstep,
-        SoundId::Caught => AudioEvent::Caught,
-        SoundId::Victory => AudioEvent::Won,
+        sounds::FOOTSTEP => Some(AudioEvent::Footstep),
+        sounds::JUMP => Some(AudioEvent::Jump),
+        sounds::LAND => Some(AudioEvent::Land),
+        sounds::COLLECT => Some(AudioEvent::PageCollected),
+        sounds::STING => Some(AudioEvent::EnemySting),
+        sounds::CHASE_FOOTSTEP => Some(AudioEvent::EnemyFootstep),
+        sounds::CAUGHT => Some(AudioEvent::Caught),
+        sounds::VICTORY => Some(AudioEvent::Won),
+        _ => None,
     }
 }
 
 fn sound_ambience(ambience: AudioAmbience) -> AmbienceId {
     match ambience {
-        AudioAmbience::Menu => AmbienceId::Menu,
-        AudioAmbience::Enemy => AmbienceId::Threat,
+        AudioAmbience::Menu => ambiences::MENU,
+        AudioAmbience::Enemy => ambiences::THREAT,
     }
 }
 
-fn ambience_for(ambience: AmbienceId) -> AudioAmbience {
+fn ambience_for(ambience: AmbienceId) -> Option<AudioAmbience> {
     match ambience {
-        AmbienceId::Menu => AudioAmbience::Menu,
-        AmbienceId::Threat => AudioAmbience::Enemy,
+        ambiences::MENU => Some(AudioAmbience::Menu),
+        ambiences::THREAT => Some(AudioAmbience::Enemy),
+        _ => None,
     }
 }
 
@@ -180,56 +208,56 @@ pub fn sound_bank() -> SoundBank {
     SoundBank::new(
         vec![
             sound(
-                SoundId::Footstep,
+                sounds::FOOTSTEP,
                 include_bytes!("../assets/audio/footstep.wav"),
                 0.20,
                 1.0,
                 false,
             ),
             sound(
-                SoundId::ChaseFootstep,
+                sounds::CHASE_FOOTSTEP,
                 include_bytes!("../assets/audio/footstep.wav"),
                 0.44,
                 0.72,
                 true,
             ),
             sound(
-                SoundId::Jump,
+                sounds::JUMP,
                 include_bytes!("../assets/audio/jump.wav"),
                 0.48,
                 1.0,
                 false,
             ),
             sound(
-                SoundId::Land,
+                sounds::LAND,
                 include_bytes!("../assets/audio/footstep.wav"),
                 0.28,
                 1.0,
                 false,
             ),
             sound(
-                SoundId::Collect,
+                sounds::COLLECT,
                 include_bytes!("../assets/audio/page_collect.wav"),
                 0.62,
                 1.0,
                 false,
             ),
             sound(
-                SoundId::Sting,
+                sounds::STING,
                 include_bytes!("../assets/audio/enemy_sting.wav"),
                 0.68,
                 1.0,
                 false,
             ),
             sound(
-                SoundId::Caught,
+                sounds::CAUGHT,
                 include_bytes!("../assets/audio/death.wav"),
                 0.72,
                 1.0,
                 false,
             ),
             sound(
-                SoundId::Victory,
+                sounds::VICTORY,
                 include_bytes!("../assets/audio/victory.wav"),
                 0.72,
                 1.0,
@@ -238,12 +266,12 @@ pub fn sound_bank() -> SoundBank {
         ],
         vec![
             AmbienceAsset {
-                id: AmbienceId::Menu,
+                id: ambiences::MENU,
                 data: include_bytes!("../assets/audio/menu_ambience.wav"),
                 gain: 1.0,
             },
             AmbienceAsset {
-                id: AmbienceId::Threat,
+                id: ambiences::THREAT,
                 data: include_bytes!("../assets/audio/enemy_ambient.wav"),
                 gain: 1.0,
             },

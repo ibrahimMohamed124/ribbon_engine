@@ -40,9 +40,9 @@ fn same_seed_same_world() {
 fn floor_everywhere_and_start_cell_open() {
     let w = World::generate(&mut Rng::new(5));
     assert_eq!(w.blocks().len(), X_BLOCKS * Y_BLOCKS * Z_BLOCKS);
-    assert_eq!(w.get_checked(0, 10, 10), Some(FLOOR));
-    assert_eq!(w.get_checked(1, 1, 1), Some(AIR));
-    assert_eq!(w.get_checked(-1, 0, 0), None);
+    assert_eq!(w.get(10, 10, 0), Some(FLOOR));
+    assert_eq!(w.get(1, 1, 1), Some(AIR));
+    assert_eq!(w.get(-1, 0, 0), None);
 }
 
 #[test]

@@ -71,7 +71,7 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
         return 0.0;
     }
     let block = world
-        .get_checked(hit.cell.2, hit.cell.1, hit.cell.0)
+        .get(hit.cell.0, hit.cell.1, hit.cell.2)
         .unwrap_or(empty_voxel);
     let axis = if hit.normal[0] != 0 {
         0
