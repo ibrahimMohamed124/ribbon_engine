@@ -12,8 +12,16 @@ pub enum AudioEvent {
     Land,
     PageCollected,
     EnemySting,
+    EnemyFootstep,
     Caught,
     Won,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpatialAudioEvent {
+    pub event: AudioEvent,
+    /// -1 is left, 0 is ahead, and 1 is right.
+    pub pan: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +33,12 @@ pub enum AudioAmbience {
 pub trait AudioBackend {
     /// Play `event` at `volume` (already clamped to 0..=1 and > 0).
     fn play(&mut self, event: AudioEvent, volume: f32);
+
+    /// Play a sound with horizontal stereo position. Backends without panning
+    /// support retain their normal playback behavior.
+    fn play_spatial(&mut self, event: AudioEvent, volume: f32, _pan: f32) {
+        self.play(event, volume);
+    }
 
     /// Select and set the relative volume of a looping background track.
     fn set_ambience(&mut self, _ambience: Option<AudioAmbience>, _volume: f32) {}
@@ -117,10 +131,24 @@ impl Audio {
         }
     }
 
+    pub fn play_spatial(&mut self, event: AudioEvent, pan: f32) {
+        let volume = self.effective_master_volume() * self.effects_volume;
+        if volume > 0.0 {
+            self.backend
+                .play_spatial(event, volume, pan.clamp(-1.0, 1.0));
+        }
+    }
+
     /// Play and remove every queued event.
     pub fn play_all(&mut self, events: &mut Vec<AudioEvent>) {
         for e in events.drain(..) {
             self.play(e);
+        }
+    }
+
+    pub fn play_spatial_all(&mut self, events: &mut Vec<SpatialAudioEvent>) {
+        for event in events.drain(..) {
+            self.play_spatial(event.event, event.pan);
         }
     }
 }

@@ -3,10 +3,10 @@
 //! arrives as an [`InputFrame`], sound leaves as [`AudioEvent`]s, pixels go
 //! into a [`Framebuffer`].
 
-use crate::audio::AudioEvent;
+use crate::audio::{AudioEvent, SpatialAudioEvent};
 use crate::enemy::Enemy;
 use crate::input::{Controls, InputFrame};
-use crate::math::{hash4, Angles, Rng, Vect};
+use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
 use crate::renderer::hud::{draw_caught, draw_hud, draw_won};
 use crate::renderer::{render, EntView, Frame, Framebuffer, RENDER_DIST};
@@ -18,6 +18,8 @@ const PAGE_PICKUP_RADIUS: f32 = 0.9;
 const RESTART_DELAY: f32 = 1.0;
 /// Distance (tiles) at which the enemy starts to affect the picture.
 const PROXIMITY_RANGE: f32 = 10.0;
+const PAGE_MIN_SEPARATION: f32 = 4.5;
+const ENEMY_FOOTSTEP_DISTANCE: f32 = 1.35;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum State {
@@ -83,6 +85,9 @@ pub struct Game {
     pub flashlight_on: bool,
     /// Sound requests produced by `update`. The caller drains these every frame.
     pub events: Vec<AudioEvent>,
+    pub spatial_events: Vec<SpatialAudioEvent>,
+    pub enemy_awake_since: Option<f32>,
+    enemy_footstep_distance: f32,
 }
 
 impl Game {
@@ -94,32 +99,63 @@ impl Game {
         let mut rng = Rng::new(seed);
         let world = World::generate(&mut rng);
 
-        let mut cells: Vec<(usize, usize)> = Vec::new();
-        while cells.len() < PAGES_TOTAL {
-            let c = (rng.below(CELLS), rng.below(CELLS));
-            if c.0 + c.1 >= 6 && c != (CELLS - 1, CELLS - 1) && !cells.contains(&c) {
-                cells.push(c);
+        let mut cell_order: Vec<(usize, usize)> = (0..CELLS)
+            .flat_map(|cy| (0..CELLS).map(move |cx| (cx, cy)))
+            .collect();
+        for i in (1..cell_order.len()).rev() {
+            let j = rng.below(i + 1);
+            cell_order.swap(i, j);
+        }
+        let start_cell = cell_order[0];
+        let enemy_cell = *cell_order
+            .iter()
+            .find(|&&(cx, cy)| cx.abs_diff(start_cell.0) + cy.abs_diff(start_cell.1) >= 5)
+            .expect("maze has cells far enough apart");
+        let start = Vect::new(
+            cell_center(start_cell.0),
+            cell_center(start_cell.1),
+            FLOOR_TOP,
+        );
+        let enemy_start = Vect::new(
+            cell_center(enemy_cell.0),
+            cell_center(enemy_cell.1),
+            FLOOR_TOP,
+        );
+
+        let mut pages = Vec::with_capacity(PAGES_TOTAL);
+        for minimum_gap in [PAGE_MIN_SEPARATION, 3.0, 0.0] {
+            for &(cx, cy) in &cell_order {
+                let page = Vect::new(cell_center(cx), cell_center(cy), FLOOR_TOP + 0.95);
+                if page.dist_xy(start) < PAGE_MIN_SEPARATION
+                    || page.dist_xy(enemy_start) < PAGE_MIN_SEPARATION
+                    || pages.iter().any(|&existing: &Vect| {
+                        existing == page || existing.dist_xy(page) < minimum_gap
+                    })
+                {
+                    continue;
+                }
+                pages.push(page);
+                if pages.len() == PAGES_TOTAL {
+                    break;
+                }
+            }
+            if pages.len() == PAGES_TOTAL {
+                break;
             }
         }
-        let pages: Vec<Vect> = cells
-            .iter()
-            .map(|&(cx, cy)| Vect::new(cell_center(cx), cell_center(cy), FLOOR_TOP + 0.95))
-            .collect();
-
-        let start = cell_center(0);
-        let far = cell_center(CELLS - 1);
+        assert_eq!(pages.len(), PAGES_TOTAL, "maze must fit all page pickups");
         Game {
             difficulty,
             world,
             player: Player::new(
-                start,
-                start,
+                start.x,
+                start.y,
                 Angles {
                     psi: 0.0,
                     phi: 0.785,
                 },
             ),
-            enemy: Enemy::new(far, far),
+            enemy: Enemy::new(enemy_start.x, enemy_start.y),
             got: vec![false; pages.len()],
             pages,
             collected: 0,
@@ -128,6 +164,9 @@ impl Game {
             state_t: 0.0,
             flashlight_on: true,
             events: Vec::new(),
+            spatial_events: Vec::new(),
+            enemy_awake_since: None,
+            enemy_footstep_distance: 0.0,
         }
     }
 
@@ -146,6 +185,11 @@ impl Game {
 
     pub fn enemy_awake(&self) -> bool {
         self.time > self.difficulty.enemy_wake_time() || self.collected > 0
+    }
+
+    pub fn enemy_tip_active(&self) -> bool {
+        self.enemy_awake_since
+            .is_some_and(|awake_at| self.time - awake_at < 8.0)
     }
 
     pub fn enemy_distance(&self) -> f32 {
@@ -203,7 +247,10 @@ impl Game {
         if awake {
             if !enemy_was_awake {
                 self.events.push(AudioEvent::EnemySting);
+                self.enemy_awake_since = Some(self.time);
             }
+            let player_visible = !self.enemy.has_seen_player
+                || self.enemy.can_see_player(self.player.pos, &self.world);
             let seen = self.enemy.is_seen_from(
                 self.player.pos,
                 self.player.view,
@@ -217,7 +264,29 @@ impl Game {
                 self.difficulty.seen_speed_factor(),
             );
             let pp = self.player.pos;
-            self.enemy.update(&self.world, pp, speed, dt);
+            let moved = self
+                .enemy
+                .update_hunt(&self.world, pp, player_visible, speed, dt);
+            self.enemy_footstep_distance += moved;
+            if self.enemy_footstep_distance >= ENEMY_FOOTSTEP_DISTANCE {
+                self.enemy_footstep_distance %= ENEMY_FOOTSTEP_DISTANCE;
+                let forward = forward_vec(self.player.view);
+                let to_enemy = Vect::new(
+                    self.enemy.pos.x - self.player.pos.x,
+                    self.enemy.pos.y - self.player.pos.y,
+                    0.0,
+                )
+                .normalize();
+                let right = Vect::new(-forward.y, forward.x, 0.0);
+                self.spatial_events.push(SpatialAudioEvent {
+                    event: AudioEvent::EnemyFootstep,
+                    pan: to_enemy.dot(right),
+                });
+            }
+            // A zero movement can happen after the enemy has finished searching.
+            if moved == 0.0 {
+                self.enemy_footstep_distance = 0.0;
+            }
         }
 
         if awake && self.enemy.has_caught(self.player.pos) {

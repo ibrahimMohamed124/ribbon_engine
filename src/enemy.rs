@@ -10,6 +10,8 @@ pub const ENEMY_BASE_SPEED: f32 = 3.6;
 pub const ENEMY_SPEED_PER_PAGE: f32 = 0.55;
 pub const SEEN_SPEED_FACTOR: f32 = 0.10;
 pub const CATCH_DIST: f32 = 0.85;
+pub const ENEMY_SIGHT_RANGE: f32 = 12.0;
+const SEARCH_DURATION: f32 = 7.0;
 
 /// Minimum dot(view direction, direction to enemy) for the player to "see" it.
 const VIEW_CONE_DOT: f32 = 0.82;
@@ -20,6 +22,11 @@ pub struct Enemy {
     pub phase: f32, // walk-cycle phase, drives leg animation
     pub target: Option<(i32, i32)>,
     pub moving: bool,
+    pub last_known_player: Option<Vect>,
+    pub has_seen_player: bool,
+    search_elapsed: f32,
+    search_target: Option<Vect>,
+    search_target_index: usize,
 }
 
 impl Enemy {
@@ -30,6 +37,11 @@ impl Enemy {
             phase: 0.0,
             target: None,
             moving: false,
+            last_known_player: None,
+            has_seen_player: false,
+            search_elapsed: 0.0,
+            search_target: None,
+            search_target_index: 0,
         }
     }
 
@@ -63,12 +75,117 @@ impl Enemy {
     }
 
     pub fn update(&mut self, world: &World, player: Vect, speed: f32, dt: f32) {
+        self.update_hunt(world, player, true, speed, dt);
+    }
+
+    /// Hunt the player's last visible position; search nearby briefly after losing sight.
+    /// Returns the distance travelled this frame for footstep timing.
+    pub fn update_hunt(
+        &mut self,
+        world: &World,
+        player: Vect,
+        player_visible: bool,
+        speed: f32,
+        dt: f32,
+    ) -> f32 {
+        if player_visible {
+            self.last_known_player = Some(player);
+            self.has_seen_player = true;
+            self.search_elapsed = 0.0;
+            self.search_target = None;
+        }
+
+        let destination = if player_visible {
+            player
+        } else if let Some(last_known) = self.last_known_player {
+            if self.pos.dist_xy(last_known) > 0.85 {
+                last_known
+            } else {
+                self.search_elapsed += dt;
+                if self.search_elapsed >= SEARCH_DURATION {
+                    self.last_known_player = None;
+                    self.search_target = None;
+                    self.target = None;
+                    self.moving = false;
+                    return 0.0;
+                }
+                if self
+                    .search_target
+                    .is_none_or(|target| self.pos.dist_xy(target) < 0.3)
+                {
+                    self.search_target = self.next_search_target(world, last_known);
+                }
+                match self.search_target {
+                    Some(target) => target,
+                    None => last_known,
+                }
+            }
+        } else {
+            self.moving = false;
+            if self.has_seen_player {
+                self.yaw = (self.yaw + dt * 0.8).rem_euclid(std::f32::consts::TAU);
+            }
+            return 0.0;
+        };
+
+        self.move_toward(world, destination, speed, dt)
+    }
+
+    pub fn can_see_player(&self, player: Vect, world: &World) -> bool {
+        let eye = Vect::new(self.pos.x, self.pos.y, self.pos.z + 1.5);
+        let chest = Vect::new(player.x, player.y, player.z + 1.2);
+        let to = Vect::new(chest.x - eye.x, chest.y - eye.y, chest.z - eye.z);
+        let dist = (to.x * to.x + to.y * to.y + to.z * to.z).sqrt();
+        if dist > ENEMY_SIGHT_RANGE || dist < 1e-3 {
+            return false;
+        }
+        let direction = to.scale(1.0 / dist);
+        let facing = forward_vec(Angles {
+            psi: 0.0,
+            phi: self.yaw,
+        });
+        if direction.dot(facing) < 0.2 {
+            return false;
+        }
+        world
+            .cast(eye, direction, dist)
+            .is_none_or(|hit| hit.dist > dist - 0.4)
+    }
+
+    fn next_search_target(&mut self, world: &World, around: Vect) -> Option<Vect> {
+        const OFFSETS: [(i32, i32); 8] = [
+            (1, 0),
+            (0, 1),
+            (-1, 0),
+            (0, -1),
+            (1, 1),
+            (-1, 1),
+            (-1, -1),
+            (1, -1),
+        ];
+        let center = (around.x.floor() as i32, around.y.floor() as i32);
+        for _ in 0..OFFSETS.len() {
+            let (dx, dy) = OFFSETS[self.search_target_index % OFFSETS.len()];
+            self.search_target_index += 1;
+            let tile = (center.0 + dx, center.1 + dy);
+            if world.tile_open(tile.0, tile.1) {
+                return Some(Vect::new(
+                    tile.0 as f32 + 0.5,
+                    tile.1 as f32 + 0.5,
+                    self.pos.z,
+                ));
+            }
+        }
+        None
+    }
+
+    fn move_toward(&mut self, world: &World, destination: Vect, speed: f32, dt: f32) -> f32 {
         self.moving = false;
         if speed <= 0.0 {
-            return;
+            return 0.0;
         }
         let tile = (self.pos.x.floor() as i32, self.pos.y.floor() as i32);
-        let ptile = (player.x.floor() as i32, player.y.floor() as i32);
+        let ptile = (destination.x.floor() as i32, destination.y.floor() as i32);
 
         if let Some(t) = self.target {
             let dx = t.0 as f32 + 0.5 - self.pos.x;
@@ -83,7 +200,7 @@ impl Enemy {
 
         let (gx, gy) = match self.target {
             Some(t) if tile != ptile => (t.0 as f32 + 0.5, t.1 as f32 + 0.5),
-            _ => (player.x, player.y),
+            _ => (destination.x, destination.y),
         };
         let dx = gx - self.pos.x;
         let dy = gy - self.pos.y;
@@ -95,7 +212,9 @@ impl Enemy {
             self.yaw = dy.atan2(dx);
             self.phase += step * 2.4;
             self.moving = true;
+            return step;
         }
+        0.0
     }
 
     /// Can a viewer at `eye` looking along `view` see the enemy right now

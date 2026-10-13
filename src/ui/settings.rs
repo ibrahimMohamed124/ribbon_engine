@@ -2,7 +2,7 @@ use crate::settings::Settings;
 
 pub const TITLE: &str = "SETTINGS / AUDIO / GAME / DISPLAY";
 pub const HINT: &str = "CLICK SELECT   L/R CHANGE   ESC BACK";
-pub const ITEM_COUNT: usize = 12;
+pub const ITEM_COUNT: usize = 13;
 
 pub fn label(index: usize) -> &'static str {
     match index {
@@ -17,6 +17,7 @@ pub fn label(index: usize) -> &'static str {
         8 => "MOUSE LOOK ON START",
         9 => "WINDOW SCALE",
         10 => "RENDER RESOLUTION",
+        11 => "BRIGHTNESS",
         _ => "BACK",
     }
 }
@@ -31,7 +32,12 @@ pub fn value(settings: &Settings, index: usize) -> String {
             if settings.mouse_sensitivity == 0.0 {
                 "OFF".to_owned()
             } else {
-                format!("{:.4}", settings.mouse_sensitivity)
+                format!(
+                    "{}/10",
+                    (settings.mouse_sensitivity * 1000.0)
+                        .round()
+                        .clamp(1.0, 10.0) as u32
+                )
             }
         }
         5 => if settings.invert_y { "ON" } else { "OFF" }.to_owned(),
@@ -50,6 +56,7 @@ pub fn value(settings: &Settings, index: usize) -> String {
         .to_owned(),
         9 => format!("{}X", settings.window_scale),
         10 => format!("{}X{}", settings.render_width, settings.render_height),
+        11 => format!("{:.0}%", settings.brightness * 100.0),
         _ => String::new(),
     }
 }
@@ -73,8 +80,8 @@ pub fn adjust(settings: &mut Settings, index: usize, direction: i32) -> (bool, b
         }
         3 => settings.mute_all = !settings.mute_all,
         4 => {
-            settings.mouse_sensitivity =
-                (settings.mouse_sensitivity + direction as f32 * 0.0005).clamp(0.0, 0.05)
+            let level = (settings.mouse_sensitivity * 1000.0).round() as i32;
+            settings.mouse_sensitivity = (level + direction).clamp(0, 10) as f32 / 1000.0;
         }
         5 => settings.invert_y = !settings.invert_y,
         6 => {
@@ -84,8 +91,12 @@ pub fn adjust(settings: &mut Settings, index: usize, direction: i32) -> (bool, b
         7 => settings.flashlight_on_start = !settings.flashlight_on_start,
         8 => settings.mouse_look_on_start = !settings.mouse_look_on_start,
         9 => {
-            const SCALES: [u32; 5] = [1, 2, 4, 8, 16];
-            settings.window_scale = cycle(&SCALES, settings.window_scale, direction);
+            let max_scale = Settings::scale_limit(settings.render_width, settings.render_height);
+            let scales: Vec<u32> = [1, 2, 4]
+                .into_iter()
+                .filter(|&scale| scale <= max_scale)
+                .collect();
+            settings.window_scale = cycle(&scales, settings.window_scale, direction);
         }
         10 => {
             const RESOLUTIONS: [(usize, usize); 3] = [(320, 180), (480, 270), (640, 360)];
@@ -94,7 +105,12 @@ pub fn adjust(settings: &mut Settings, index: usize, direction: i32) -> (bool, b
                 (settings.render_width, settings.render_height),
                 direction,
             );
+            settings.window_scale = settings.window_scale.min(Settings::scale_limit(
+                settings.render_width,
+                settings.render_height,
+            ));
         }
+        11 => settings.brightness = (settings.brightness + direction as f32 * 0.1).clamp(0.5, 1.5),
         _ => return (false, false),
     }
     let window_changed = settings.window_scale != old_scale

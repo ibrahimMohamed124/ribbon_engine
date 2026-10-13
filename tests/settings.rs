@@ -116,12 +116,12 @@ fn save_and_load_file() {
     let path = dir.join("nested").join("settings.cfg");
 
     let s = Settings {
-        window_scale: 8,
+        window_scale: 4,
         ..Settings::default()
     };
     s.save(&path).expect("save");
     let loaded = Settings::load(&path).expect("load");
-    assert_eq!(loaded.window_scale, 8);
+    assert_eq!(loaded.window_scale, 4);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

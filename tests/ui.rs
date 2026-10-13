@@ -241,8 +241,8 @@ fn mouse_navigates_pause_confirmation_and_result_screens() {
     assert_eq!(ui.screen(), Screen::MainMenu);
 
     ui.show_result();
-    ui.update(&pointer(160.0, 105.0, false, 0.0), &mut settings);
-    let replay = ui.update(&pointer(160.0, 105.0, true, 0.0), &mut settings);
+    ui.update(&pointer(160.0, 112.0, false, 0.0), &mut settings);
+    let replay = ui.update(&pointer(160.0, 112.0, true, 0.0), &mut settings);
     assert!(replay.start_game);
     assert_eq!(ui.screen(), Screen::Playing);
 }

@@ -426,7 +426,7 @@ impl Ui {
                 row_target(panel, panel.y + 27, 15, 13, menu::PAUSE_ITEMS.len(), 14, 14)
             }
             Screen::Settings => {
-                let panel = layout::centered_panel_for_size(width, height, 266, 170);
+                let panel = layout::centered_panel_for_size(width, height, 266, 178);
                 row_target(
                     panel,
                     panel.y + 25,
@@ -466,10 +466,10 @@ impl Ui {
                 })
             }
             Screen::Result => {
-                let panel = layout::centered_panel_for_size(width, height, 238, 125);
+                let panel = layout::centered_panel_for_size(width, height, 238, 158);
                 row_target(
                     panel,
-                    panel.y + 74,
+                    panel.y + 94,
                     13,
                     12,
                     menu::RESULT_ITEMS.len(),
@@ -531,8 +531,25 @@ impl Ui {
             Screen::Settings => self.draw_settings(fb, settings),
             Screen::Controls => self.draw_controls(fb, settings),
             Screen::ConfirmMainMenu => self.draw_confirm(fb),
-            Screen::Result => self.draw_result(fb, game),
+            Screen::Result => self.draw_result(fb, game, settings),
             Screen::Playing => {}
+        }
+    }
+
+    /// Draw short, timed gameplay instructions above the player HUD.
+    pub fn draw_game_hints(&self, fb: &mut Framebuffer, game: &Game) {
+        if self.screen != Screen::Playing {
+            return;
+        }
+        let mut y = 22;
+        if game.time < 7.0 {
+            fill_rect(fb, 0, y - 3, fb.width as i32, 12, 0x0007_090b);
+            theme::centered_text(fb, "GOAL: FIND ALL 6 PAGES", y, 1, TEXT);
+            y += 12;
+        }
+        if game.enemy_tip_active() {
+            fill_rect(fb, 0, y - 3, fb.width as i32, 12, 0x0007_090b);
+            theme::centered_text(fb, "KEEP THE CREATURE IN SIGHT", y, 1, ACCENT);
         }
     }
 
@@ -618,7 +635,7 @@ impl Ui {
     }
 
     fn draw_settings(&self, fb: &mut Framebuffer, settings: &Settings) {
-        let panel = layout::centered_panel(fb, 266, 170);
+        let panel = layout::centered_panel(fb, 266, 178);
         theme::panel(fb, panel.x, panel.y, panel.width, panel.height);
         theme::text(fb, settings_page::TITLE, panel.x + 18, panel.y + 9, 1, TEXT);
         fill_rect(
@@ -733,17 +750,24 @@ impl Ui {
         }
     }
 
-    fn draw_result(&self, fb: &mut Framebuffer, game: &Game) {
+    fn draw_result(&self, fb: &mut Framebuffer, game: &Game, settings: &Settings) {
         let won = game.state == State::Won;
         let (title, subtitle) = dialogs::result_copy(won);
-        let panel = layout::centered_panel(fb, 238, 125);
+        let panel = layout::centered_panel(fb, 238, 158);
         theme::panel(fb, panel.x, panel.y, panel.width, panel.height);
         theme::centered_text(fb, title, panel.y + 13, 1, if won { TEXT } else { ACCENT });
         theme::centered_text(fb, subtitle, panel.y + 27, 1, MUTED);
         theme::centered_text(
             fb,
+            &format!("DIFFICULTY {}", game.difficulty.label()),
+            panel.y + 41,
+            1,
+            TEXT,
+        );
+        theme::centered_text(
+            fb,
             &format!("PAGES {}/{}", game.collected, game.pages.len()),
-            panel.y + 43,
+            panel.y + 53,
             1,
             TEXT,
         );
@@ -751,21 +775,32 @@ impl Ui {
         theme::centered_text(
             fb,
             &format!("TIME {:02}:{:02}", elapsed / 60, elapsed % 60),
-            panel.y + 55,
+            panel.y + 65,
             1,
             MUTED,
         );
+        let best = settings
+            .best_time(game.difficulty)
+            .map(format_time)
+            .unwrap_or_else(|| "--:--".to_owned());
+        theme::centered_text(fb, &format!("BEST {best}"), panel.y + 77, 1, MUTED);
         fill_rect(
             fb,
             panel.x + 20,
-            panel.y + 69,
+            panel.y + 88,
             panel.width - 40,
             1,
             PANEL_EDGE,
         );
         for (index, item) in menu::RESULT_ITEMS.iter().enumerate() {
-            let y = panel.y + 77 + index as i32 * 13;
+            let y = panel.y + 96 + index as i32 * 13;
             self.draw_row(fb, panel, index, item, y);
         }
+        theme::centered_text(fb, "R PLAY AGAIN   ESC MENU", panel.y + 145, 1, MUTED);
     }
+}
+
+fn format_time(seconds: f32) -> String {
+    let elapsed = seconds.max(0.0) as u32;
+    format!("{:02}:{:02}", elapsed / 60, elapsed % 60)
 }

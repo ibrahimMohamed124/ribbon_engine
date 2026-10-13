@@ -16,6 +16,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::game::Difficulty;
 use crate::input::{key_name, parse_key, Action, KeyBindings};
 use crate::renderer::{DEFAULT_HEIGHT, DEFAULT_HFOV, DEFAULT_WIDTH};
 
@@ -31,8 +32,12 @@ pub struct Settings {
     /// Internal render resolution (the window scales it up).
     pub render_width: usize,
     pub render_height: usize,
-    /// Window scale factor: 1, 2, 4, 8 or 16.
+    /// Window scale factor, capped so the initial window stays near 1280x720.
     pub window_scale: u32,
+    /// Linear display brightness: 0.5 is dim, 1.0 is unchanged, 1.5 is bright.
+    pub brightness: f32,
+    /// Best completion time in seconds, indexed by Easy / Normal / Hard.
+    pub best_times: [f32; 3],
     pub flashlight_on_start: bool,
     pub mouse_look_on_start: bool,
     pub invert_y: bool,
@@ -52,6 +57,8 @@ impl Default for Settings {
             render_width: DEFAULT_WIDTH,
             render_height: DEFAULT_HEIGHT,
             window_scale: 4,
+            brightness: 1.0,
+            best_times: [0.0; 3],
             flashlight_on_start: true,
             mouse_look_on_start: false,
             invert_y: false,
@@ -61,9 +68,8 @@ impl Default for Settings {
     }
 }
 
-/// Bumped when default key bindings change. Files without this key were written
-/// by an older version and may hold stale movement/look bindings.
-pub const SETTINGS_VERSION: u32 = 4;
+/// Version used for settings migration and binding compatibility.
+pub const SETTINGS_VERSION: u32 = 5;
 
 fn is_movement_or_look(action: Action) -> bool {
     matches!(
@@ -84,6 +90,44 @@ fn parse_finite(v: &str) -> Option<f32> {
 }
 
 impl Settings {
+    pub fn scale_limit(width: usize, height: usize) -> u32 {
+        let fit = (1280 / width.max(1)).min(720 / height.max(1));
+        if fit >= 4 {
+            4
+        } else if fit >= 2 {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn difficulty_index(difficulty: Difficulty) -> usize {
+        match difficulty {
+            Difficulty::Easy => 0,
+            Difficulty::Normal => 1,
+            Difficulty::Hard => 2,
+        }
+    }
+
+    pub fn best_time(&self, difficulty: Difficulty) -> Option<f32> {
+        let time = self.best_times[Self::difficulty_index(difficulty)];
+        (time > 0.0 && time.is_finite()).then_some(time)
+    }
+
+    /// Record a new personal best. Returns true when the stored value changed.
+    pub fn record_best_time(&mut self, difficulty: Difficulty, time: f32) -> bool {
+        if !time.is_finite() || time <= 0.0 {
+            return false;
+        }
+        let best = &mut self.best_times[Self::difficulty_index(difficulty)];
+        if *best == 0.0 || time < *best {
+            *best = time;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn hfov_radians(&self) -> f32 {
         self.hfov_degrees.to_radians()
     }
@@ -154,9 +198,24 @@ impl Settings {
                 }
                 "window_scale" => {
                     if let Ok(v) = value.parse::<u32>() {
-                        if matches!(v, 1 | 2 | 4 | 8 | 16) {
+                        if matches!(v, 1 | 2 | 4) {
                             s.window_scale = v;
                         }
+                    }
+                }
+                "brightness" => {
+                    if let Some(v) = parse_finite(value) {
+                        s.brightness = v.clamp(0.5, 1.5);
+                    }
+                }
+                "best_time_easy" | "best_time_normal" | "best_time_hard" => {
+                    if let Some(v) = parse_finite(value) {
+                        let index = match key {
+                            "best_time_easy" => 0,
+                            "best_time_normal" => 1,
+                            _ => 2,
+                        };
+                        s.best_times[index] = v.clamp(0.0, 86_400.0);
                     }
                 }
                 "flashlight_on_start" => {
@@ -196,6 +255,9 @@ impl Settings {
                 }
             }
         }
+        s.window_scale = s
+            .window_scale
+            .min(Self::scale_limit(s.render_width, s.render_height));
         // Before mouse look had its own toggle, a saved zero sensitivity could
         // make the cursor hide while producing no camera movement. Version 4
         // migrates those old files to the usable default; zero remains available
@@ -219,6 +281,10 @@ impl Settings {
         out.push_str(&format!("render_width = {}\n", self.render_width));
         out.push_str(&format!("render_height = {}\n", self.render_height));
         out.push_str(&format!("window_scale = {}\n", self.window_scale));
+        out.push_str(&format!("brightness = {}\n", self.brightness));
+        out.push_str(&format!("best_time_easy = {}\n", self.best_times[0]));
+        out.push_str(&format!("best_time_normal = {}\n", self.best_times[1]));
+        out.push_str(&format!("best_time_hard = {}\n", self.best_times[2]));
         out.push_str(&format!(
             "flashlight_on_start = {}\n",
             self.flashlight_on_start

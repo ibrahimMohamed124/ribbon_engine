@@ -49,6 +49,7 @@ impl AudioBackend for RodioBackend {
 
         let (data, gain): (&'static [u8], f32) = match event {
             AudioEvent::Footstep => (include_bytes!("../assets/audio/footstep.wav"), 0.20),
+            AudioEvent::EnemyFootstep => (include_bytes!("../assets/audio/footstep.wav"), 0.44),
             AudioEvent::Jump => (include_bytes!("../assets/audio/jump.wav"), 0.48),
             AudioEvent::Land => (include_bytes!("../assets/audio/footstep.wav"), 0.28),
             AudioEvent::PageCollected => (include_bytes!("../assets/audio/page_collect.wav"), 0.62),
@@ -60,6 +61,28 @@ impl AudioBackend for RodioBackend {
         match rodio::Decoder::try_from(Cursor::new(data)) {
             Ok(source) => self.output.mixer().add(source.amplify(volume * gain)),
             Err(error) => eprintln!("could not decode {event:?} audio: {error}"),
+        }
+    }
+
+    fn play_spatial(&mut self, event: AudioEvent, volume: f32, pan: f32) {
+        if event != AudioEvent::EnemyFootstep {
+            self.play(event, volume);
+            return;
+        }
+        use rodio::source::Source;
+        use std::io::Cursor;
+
+        let player = rodio::SpatialPlayer::connect_new(
+            self.output.mixer(),
+            [pan.clamp(-1.0, 1.0) * 0.6, 0.8, 0.0],
+            [-0.12, 0.0, 0.0],
+            [0.12, 0.0, 0.0],
+        );
+        if let Ok(source) =
+            rodio::Decoder::try_from(Cursor::new(include_bytes!("../assets/audio/footstep.wav")))
+        {
+            player.append(source.speed(0.72).amplify(volume * 0.44));
+            player.detach();
         }
     }
 
@@ -207,8 +230,6 @@ fn scale_from(factor: u32) -> Scale {
     match factor {
         1 => Scale::X1,
         2 => Scale::X2,
-        8 => Scale::X8,
-        16 => Scale::X16,
         _ => Scale::X4,
     }
 }
@@ -352,6 +373,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             game.update(&frame_input, dt);
             if game.state != raycast_blocks::game::State::Playing {
+                if game.state == raycast_blocks::game::State::Won
+                    && settings.record_best_time(game.difficulty, game.time)
+                {
+                    let _ = settings.save(&settings_path);
+                }
                 ui.show_result();
             }
         } else {
@@ -376,12 +402,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         audio.set_ambience(ambience, ambience_volume);
         audio.play_all(&mut game.events);
+        audio.play_spatial_all(&mut game.spatial_events);
         if ui.is_playing() {
             game.draw(&mut fb, frame_no, settings.hfov_radians());
+            raycast_blocks::renderer::post::adjust_brightness(&mut fb, settings.brightness);
         } else {
             if ui.screen() == UiScreen::Result {
                 game.update(&InputFrame::default(), dt);
                 game.draw(&mut fb, frame_no, settings.hfov_radians());
+                raycast_blocks::renderer::post::adjust_brightness(&mut fb, settings.brightness);
             } else if matches!(
                 ui.screen(),
                 UiScreen::Pause
@@ -390,8 +419,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     | UiScreen::ConfirmMainMenu
             ) {
                 game.draw(&mut fb, frame_no, settings.hfov_radians());
+                raycast_blocks::renderer::post::adjust_brightness(&mut fb, settings.brightness);
             }
             ui.draw(&mut fb, frame_no, &game, &settings);
+        }
+        if ui.is_playing() {
+            ui.draw_game_hints(&mut fb, &game);
         }
 
         window.update_with_buffer(&fb.pixels, fb.width, fb.height)?;
