@@ -1,0 +1,239 @@
+//! STUDS application orchestration, independent of the desktop event loop.
+
+use std::error::Error;
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use blocks_engine::app::{App, Ctx, Flow, WindowConfig, WindowRequest};
+use blocks_engine::gfx::{post::adjust_brightness, Framebuffer};
+use blocks_engine::input::MouseSource;
+
+use crate::audio::{Audio, AudioAmbience};
+use crate::game::{Game, State, PAGES_TOTAL};
+use crate::input::{Input, InputFrame};
+use crate::settings::Settings;
+use crate::ui::{Screen, Ui, UiInput};
+
+struct FrameMouse((f32, f32));
+
+impl MouseSource for FrameMouse {
+    fn delta(&mut self) -> (f32, f32) {
+        std::mem::replace(&mut self.0, (0.0, 0.0))
+    }
+}
+
+pub struct StudsApp {
+    settings_path: PathBuf,
+    settings: Settings,
+    game: Game,
+    input: Input,
+    audio: Audio,
+    ui: Ui,
+    title_timer: f32,
+}
+
+impl StudsApp {
+    pub fn new() -> Result<Self, Box<dyn Error>> {
+        println!("STUDS - find all {PAGES_TOTAL} pages and don't get caught.");
+        let settings_path = Settings::default_path();
+        let settings = Settings::load_or_default(&settings_path);
+        if !settings_path.exists() {
+            let _ = settings.save(&settings_path);
+        } else if fs::read_to_string(&settings_path)
+            .map(|text| !text.contains("settings_version"))
+            .unwrap_or(false)
+        {
+            let _ = fs::copy(&settings_path, settings_path.with_extension("cfg.bak"));
+            let _ = settings.save(&settings_path);
+        }
+
+        let mut game = Game::new(seed_now());
+        game.flashlight_on = settings.flashlight_on_start;
+        let input = Input::with_mouse_look(
+            settings.bindings.clone(),
+            settings.mouse_sensitivity,
+            settings.mouse_look_on_start,
+            settings.invert_y,
+        );
+        let audio = match blocks_engine_desktop::audio::RodioBackend::new(crate::audio::sound_bank())
+        {
+            Ok(backend) => Audio::with_engine_backend(Box::new(backend), settings.master_volume),
+            Err(error) => {
+                eprintln!("audio output unavailable; continuing silently: {error}");
+                Audio::null(settings.master_volume)
+            }
+        };
+        let mut app = Self {
+            settings_path,
+            settings,
+            game,
+            input,
+            audio,
+            ui: Ui::new(),
+            title_timer: 0.0,
+        };
+        app.sync_audio_settings();
+        Ok(app)
+    }
+
+    pub fn window_config(&self) -> WindowConfig {
+        WindowConfig {
+            title: "STUDS".to_owned(),
+            width: self.settings.render_width,
+            height: self.settings.render_height,
+            scale: self.settings.window_scale,
+        }
+    }
+
+    fn sync_audio_settings(&mut self) {
+        self.audio.set_effects_volume(self.settings.effects_volume);
+        self.audio.set_ambient_volume(self.settings.ambient_volume);
+        self.audio.set_muted(self.settings.mute_all);
+    }
+
+    fn update_title(&self, ctx: &mut Ctx<'_>) {
+        let title = match self.ui.screen() {
+            Screen::MainMenu => "STUDS | main menu".to_owned(),
+            Screen::Difficulty => "STUDS | choose difficulty".to_owned(),
+            Screen::Pause => "STUDS | paused".to_owned(),
+            Screen::Settings => "STUDS | settings".to_owned(),
+            Screen::Controls => "STUDS | controls".to_owned(),
+            Screen::ConfirmMainMenu => "STUDS | confirm".to_owned(),
+            Screen::Result | Screen::Playing => self.game.window_title(ctx.fps),
+        };
+        ctx.request_title(title);
+    }
+}
+
+impl App for StudsApp {
+    fn update(&mut self, ctx: &mut Ctx<'_>) -> Flow {
+        let ui_input = UiInput::from_keys(ctx.pressed_keys.to_vec()).with_mouse(
+            ctx.mouse_position,
+            ctx.mouse_buttons.left,
+            ctx.mouse_scroll,
+            (self.settings.render_width, self.settings.render_height),
+        );
+        let outcome = self.ui.update(&ui_input, &mut self.settings);
+        if outcome.quit {
+            return Flow::Quit;
+        }
+        if outcome.settings_changed {
+            let _ = self.settings.save(&self.settings_path);
+            self.input.set_bindings(self.settings.bindings.clone());
+            self.input
+                .set_mouse_sensitivity(self.settings.mouse_sensitivity);
+            self.input.set_invert_y(self.settings.invert_y);
+            self.audio.set_volume(self.settings.master_volume);
+            self.sync_audio_settings();
+        }
+        if outcome.window_changed {
+            ctx.request_window(WindowRequest {
+                width: self.settings.render_width,
+                height: self.settings.render_height,
+                scale: self.settings.window_scale,
+            });
+        }
+        if outcome.start_game {
+            self.game = Game::new_with_difficulty(
+                seed_now(),
+                outcome.difficulty.unwrap_or(self.game.difficulty),
+            );
+            self.game.flashlight_on = self.settings.flashlight_on_start;
+        } else if outcome.restart_game {
+            self.game.restart(seed_now());
+        }
+
+        if self.ui.is_playing() && self.game.state == State::Playing {
+            let capture_mouse = self.input.mouse_look_active() && ctx.window_active;
+            let mut mouse = FrameMouse(ctx.mouse_delta);
+            let frame_input =
+                self.input
+                    .poll_with_mouse_source(ctx.keys, &mut mouse, capture_mouse);
+            if frame_input.quit {
+                return Flow::Quit;
+            }
+            self.game.update(&frame_input, ctx.dt);
+            if self.game.state != State::Playing {
+                if self.game.state == State::Won
+                    && self
+                        .settings
+                        .record_best_time(self.game.difficulty, self.game.time)
+                {
+                    let _ = self.settings.save(&self.settings_path);
+                }
+                self.ui.show_result();
+            }
+        } else {
+            self.input.synchronize_keys(ctx.keys);
+        }
+
+        if self.ui.is_playing() && self.game.state == State::Playing {
+            if self.input.mouse_look_active() && ctx.window_active {
+                ctx.capture_cursor();
+            } else {
+                ctx.release_cursor();
+            }
+        } else {
+            ctx.release_cursor();
+        }
+
+        let (ambience, ambience_volume) = match self.ui.screen() {
+            Screen::Playing if self.game.state == State::Playing && self.game.enemy_awake() => (
+                Some(AudioAmbience::Enemy),
+                0.025 + self.game.proximity() * 0.11,
+            ),
+            Screen::MainMenu
+            | Screen::Pause
+            | Screen::Difficulty
+            | Screen::Settings
+            | Screen::Controls
+            | Screen::ConfirmMainMenu => (Some(AudioAmbience::Menu), 0.12),
+            _ => (None, 0.0),
+        };
+        self.audio.set_ambience(ambience, ambience_volume);
+        self.audio.play_all(&mut self.game.events);
+        self.audio.play_spatial_all(&mut self.game.spatial_events);
+
+        self.title_timer += ctx.dt;
+        if self.title_timer > 0.4 {
+            self.title_timer = 0.0;
+            self.update_title(ctx);
+        }
+        Flow::Continue
+    }
+
+    fn render(&mut self, framebuffer: &mut Framebuffer, ctx: &Ctx<'_>) {
+        if self.ui.is_playing() {
+            self.game
+                .draw(framebuffer, ctx.frame, self.settings.hfov_radians());
+            adjust_brightness(framebuffer, self.settings.brightness);
+        } else {
+            if self.ui.screen() == Screen::Result {
+                self.game.update(&InputFrame::default(), ctx.dt);
+                self.game
+                    .draw(framebuffer, ctx.frame, self.settings.hfov_radians());
+                adjust_brightness(framebuffer, self.settings.brightness);
+            } else if matches!(
+                self.ui.screen(),
+                Screen::Pause | Screen::Settings | Screen::Controls | Screen::ConfirmMainMenu
+            ) {
+                self.game
+                    .draw(framebuffer, ctx.frame, self.settings.hfov_radians());
+                adjust_brightness(framebuffer, self.settings.brightness);
+            }
+            self.ui
+                .draw(framebuffer, ctx.frame, &self.game, &self.settings);
+        }
+        if self.ui.is_playing() {
+            self.ui.draw_game_hints(framebuffer, &self.game);
+        }
+    }
+}
+
+fn seed_now() -> u32 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos() ^ (duration.as_secs() as u32))
+        .unwrap_or(12345)
+}

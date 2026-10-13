@@ -56,36 +56,39 @@ Cursor recentering uses Enigo. On Wayland, cursor warping may be restricted or e
 ## Project layout
 
 ```text
-src/
-  main.rs              Window and frame loop
-  ui/
-    menu.rs            Main menu entries
-    difficulty.rs      Difficulty choices and descriptions
-    pause.rs           Pause screen labels
-    settings.rs        Supported option values and adjustments
-    controls.rs        Control labels and rebind order
-    dialogs.rs         Confirmation and result text
-    layout.rs          Shared menu panel layout
-    theme.rs           Pixel font, colors, and menu backgrounds
-    mod.rs             UI navigation and drawing
-  game.rs              Game state and update loop
-  player.rs            Movement, physics, and stamina
-  enemy.rs             Enemy behavior and pathfinding
-  world.rs             Maze, voxel world, and raycasting
-  renderer/            Camera, lighting, entities, post-processing, and HUD
-  input.rs             Input actions and key bindings
-  audio.rs             Audio events and swappable backend
-  settings.rs          Settings parsing and persistence
-  math.rs              Vector, angle, RNG, and hashing utilities
-tests/                 Integration tests
-assets/                Runtime assets
+Cargo.toml              Workspace; `studs` is the default member
+engine/                 Reusable platform-independent engine
+  src/app.rs            App contract, per-frame context, and requests
+  src/math.rs           Vector, angle, RNG, and hashing utilities
+  src/gfx/              Framebuffer, pixel font, and image post-processing
+  src/voxel.rs          Runtime-sized voxel storage and DDA casting
+  src/render/           Raycasting, lighting, and generic entity intersections
+engine_desktop/         Desktop platform integration
+  src/                  Window, input mapping, cursor, timer, audio, and runner
+  examples/walkabout.rs Standalone room demo using only the two engine crates
+studs/
+  src/main.rs           Small application entry point
+  src/lib.rs            Game library and module map
+  src/app.rs             Game-specific App implementation and orchestration
+  src/ui/               Menus, controls, settings, and pixel UI theme
+  src/game.rs           Game state and update loop
+  src/player.rs         Movement, physics, and stamina
+  src/enemy.rs          Enemy behavior and pathfinding
+  src/level.rs          Maze generation and game-specific block layout
+  src/renderer/         Camera, lighting, entities, post-processing, and HUD
+  src/input.rs          Input actions and key bindings
+  src/audio.rs          Audio events and swappable backend
+  src/settings.rs       Settings parsing and persistence
+  src/math.rs           Compatibility re-exports for shared math
+  tests/                Integration tests
+  assets/               Runtime assets
 ```
 
-WAV assets in `assets/audio/` are embedded in the game binary and played through Rodio. The menu ambience plays in menus; the enemy drone loops after the enemy wakes and grows louder with proximity. Enemy steps are panned left and right based on its direction relative to the player. Linux builds require ALSA development files (`libasound2-dev`).
+WAV assets in `studs/assets/audio/` are embedded in the game binary and played through Rodio. The menu ambience plays in menus; the enemy drone loops after the enemy wakes and grows louder with proximity. Enemy steps are panned left and right based on its direction relative to the player. Linux builds require ALSA development files (`libasound2-dev`).
 
 The main menu starts each run explicitly. During play, `Esc` opens a pause screen; simulation and gameplay timers remain frozen until resume. Settings and controls can be edited in either menu. Supported options include audio buses and mute, mouse look, FOV, brightness, render resolution, and window scaling. There is no saved-run system, so the main menu does not show a Continue option.
 
-Modules are kept independent: the world and math layers do not depend on rendering or player state. The executable entry point handles the window while the game logic remains in the library crate.
+The root is a Cargo workspace with `engine`, `engine_desktop`, and `studs` members. Shared math, framebuffer drawing, voxel queries, and generic rendering algorithms live in `engine`; maze generation, game materials, and gameplay remain in `studs`. `studs` is the default member, so `cargo run --release` from the repository root continues to launch `raycast_blocks`.
 
 ## Contributing
 

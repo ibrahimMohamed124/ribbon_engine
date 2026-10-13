@@ -1,0 +1,16 @@
+[package]
+name = "studs"
+version = "0.3.0"
+edition = "2021"
+
+[lib]
+name = "raycast_blocks"
+path = "src/lib.rs"
+
+[[bin]]
+name = "raycast_blocks"
+path = "src/main.rs"
+
+[dependencies]
+blocks_engine = { path = "../engine" }
+blocks_engine_desktop = { path = "../engine_desktop" }
