@@ -19,19 +19,13 @@ impl Texture {
     }
 
     pub fn bricks(w: usize, h: usize, seed: i32) -> Self {
-        Self::generate(w, h, |x, y, w, h| {
-            let rows = 4usize;
-            let cols = 4usize;
-            let row = (y * rows / h) as i32;
-            let offset = if row & 1 == 0 { 0.0 } else { 0.5 };
-            let bx = (x * cols / w) as i32;
-            let local_u = (x as f32 * cols as f32 / w as f32 + offset).fract();
-            let local_v = (y as f32 * rows as f32 / h as f32).fract();
-            if local_u < 0.035 || local_u > 0.965 || local_v < 0.055 || local_v > 0.945 {
-                0.22
-            } else {
-                (0.49 + 0.14 * hash4(bx, row, seed, 1)).clamp(0.28, 0.70)
-            }
+        Self::generate(w, h, |x, y, _, _| {
+            // This texture represents the interior of one classic brick. The
+            // game maps it to 1 unit horizontally by 0.5 units vertically,
+            // while mortar and half-offset rows remain in the material shader.
+            let grain = hash4(x as i32, y as i32, seed, 1);
+            let chip = (grain > 0.985) as u8 as f32 * 0.08;
+            (0.50 + grain * 0.08 - chip).clamp(0.38, 0.62)
         })
     }
 

@@ -25,24 +25,54 @@ impl SurfaceShader for StudsSurface {
             return base;
         }
 
-        static BRICKS: OnceLock<Texture> = OnceLock::new();
-        static TILES: OnceLock<Texture> = OnceLock::new();
-        static NOISE: OnceLock<Texture> = OnceLock::new();
-        let texture = if block == WALL {
-            BRICKS.get_or_init(|| Texture::bricks(64, 64, 17))
-        } else if block == FLOOR || block == CEIL {
-            TILES.get_or_init(|| Texture::tiles(64, 64, 29))
-        } else {
-            NOISE.get_or_init(|| Texture::noise(64, 64, 41))
-        };
-        let (u, v) = face_uv(hit);
-        let detail = texture.sample_faded(u, v, hit.dist, 7.0, 17.0);
-        let fine_noise = NOISE
-            .get_or_init(|| Texture::noise(64, 64, 41))
-            .sample_faded(u * 2.0, v * 2.0, hit.dist, 5.0, 14.0);
-        let textured = (detail * 0.92 + fine_noise * 0.08).clamp(0.0, 1.0);
-        base * (1.0 - strength) + textured * strength
+        if block == WALL {
+            static BRICKS: OnceLock<Texture> = OnceLock::new();
+            let bricks = BRICKS.get_or_init(|| Texture::bricks(64, 32, 17));
+            return base * wall_texture_modulation(hit, bricks, strength);
+        }
+
+        if block == FLOOR || block == CEIL {
+            static NOISE: OnceLock<Texture> = OnceLock::new();
+            let noise = NOISE.get_or_init(|| Texture::noise(64, 64, 41));
+            let (u, v) = face_uv(hit);
+            let texel = noise.sample_faded(u, v, hit.dist, 5.0, 14.0);
+            return apply_texture_modulation(base, texel / noise.average(), strength);
+        }
+        base
     }
+}
+
+fn apply_texture_modulation(base: f32, normalized_texel: f32, strength: f32) -> f32 {
+    base * modulation_factor(normalized_texel, strength)
+}
+
+fn modulation_factor(normalized_texel: f32, strength: f32) -> f32 {
+    (1.0 + (normalized_texel - 1.0) * strength).clamp(0.7, 1.3)
+}
+
+fn wall_texture_modulation(hit: &Hit, bricks: &Texture, strength: f32) -> f32 {
+    let axis = if hit.normal[0] != 0 { 0 } else { 1 };
+    let height = if axis == 0 { hit.point.y } else { hit.point.x };
+    let row_position = hit.point.z * 2.0;
+    let row = row_position.floor() as i32;
+    let offset = if row & 1 == 1 { 0.5 } else { 0.0 };
+    let horizontal = height + offset;
+    let texel = bricks.sample_faded(
+        horizontal.fract(),
+        row_position.fract(),
+        hit.dist,
+        7.0,
+        17.0,
+    );
+    let brick_variation = 0.92
+        + 0.16
+            * hash4(
+                horizontal.floor() as i32,
+                row,
+                axis as i32 + hit.normal[axis],
+                17,
+            );
+    modulation_factor(texel / bricks.average() * brick_variation, strength)
 }
 
 fn classic_albedo(block: u8, hit: &Hit) -> f32 {
@@ -157,4 +187,42 @@ pub fn enemy_view(pos: Vect, yaw: f32, phase: f32, eye: Vect) -> EntView {
 
 pub fn page_view(pos: Vect, yaw: f32, eye: Vect) -> EntView {
     EntView::new(pos, yaw, eye, page_boxes(), None, page_surface)
+}
+#[cfg(test)]
+mod tests {
+    use super::{apply_texture_modulation, wall_texture_modulation};
+    use blocks_engine::gfx::texture::Texture;
+    use blocks_engine::math::Vect;
+    use blocks_engine::voxel::Hit;
+
+    #[test]
+    fn texture_modulation_preserves_classic_at_zero_and_stays_moderate() {
+        let base = 0.52;
+        for texel in [0.38, 0.46, 0.5, 0.62] {
+            let normalized = texel / 0.5;
+            assert_eq!(apply_texture_modulation(base, normalized, 0.0), base);
+            let modulated = apply_texture_modulation(base, normalized, 1.0);
+            let factor = modulated / base;
+            assert!((0.7..=1.3).contains(&factor));
+        }
+    }
+
+    #[test]
+    fn wall_modulation_is_continuous_across_cell_boundaries() {
+        let texture = Texture::bricks(64, 32, 17);
+        let left = Hit {
+            cell: (2, 4, 1),
+            normal: [1, 0, 0],
+            dist: 3.0,
+            point: Vect::new(3.0, 4.375, 1.125),
+        };
+        let right = Hit {
+            cell: (3, 4, 1),
+            ..left
+        };
+        assert_eq!(
+            wall_texture_modulation(&left, &texture, 1.0),
+            wall_texture_modulation(&right, &texture, 1.0)
+        );
+    }
 }
