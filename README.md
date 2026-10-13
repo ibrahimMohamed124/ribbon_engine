@@ -58,14 +58,18 @@ Cursor recentering uses Enigo. On Wayland, cursor warping may be restricted or e
 ```text
 Cargo.toml              Workspace; `studs` is the default member
 engine/                 Reusable platform-independent engine
+  src/app.rs            App contract, per-frame context, and requests
   src/math.rs           Vector, angle, RNG, and hashing utilities
   src/gfx/              Framebuffer, pixel font, and image post-processing
   src/voxel.rs          Runtime-sized voxel storage and DDA casting
   src/render/           Raycasting, lighting, and generic entity intersections
-engine_desktop/         Desktop platform integration (next extraction phase)
+engine_desktop/         Desktop platform integration
+  src/                  Window, input mapping, cursor, timer, audio, and runner
+  examples/walkabout.rs Standalone room demo using only the two engine crates
 studs/
-  src/main.rs           Game window and frame loop
+  src/main.rs           Small application entry point
   src/lib.rs            Game library and module map
+  src/app.rs             Game-specific App implementation and orchestration
   src/ui/               Menus, controls, settings, and pixel UI theme
   src/game.rs           Game state and update loop
   src/player.rs         Movement, physics, and stamina

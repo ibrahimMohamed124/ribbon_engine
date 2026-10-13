@@ -94,6 +94,12 @@ pub struct Bindings<A> {
     map: HashMap<A, Vec<Key>>,
 }
 
+impl<A: Eq + Hash> Default for Bindings<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<A: Clone> Clone for Bindings<A> {
     fn clone(&self) -> Self {
         Self {

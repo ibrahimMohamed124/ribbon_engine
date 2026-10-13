@@ -31,6 +31,21 @@ pub struct WindowConfig {
     pub scale: u32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct FrameInfo {
+    pub dt: f32,
+    pub frame: u32,
+    pub fps: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MouseInput {
+    pub delta: (f32, f32),
+    pub position: Option<(f32, f32)>,
+    pub scroll: f32,
+    pub buttons: MouseButtons,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorRequest {
     #[default]
@@ -61,27 +76,22 @@ pub struct Ctx<'a> {
 
 impl<'a> Ctx<'a> {
     pub fn new(
-        dt: f32,
-        frame: u32,
-        fps: f32,
+        frame_info: FrameInfo,
         keys: &'a dyn KeyState,
         pressed_keys: &'a [Key],
-        mouse_delta: (f32, f32),
-        mouse_position: Option<(f32, f32)>,
-        mouse_scroll: f32,
-        mouse_buttons: MouseButtons,
+        mouse: MouseInput,
         window_active: bool,
     ) -> Self {
         Self {
-            dt,
-            frame,
-            fps,
+            dt: frame_info.dt,
+            frame: frame_info.frame,
+            fps: frame_info.fps,
             keys,
             pressed_keys,
-            mouse_delta,
-            mouse_position,
-            mouse_scroll,
-            mouse_buttons,
+            mouse_delta: mouse.delta,
+            mouse_position: mouse.position,
+            mouse_scroll: mouse.scroll,
+            mouse_buttons: mouse.buttons,
             window_active,
             requests: Requests::default(),
         }

@@ -2,7 +2,9 @@
 
 use std::error::Error;
 
-use blocks_engine::app::{App, Ctx, CursorRequest, Flow, MouseButtons, WindowConfig};
+use blocks_engine::app::{
+    App, Ctx, CursorRequest, Flow, FrameInfo, MouseButtons, MouseInput, WindowConfig,
+};
 use blocks_engine::gfx::Framebuffer;
 use blocks_engine::input::MouseSource;
 
@@ -29,18 +31,25 @@ pub fn run<A: App>(mut app: A, mut config: WindowConfig) -> Result<(), Box<dyn E
         let mouse_delta = mouse.delta();
         let (left, right, middle) = mouse_buttons(&window);
         let mut ctx = Ctx::new(
-            sample.dt,
-            frame,
-            sample.fps,
+            FrameInfo {
+                dt: sample.dt,
+                frame,
+                fps: sample.fps,
+            },
             &keys,
             &pressed,
-            mouse_delta,
-            mouse_position_in_framebuffer(&window, (framebuffer.width, framebuffer.height)),
-            scroll_y(&window),
-            MouseButtons {
-                left,
-                right,
-                middle,
+            MouseInput {
+                delta: mouse_delta,
+                position: mouse_position_in_framebuffer(
+                    &window,
+                    (framebuffer.width, framebuffer.height),
+                ),
+                scroll: scroll_y(&window),
+                buttons: MouseButtons {
+                    left,
+                    right,
+                    middle,
+                },
             },
             window.is_active(),
         );
