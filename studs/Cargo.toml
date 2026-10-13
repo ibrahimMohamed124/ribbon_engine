@@ -1,0 +1,18 @@
+[package]
+name = "studs"
+version = "0.3.0"
+edition = "2021"
+
+[lib]
+name = "raycast_blocks"
+path = "src/lib.rs"
+
+[[bin]]
+name = "raycast_blocks"
+path = "src/main.rs"
+
+[dependencies]
+minifb = "0.29.0"
+rayon = "1.10"
+enigo = "0.6.1"
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }

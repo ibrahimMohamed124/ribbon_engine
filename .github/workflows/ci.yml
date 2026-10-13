@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "refactor/**"]
   pull_request:
 
 env:
@@ -30,9 +30,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --locked --all-targets
+        run: cargo build --locked --workspace --all-targets
       - name: Test
-        run: cargo test --locked
+        run: cargo test --locked --workspace
 
   lint:
     name: Lint
@@ -81,13 +81,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --locked --release
+        run: cargo build --locked --workspace --release
 
       - name: Package
         shell: bash
         run: |
           mkdir dist
-          cp -r assets dist/assets
+          cp -r studs/assets dist/assets
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp target/release/raycast_blocks.exe dist/
           else
