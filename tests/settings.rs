@@ -12,7 +12,7 @@ fn empty_text_gives_defaults() {
     assert!((s.effects_volume - d.effects_volume).abs() < 1e-6);
     assert!((s.ambient_volume - d.ambient_volume).abs() < 1e-6);
     assert!(!s.mute_all);
-    assert!(!s.mouse_look_on_start);
+    assert!(s.mouse_look_on_start);
     assert!((s.mouse_sensitivity - 0.0025).abs() < 1e-6);
 }
 

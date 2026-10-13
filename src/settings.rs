@@ -60,7 +60,7 @@ impl Default for Settings {
             brightness: 1.0,
             best_times: [0.0; 3],
             flashlight_on_start: true,
-            mouse_look_on_start: false,
+            mouse_look_on_start: true,
             invert_y: false,
             mouse_sensitivity: 0.0025,
             bindings: KeyBindings::default(),
@@ -69,7 +69,7 @@ impl Default for Settings {
 }
 
 /// Version used for settings migration and binding compatibility.
-pub const SETTINGS_VERSION: u32 = 5;
+pub const SETTINGS_VERSION: u32 = 6;
 
 fn is_movement_or_look(action: Action) -> bool {
     matches!(
@@ -264,6 +264,11 @@ impl Settings {
         // in current files as an explicit way to disable mouse movement.
         if stored_version.unwrap_or(0) < 4 && s.mouse_sensitivity == 0.0 {
             s.mouse_sensitivity = Settings::default().mouse_sensitivity;
+        }
+        // Version 6 enables mouse look by default. Migrate older settings files
+        // so a previously saved `false` does not keep mouse look disabled.
+        if stored_version.unwrap_or(0) < 6 {
+            s.mouse_look_on_start = true;
         }
         s
     }
