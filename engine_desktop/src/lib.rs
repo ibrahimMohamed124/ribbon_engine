@@ -5,3 +5,8 @@ pub mod cursor;
 pub mod keys;
 pub mod timer;
 pub mod window;
+
+mod runner;
+
+pub use blocks_engine::app::WindowConfig;
+pub use runner::run;

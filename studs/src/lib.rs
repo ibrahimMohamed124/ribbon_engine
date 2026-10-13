@@ -16,6 +16,7 @@
 //!   math.rs    Vect / Angles / Rng / hash (no dependencies)
 //! ```
 
+pub mod app;
 pub mod audio;
 pub mod enemy;
 pub mod game;

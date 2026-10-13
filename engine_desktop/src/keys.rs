@@ -1,6 +1,8 @@
 //! Mapping between the engine's physical keys and minifb.
 
-use blocks_engine::input::{Key, KeyState};
+use std::collections::HashSet;
+
+use blocks_engine::input::{Key, KeyState, ALL_KEYS};
 use minifb::{Key as DesktopKey, Window};
 
 pub fn from_minifb(key: DesktopKey) -> Option<Key> {
@@ -91,6 +93,23 @@ pub struct WindowKeys<'a>(pub &'a Window);
 impl KeyState for WindowKeys<'_> {
     fn is_down(&self, key: Key) -> bool {
         self.0.is_key_down(to_minifb(key))
+    }
+}
+
+pub struct KeySnapshot(HashSet<Key>);
+
+pub fn snapshot(window: &Window) -> KeySnapshot {
+    KeySnapshot(
+        ALL_KEYS
+            .into_iter()
+            .filter(|&key| window.is_key_down(to_minifb(key)))
+            .collect(),
+    )
+}
+
+impl KeyState for KeySnapshot {
+    fn is_down(&self, key: Key) -> bool {
+        self.0.contains(&key)
     }
 }
 

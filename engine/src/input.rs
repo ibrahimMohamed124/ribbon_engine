@@ -43,6 +43,45 @@ pub enum Key {
     Tab,
 }
 
+pub const ALL_KEYS: [Key; 36] = [
+    Key::A,
+    Key::B,
+    Key::C,
+    Key::D,
+    Key::E,
+    Key::F,
+    Key::G,
+    Key::H,
+    Key::I,
+    Key::J,
+    Key::K,
+    Key::L,
+    Key::M,
+    Key::N,
+    Key::O,
+    Key::P,
+    Key::Q,
+    Key::R,
+    Key::S,
+    Key::T,
+    Key::U,
+    Key::V,
+    Key::W,
+    Key::X,
+    Key::Y,
+    Key::Z,
+    Key::Up,
+    Key::Down,
+    Key::Left,
+    Key::Right,
+    Key::LeftShift,
+    Key::RightShift,
+    Key::Space,
+    Key::Escape,
+    Key::Enter,
+    Key::Tab,
+];
+
 pub trait KeyState {
     fn is_down(&self, key: Key) -> bool;
 }

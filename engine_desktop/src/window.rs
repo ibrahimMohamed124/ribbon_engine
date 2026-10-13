@@ -1,14 +1,8 @@
 //! minifb window setup and coordinate conversion helpers.
 
+use blocks_engine::app::WindowConfig;
 use blocks_engine::input::Key;
 use minifb::{KeyRepeat, MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
-
-pub struct WindowConfig {
-    pub title: &'static str,
-    pub width: usize,
-    pub height: usize,
-    pub scale: u32,
-}
 
 pub fn scale_from(factor: u32) -> Scale {
     match factor {
@@ -20,7 +14,7 @@ pub fn scale_from(factor: u32) -> Scale {
 
 pub fn create_window(config: &WindowConfig) -> Result<Window, minifb::Error> {
     Window::new(
-        config.title,
+        &config.title,
         config.width,
         config.height,
         WindowOptions {
@@ -64,6 +58,14 @@ pub fn pressed_keys(window: &mut Window) -> Vec<Key> {
 
 pub fn left_mouse_down(window: &Window) -> bool {
     window.get_mouse_down(MouseButton::Left)
+}
+
+pub fn mouse_buttons(window: &Window) -> (bool, bool, bool) {
+    (
+        window.get_mouse_down(MouseButton::Left),
+        window.get_mouse_down(MouseButton::Right),
+        window.get_mouse_down(MouseButton::Middle),
+    )
 }
 
 pub fn scroll_y(window: &Window) -> f32 {
