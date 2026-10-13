@@ -12,6 +12,7 @@ name = "raycast_blocks"
 path = "src/main.rs"
 
 [dependencies]
+blocks_engine = { path = "../engine" }
 minifb = "0.29.0"
 rayon = "1.10"
 enigo = "0.6.1"

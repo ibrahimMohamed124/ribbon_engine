@@ -57,8 +57,12 @@ Cursor recentering uses Enigo. On Wayland, cursor warping may be restricted or e
 
 ```text
 Cargo.toml              Workspace; `studs` is the default member
-engine/                 Reusable, platform-independent engine (extraction phase)
-engine_desktop/         Desktop platform integration (extraction phase)
+engine/                 Reusable platform-independent engine
+  src/math.rs           Vector, angle, RNG, and hashing utilities
+  src/gfx/              Framebuffer, pixel font, and image post-processing
+  src/voxel.rs          Runtime-sized voxel storage and DDA casting
+  src/render/           Raycasting, lighting, and generic entity intersections
+engine_desktop/         Desktop platform integration (next extraction phase)
 studs/
   src/main.rs           Game window and frame loop
   src/lib.rs            Game library and module map
@@ -66,12 +70,12 @@ studs/
   src/game.rs           Game state and update loop
   src/player.rs         Movement, physics, and stamina
   src/enemy.rs          Enemy behavior and pathfinding
-  src/world.rs          Maze, voxel world, and raycasting
+  src/level.rs          Maze generation and game-specific block layout
   src/renderer/         Camera, lighting, entities, post-processing, and HUD
   src/input.rs          Input actions and key bindings
   src/audio.rs          Audio events and swappable backend
   src/settings.rs       Settings parsing and persistence
-  src/math.rs           Vector, angle, RNG, and hashing utilities
+  src/math.rs           Compatibility re-exports for shared math
   tests/                Integration tests
   assets/               Runtime assets
 ```
@@ -80,7 +84,7 @@ WAV assets in `studs/assets/audio/` are embedded in the game binary and played t
 
 The main menu starts each run explicitly. During play, `Esc` opens a pause screen; simulation and gameplay timers remain frozen until resume. Settings and controls can be edited in either menu. Supported options include audio buses and mute, mouse look, FOV, brightness, render resolution, and window scaling. There is no saved-run system, so the main menu does not show a Continue option.
 
-The root is a Cargo workspace with `engine`, `engine_desktop`, and `studs` members. Extraction is being done in phases; this initial workspace commit keeps game code in `studs` unchanged. `studs` is the default member, so `cargo run --release` from the repository root continues to launch `raycast_blocks`.
+The root is a Cargo workspace with `engine`, `engine_desktop`, and `studs` members. Shared math, framebuffer drawing, voxel queries, and generic rendering algorithms live in `engine`; maze generation, game materials, and gameplay remain in `studs`. `studs` is the default member, so `cargo run --release` from the repository root continues to launch `raycast_blocks`.
 
 ## Contributing
 

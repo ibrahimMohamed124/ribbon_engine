@@ -405,12 +405,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         audio.play_spatial_all(&mut game.spatial_events);
         if ui.is_playing() {
             game.draw(&mut fb, frame_no, settings.hfov_radians());
-            raycast_blocks::renderer::post::adjust_brightness(&mut fb, settings.brightness);
+            blocks_engine::gfx::post::adjust_brightness(&mut fb, settings.brightness);
         } else {
             if ui.screen() == UiScreen::Result {
                 game.update(&InputFrame::default(), dt);
                 game.draw(&mut fb, frame_no, settings.hfov_radians());
-                raycast_blocks::renderer::post::adjust_brightness(&mut fb, settings.brightness);
+                blocks_engine::gfx::post::adjust_brightness(&mut fb, settings.brightness);
             } else if matches!(
                 ui.screen(),
                 UiScreen::Pause
@@ -419,7 +419,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     | UiScreen::ConfirmMainMenu
             ) {
                 game.draw(&mut fb, frame_no, settings.hfov_radians());
-                raycast_blocks::renderer::post::adjust_brightness(&mut fb, settings.brightness);
+                blocks_engine::gfx::post::adjust_brightness(&mut fb, settings.brightness);
             }
             ui.draw(&mut fb, frame_no, &game, &settings);
         }

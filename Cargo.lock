@@ -60,6 +60,9 @@ dependencies = [
 [[package]]
 name = "blocks_engine"
 version = "0.1.0"
+dependencies = [
+ "rayon",
+]
 
 [[package]]
 name = "blocks_engine_desktop"
@@ -1164,6 +1167,7 @@ checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 name = "studs"
 version = "0.3.0"
 dependencies = [
+ "blocks_engine",
  "enigo",
  "minifb",
  "rayon",

@@ -10,7 +10,8 @@ use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
 use crate::renderer::hud::{draw_caught, draw_hud, draw_won};
 use crate::renderer::{render, EntView, Frame, Framebuffer, RENDER_DIST};
-use crate::world::{cell_center, World, CELLS, FLOOR_TOP};
+use crate::surfaces::{enemy_view, page_view, StudsSurface};
+use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
 
 pub const PAGES_TOTAL: usize = 6;
 const PAGE_PICKUP_RADIUS: f32 = 0.9;
@@ -317,7 +318,7 @@ impl Game {
 
                 let eye = self.player.pos;
                 let mut ents: Vec<EntView> = Vec::with_capacity(1 + self.pages.len());
-                ents.push(EntView::enemy(
+                ents.push(enemy_view(
                     self.enemy.pos,
                     self.enemy.yaw,
                     self.enemy.phase,
@@ -329,7 +330,7 @@ impl Game {
                     }
                     let bob = (self.time * 2.0 + i as f32).sin() * 0.08;
                     let pos = Vect::new(p.x, p.y, p.z + bob);
-                    ents.push(EntView::page(pos, self.time * 1.2 + i as f32, eye));
+                    ents.push(page_view(pos, self.time * 1.2 + i as f32, eye));
                 }
 
                 let frame = Frame {
@@ -337,12 +338,13 @@ impl Game {
                     eye,
                     view,
                     hfov,
-                    flash,
+                    illumination: flash,
+                    empty_voxel: AIR,
                     ents,
                     frame: frame_no,
-                    prox,
+                    intensity: prox,
                 };
-                render(fb, &frame);
+                render(fb, &frame, &StudsSurface);
                 draw_hud(
                     fb,
                     self.collected,

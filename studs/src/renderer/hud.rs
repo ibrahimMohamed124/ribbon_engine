@@ -1,16 +1,8 @@
 //! HUD and full-screen overlays. All coordinates are in framebuffer pixels.
 
-use super::Framebuffer;
 use crate::math::{hash4, pack_gray};
-
-pub fn fill_rect(fb: &mut Framebuffer, x0: i32, y0: i32, w: i32, h: i32, color: u32) {
-    let (fw, fh) = (fb.width as i32, fb.height as i32);
-    for y in y0.max(0)..(y0 + h).min(fh) {
-        for x in x0.max(0)..(x0 + w).min(fw) {
-            fb.pixels[(y * fw + x) as usize] = color;
-        }
-    }
-}
+pub use blocks_engine::gfx::fill_rect;
+use blocks_engine::gfx::Framebuffer;
 
 pub fn draw_hud(
     fb: &mut Framebuffer,
