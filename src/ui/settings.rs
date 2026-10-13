@@ -1,7 +1,7 @@
 use crate::settings::Settings;
 
 pub const TITLE: &str = "SETTINGS / AUDIO / GAME / DISPLAY";
-pub const HINT: &str = "LEFT / RIGHT CHANGE   ESC BACK";
+pub const HINT: &str = "CLICK SELECT   L/R CHANGE   ESC BACK";
 pub const ITEM_COUNT: usize = 12;
 
 pub fn label(index: usize) -> &'static str {

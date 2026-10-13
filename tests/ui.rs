@@ -9,6 +9,10 @@ fn press(key: Key) -> UiInput {
     UiInput::from_keys(vec![key])
 }
 
+fn pointer(x: f32, y: f32, down: bool, scroll: f32) -> UiInput {
+    UiInput::from_keys(vec![]).with_mouse(Some((x, y)), down, scroll, (320, 180))
+}
+
 #[test]
 fn main_menu_starts_a_new_run() {
     let mut ui = Ui::new();
@@ -115,4 +119,79 @@ fn menu_layers_render_without_changing_the_game_framebuffer_size() {
     game.draw(&mut framebuffer, 1, settings.hfov_radians());
     ui.draw(&mut framebuffer, 1, &game, &settings);
     assert_eq!(framebuffer.pixels.len(), 320 * 180);
+}
+
+#[test]
+fn mouse_hover_and_click_open_settings_and_adjust_a_value() {
+    let mut ui = Ui::new();
+    let mut settings = Settings::default();
+
+    ui.update(&pointer(160.0, 105.0, false, 0.0), &mut settings);
+    assert_eq!(ui.screen(), Screen::MainMenu);
+    ui.update(&pointer(160.0, 105.0, true, 0.0), &mut settings);
+    assert_eq!(ui.screen(), Screen::Settings);
+
+    let before = settings.hfov_degrees;
+    ui.update(&pointer(263.0, 98.0, false, 0.0), &mut settings);
+    let changed = ui.update(&pointer(263.0, 98.0, true, 0.0), &mut settings);
+    assert!(changed.settings_changed);
+    assert_eq!(settings.hfov_degrees, before + 5.0);
+}
+
+#[test]
+fn mouse_can_rebind_controls_and_scroll_to_back() {
+    let mut ui = Ui::new();
+    let mut settings = Settings::default();
+    ui.update(&pointer(160.0, 120.0, false, 0.0), &mut settings);
+    ui.update(&pointer(160.0, 120.0, true, 0.0), &mut settings);
+    assert_eq!(ui.screen(), Screen::Controls);
+
+    ui.update(&pointer(160.0, 35.0, false, 0.0), &mut settings);
+    ui.update(&pointer(160.0, 35.0, true, 0.0), &mut settings);
+    let rebound = ui.update(&press(Key::J), &mut settings);
+    assert!(rebound.settings_changed);
+    assert_eq!(settings.bindings.keys(Action::Forward), &[Key::J]);
+
+    ui.update(&press(Key::Escape), &mut settings);
+    assert_eq!(ui.screen(), Screen::MainMenu);
+    ui.update(&press(Key::Down), &mut settings);
+    ui.update(&press(Key::Down), &mut settings);
+    ui.update(&press(Key::Enter), &mut settings);
+    assert_eq!(ui.screen(), Screen::Controls);
+
+    for _ in 0..14 {
+        ui.update(&pointer(0.0, 0.0, false, -1.0), &mut settings);
+    }
+    ui.update(&pointer(160.0, 125.0, false, 0.0), &mut settings);
+    ui.update(&pointer(160.0, 125.0, true, 0.0), &mut settings);
+    assert_eq!(ui.screen(), Screen::MainMenu);
+}
+
+#[test]
+fn mouse_navigates_pause_confirmation_and_result_screens() {
+    let mut ui = Ui::new();
+    let mut settings = Settings::default();
+    ui.update(&press(Key::Enter), &mut settings);
+    ui.update(&press(Key::Escape), &mut settings);
+    assert_eq!(ui.screen(), Screen::Pause);
+
+    ui.update(&pointer(160.0, 63.0, false, 0.0), &mut settings);
+    ui.update(&pointer(160.0, 63.0, true, 0.0), &mut settings);
+    assert_eq!(ui.screen(), Screen::Playing);
+
+    ui.update(&press(Key::Escape), &mut settings);
+    ui.update(&pointer(160.0, 123.0, false, 0.0), &mut settings);
+    ui.update(&pointer(160.0, 123.0, true, 0.0), &mut settings);
+    assert_eq!(ui.screen(), Screen::ConfirmMainMenu);
+
+    ui.update(&pointer(210.0, 110.0, false, 0.0), &mut settings);
+    let leave = ui.update(&pointer(210.0, 110.0, true, 0.0), &mut settings);
+    assert!(leave.return_to_menu);
+    assert_eq!(ui.screen(), Screen::MainMenu);
+
+    ui.show_result();
+    ui.update(&pointer(160.0, 105.0, false, 0.0), &mut settings);
+    let replay = ui.update(&pointer(160.0, 105.0, true, 0.0), &mut settings);
+    assert!(replay.start_game);
+    assert_eq!(ui.screen(), Screen::Playing);
 }

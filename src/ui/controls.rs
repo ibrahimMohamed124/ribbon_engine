@@ -2,7 +2,7 @@ use crate::input::Action;
 
 pub const HEADER: &str = "REBIND CONTROLS";
 pub const MOUSE_NOTE: &str = "MOUSE LOOK: MOVE THE MOUSE";
-pub const HINT: &str = "ENTER REBIND   ESC BACK";
+pub const HINT: &str = "CLICK / ENTER REBIND   ESC BACK";
 
 pub fn label(action: Action) -> &'static str {
     match action {

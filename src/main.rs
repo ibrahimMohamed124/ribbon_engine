@@ -17,7 +17,7 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use enigo::{Coordinate, Enigo, Mouse, Settings as EnigoSettings};
-use minifb::{KeyRepeat, MouseMode, Scale, ScaleMode, Window, WindowOptions};
+use minifb::{KeyRepeat, MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
 
 use raycast_blocks::audio::{Audio, AudioAmbience, AudioBackend, AudioEvent};
 use raycast_blocks::game::{Game, PAGES_TOTAL};
@@ -227,6 +227,30 @@ fn create_window(settings: &Settings) -> Result<Window, minifb::Error> {
     )
 }
 
+fn mouse_position_in_framebuffer(
+    window: &Window,
+    framebuffer_size: (usize, usize),
+) -> Option<(f32, f32)> {
+    let (x, y) = window.get_unscaled_mouse_pos(MouseMode::Discard)?;
+    let (window_width, window_height) = window.get_size();
+    let (framebuffer_width, framebuffer_height) = framebuffer_size;
+    if window_width == 0 || window_height == 0 || framebuffer_width == 0 || framebuffer_height == 0
+    {
+        return None;
+    }
+
+    // Match minifb's AspectRatioStretch viewport, including any letterbox area
+    // introduced when the resizable window no longer matches the render aspect.
+    let scale = (window_width as f32 / framebuffer_width as f32)
+        .min(window_height as f32 / framebuffer_height as f32);
+    let offset_x = (window_width as f32 - framebuffer_width as f32 * scale) * 0.5;
+    let offset_y = (window_height as f32 - framebuffer_height as f32 * scale) * 0.5;
+    let x = (x - offset_x) / scale;
+    let y = (y - offset_y) / scale;
+    (x >= 0.0 && y >= 0.0 && x < framebuffer_width as f32 && y < framebuffer_height as f32)
+        .then_some((x, y))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("STUDS - find all {PAGES_TOTAL} pages and don't get caught.");
 
@@ -284,7 +308,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         frame_no = frame_no.wrapping_add(1);
 
-        let ui_input = UiInput::from_keys(window.get_keys_pressed(KeyRepeat::No));
+        let ui_input = UiInput::from_keys(window.get_keys_pressed(KeyRepeat::No)).with_mouse(
+            mouse_position_in_framebuffer(&window, (fb.width, fb.height)),
+            window.get_mouse_down(MouseButton::Left),
+            window.get_scroll_wheel().map_or(0.0, |(_, y)| y),
+            (fb.width, fb.height),
+        );
         let ui_outcome = ui.update(&ui_input, &mut settings);
         if ui_outcome.quit {
             break;

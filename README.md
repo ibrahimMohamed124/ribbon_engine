@@ -47,7 +47,7 @@ cargo test --locked
 
 Bindings are configurable and saved in `settings.cfg` (`%APPDATA%\raycast_blocks\` on Windows, `~/.config/raycast_blocks/` on Linux/macOS, or `$XDG_CONFIG_HOME`). Mouse look starts disabled. Press `Tab` or `M` to toggle it; while active, the cursor is hidden and recentered so you can turn continuously. Adjust `mouse_sensitivity` (default `0.0025` radians/pixel), `mouse_look_on_start`, and `invert_y` in `settings.cfg`.
 
-The game opens on a main menu. Press `Esc` during a run to pause it; simulation and gameplay timers stay frozen until you resume. Settings and controls are available from both menus and are saved when changed. The settings screen exposes the currently supported audio buses, mouse options, FOV, window scale, and render resolution.
+The game opens on a main menu. Hover over an item and click to select it; the keyboard remains available. In settings, click the value area to change a value, and use the mouse wheel to move through long control lists. Press `Esc` during a run to pause it; simulation and gameplay timers stay frozen until you resume. Settings and controls are available from both menus and are saved when changed. The settings screen exposes the currently supported audio buses, mouse options, FOV, window scale, and render resolution.
 
 Cursor recentering uses Enigo. On Wayland, cursor warping may be restricted or experimental depending on the compositor and Enigo backend. macOS may request Accessibility permission to control the cursor. If cursor warping is denied, use the keyboard look controls or disable mouse look.
 
