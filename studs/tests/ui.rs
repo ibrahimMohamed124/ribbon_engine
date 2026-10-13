@@ -1,6 +1,6 @@
-use minifb::Key;
 use raycast_blocks::game::{Difficulty, Game};
 use raycast_blocks::input::Action;
+use raycast_blocks::input::Key;
 use raycast_blocks::renderer::Framebuffer;
 use raycast_blocks::settings::Settings;
 use raycast_blocks::ui::{Screen, Ui, UiInput};

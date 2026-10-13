@@ -1,5 +1,5 @@
-use minifb::Key;
 use raycast_blocks::input::Action;
+use raycast_blocks::input::Key;
 use raycast_blocks::settings::Settings;
 
 #[test]

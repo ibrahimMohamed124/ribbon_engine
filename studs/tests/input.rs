@@ -1,4 +1,4 @@
-use minifb::Key;
+use raycast_blocks::input::Key;
 use raycast_blocks::input::{
     key_name, parse_key, Action, Input, KeyBindings, KeyState, MouseSource,
 };

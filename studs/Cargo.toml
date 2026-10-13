@@ -13,7 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 blocks_engine = { path = "../engine" }
+blocks_engine_desktop = { path = "../engine_desktop" }
 minifb = "0.29.0"
-rayon = "1.10"
 enigo = "0.6.1"
-rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }

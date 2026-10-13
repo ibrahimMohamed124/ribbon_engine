@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use enigo::{Coordinate, Enigo, Mouse, Settings as EnigoSettings};
 use minifb::{KeyRepeat, MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
 
-use raycast_blocks::audio::{Audio, AudioAmbience, AudioBackend, AudioEvent};
+use raycast_blocks::audio::{Audio, AudioAmbience};
 use raycast_blocks::game::{Game, PAGES_TOTAL};
 use raycast_blocks::input::{Input, InputFrame, MouseSource};
 use raycast_blocks::renderer::Framebuffer;
@@ -27,101 +27,6 @@ use raycast_blocks::settings::Settings;
 use raycast_blocks::ui::{Screen as UiScreen, Ui, UiInput};
 
 const TARGET_FRAME: Duration = Duration::from_micros(16_000);
-
-struct RodioBackend {
-    output: rodio::MixerDeviceSink,
-    ambience: Option<(AudioAmbience, rodio::Player)>,
-}
-
-impl RodioBackend {
-    fn new() -> Result<Self, rodio::DeviceSinkError> {
-        Ok(Self {
-            output: rodio::DeviceSinkBuilder::open_default_sink()?,
-            ambience: None,
-        })
-    }
-}
-
-impl AudioBackend for RodioBackend {
-    fn play(&mut self, event: AudioEvent, volume: f32) {
-        use rodio::source::Source;
-        use std::io::Cursor;
-
-        let (data, gain): (&'static [u8], f32) = match event {
-            AudioEvent::Footstep => (include_bytes!("../assets/audio/footstep.wav"), 0.20),
-            AudioEvent::EnemyFootstep => (include_bytes!("../assets/audio/footstep.wav"), 0.44),
-            AudioEvent::Jump => (include_bytes!("../assets/audio/jump.wav"), 0.48),
-            AudioEvent::Land => (include_bytes!("../assets/audio/footstep.wav"), 0.28),
-            AudioEvent::PageCollected => (include_bytes!("../assets/audio/page_collect.wav"), 0.62),
-            AudioEvent::EnemySting => (include_bytes!("../assets/audio/enemy_sting.wav"), 0.68),
-            AudioEvent::Caught => (include_bytes!("../assets/audio/death.wav"), 0.72),
-            AudioEvent::Won => (include_bytes!("../assets/audio/victory.wav"), 0.72),
-        };
-
-        match rodio::Decoder::try_from(Cursor::new(data)) {
-            Ok(source) => self.output.mixer().add(source.amplify(volume * gain)),
-            Err(error) => eprintln!("could not decode {event:?} audio: {error}"),
-        }
-    }
-
-    fn play_spatial(&mut self, event: AudioEvent, volume: f32, pan: f32) {
-        if event != AudioEvent::EnemyFootstep {
-            self.play(event, volume);
-            return;
-        }
-        use rodio::source::Source;
-        use std::io::Cursor;
-
-        let player = rodio::SpatialPlayer::connect_new(
-            self.output.mixer(),
-            [pan.clamp(-1.0, 1.0) * 0.6, 0.8, 0.0],
-            [-0.12, 0.0, 0.0],
-            [0.12, 0.0, 0.0],
-        );
-        if let Ok(source) =
-            rodio::Decoder::try_from(Cursor::new(include_bytes!("../assets/audio/footstep.wav")))
-        {
-            player.append(source.speed(0.72).amplify(volume * 0.44));
-            player.detach();
-        }
-    }
-
-    fn set_ambience(&mut self, ambience: Option<AudioAmbience>, volume: f32) {
-        use rodio::source::Source;
-        use std::io::Cursor;
-
-        let Some(ambience) = ambience.filter(|_| volume > 0.0) else {
-            if let Some((_, player)) = self.ambience.take() {
-                player.stop();
-            }
-            return;
-        };
-
-        if let Some((current, player)) = &self.ambience {
-            if *current == ambience {
-                player.set_volume(volume);
-                return;
-            }
-        }
-        if let Some((_, player)) = self.ambience.take() {
-            player.stop();
-        }
-
-        let data: &'static [u8] = match ambience {
-            AudioAmbience::Menu => include_bytes!("../assets/audio/menu_ambience.wav"),
-            AudioAmbience::Enemy => include_bytes!("../assets/audio/enemy_ambient.wav"),
-        };
-        let player = rodio::Player::connect_new(self.output.mixer());
-        player.set_volume(volume);
-        match rodio::Decoder::try_from(Cursor::new(data)) {
-            Ok(source) => {
-                player.append(source.repeat_infinite());
-                self.ambience = Some((ambience, player));
-            }
-            Err(error) => eprintln!("could not decode {ambience:?} audio: {error}"),
-        }
-    }
-}
 
 /// Cursor capture built on `enigo` (minifb has no pointer lock).
 ///
@@ -303,8 +208,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings.invert_y,
     );
     let mut mouse = CursorMouse::new();
-    let mut audio = match RodioBackend::new() {
-        Ok(backend) => Audio::new(Box::new(backend), settings.master_volume),
+    let mut audio = match blocks_engine_desktop::audio::RodioBackend::new(
+        raycast_blocks::audio::sound_bank(),
+    ) {
+        Ok(backend) => Audio::with_engine_backend(Box::new(backend), settings.master_volume),
         Err(error) => {
             eprintln!("audio output unavailable; continuing silently: {error}");
             Audio::null(settings.master_volume)
@@ -329,7 +236,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         frame_no = frame_no.wrapping_add(1);
 
-        let ui_input = UiInput::from_keys(window.get_keys_pressed(KeyRepeat::No)).with_mouse(
+        let ui_keys = window
+            .get_keys_pressed(KeyRepeat::No)
+            .into_iter()
+            .filter_map(blocks_engine_desktop::keys::from_minifb)
+            .collect();
+        let ui_input = UiInput::from_keys(ui_keys).with_mouse(
             mouse_position_in_framebuffer(&window, (fb.width, fb.height)),
             window.get_mouse_down(MouseButton::Left),
             window.get_scroll_wheel().map_or(0.0, |(_, y)| y),
@@ -367,7 +279,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if ui.is_playing() && game.state == raycast_blocks::game::State::Playing {
             let capture_mouse = input.mouse_look_active() && window.is_active();
-            let frame_input = input.poll_with_mouse_source(&window, &mut mouse, capture_mouse);
+            let keys = blocks_engine_desktop::keys::WindowKeys(&window);
+            let frame_input = input.poll_with_mouse_source(&keys, &mut mouse, capture_mouse);
             if frame_input.quit {
                 break;
             }
@@ -381,7 +294,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui.show_result();
             }
         } else {
-            input.synchronize_keys(&window);
+            let keys = blocks_engine_desktop::keys::WindowKeys(&window);
+            input.synchronize_keys(&keys);
         }
         if !ui.is_playing() || game.state != raycast_blocks::game::State::Playing {
             mouse.release(&mut window);

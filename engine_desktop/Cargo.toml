@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+blocks_engine = { path = "../engine" }
+minifb = "0.29.0"
+enigo = "0.6.1"
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }

@@ -1,13 +1,11 @@
 //! Keyboard / mouse input, turned into game-level intent.
 //!
-//! The rest of the game never sees a `minifb::Key`: it only sees [`Controls`]
+//! The rest of the game never sees a windowing-library key: it only sees [`Controls`]
 //! (continuous intent) and [`InputFrame`] (intent + one-shot events).
 //! Physical keys live in [`KeyBindings`], which are user-configurable.
 
-use std::collections::HashMap;
-
-pub use minifb::Key;
-use minifb::Window;
+use blocks_engine::input::Bindings;
+pub use blocks_engine::input::{key_name, parse_key, Key, KeyState, MouseSource};
 
 /// Everything the player can ask the game to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -71,121 +69,43 @@ impl Action {
     }
 }
 
-// ------------------------------------------------------------------ key names
-
-const KEY_NAMES: &[(&str, Key)] = &[
-    ("A", Key::A),
-    ("B", Key::B),
-    ("C", Key::C),
-    ("D", Key::D),
-    ("E", Key::E),
-    ("F", Key::F),
-    ("G", Key::G),
-    ("H", Key::H),
-    ("I", Key::I),
-    ("J", Key::J),
-    ("K", Key::K),
-    ("L", Key::L),
-    ("M", Key::M),
-    ("N", Key::N),
-    ("O", Key::O),
-    ("P", Key::P),
-    ("Q", Key::Q),
-    ("R", Key::R),
-    ("S", Key::S),
-    ("T", Key::T),
-    ("U", Key::U),
-    ("V", Key::V),
-    ("W", Key::W),
-    ("X", Key::X),
-    ("Y", Key::Y),
-    ("Z", Key::Z),
-    ("Up", Key::Up),
-    ("Down", Key::Down),
-    ("Left", Key::Left),
-    ("Right", Key::Right),
-    ("LeftShift", Key::LeftShift),
-    ("RightShift", Key::RightShift),
-    ("Space", Key::Space),
-    ("Escape", Key::Escape),
-    ("Enter", Key::Enter),
-    ("Tab", Key::Tab),
-];
-
-fn same_key(a: Key, b: Key) -> bool {
-    std::mem::discriminant(&a) == std::mem::discriminant(&b)
-}
-
-/// Settings-file name of a key (`None` for keys we don't expose).
-pub fn key_name(key: Key) -> Option<&'static str> {
-    KEY_NAMES
-        .iter()
-        .find(|(_, k)| same_key(*k, key))
-        .map(|(n, _)| *n)
-}
-
-/// Parse a key name from the settings file (case-insensitive).
-pub fn parse_key(name: &str) -> Option<Key> {
-    let name = name.trim();
-    KEY_NAMES
-        .iter()
-        .find(|(n, _)| n.eq_ignore_ascii_case(name))
-        .map(|(_, k)| *k)
-}
-
-// ------------------------------------------------------------------ key state
-
-/// Anything that can tell whether a key is currently held. `minifb::Window`
-/// implements it; tests use a fake.
-pub trait KeyState {
-    fn is_down(&self, key: Key) -> bool;
-}
-
-impl KeyState for Window {
-    fn is_down(&self, key: Key) -> bool {
-        self.is_key_down(key)
-    }
-}
-
 // ------------------------------------------------------------------ bindings
 
 #[derive(Clone)]
-pub struct KeyBindings {
-    map: HashMap<Action, Vec<Key>>,
-}
+pub struct KeyBindings(Bindings<Action>);
 
 impl Default for KeyBindings {
     fn default() -> Self {
-        let mut map = HashMap::new();
-        map.insert(Action::LookUp, vec![Key::Up]);
-        map.insert(Action::LookDown, vec![Key::Down]);
-        map.insert(Action::LookLeft, vec![Key::Left]);
-        map.insert(Action::LookRight, vec![Key::Right]);
-        map.insert(Action::Forward, vec![Key::W]);
-        map.insert(Action::Back, vec![Key::S]);
-        map.insert(Action::Left, vec![Key::A]);
-        map.insert(Action::Right, vec![Key::D]);
-        map.insert(Action::Jump, vec![Key::E]);
-        map.insert(Action::Sprint, vec![Key::LeftShift, Key::RightShift]);
-        map.insert(Action::Flashlight, vec![Key::F]);
-        map.insert(Action::Restart, vec![Key::R]);
-        map.insert(Action::Quit, vec![Key::Q]);
-        map.insert(Action::ToggleMouseLook, vec![Key::Tab, Key::M]);
-        KeyBindings { map }
+        let mut bindings = Bindings::new();
+        bindings.set(Action::LookUp, vec![Key::Up]);
+        bindings.set(Action::LookDown, vec![Key::Down]);
+        bindings.set(Action::LookLeft, vec![Key::Left]);
+        bindings.set(Action::LookRight, vec![Key::Right]);
+        bindings.set(Action::Forward, vec![Key::W]);
+        bindings.set(Action::Back, vec![Key::S]);
+        bindings.set(Action::Left, vec![Key::A]);
+        bindings.set(Action::Right, vec![Key::D]);
+        bindings.set(Action::Jump, vec![Key::E]);
+        bindings.set(Action::Sprint, vec![Key::LeftShift, Key::RightShift]);
+        bindings.set(Action::Flashlight, vec![Key::F]);
+        bindings.set(Action::Restart, vec![Key::R]);
+        bindings.set(Action::Quit, vec![Key::Q]);
+        bindings.set(Action::ToggleMouseLook, vec![Key::Tab, Key::M]);
+        KeyBindings(bindings)
     }
 }
 
 impl KeyBindings {
     pub fn keys(&self, action: Action) -> &[Key] {
-        self.map.get(&action).map(|v| v.as_slice()).unwrap_or(&[])
+        self.0.keys(action)
     }
 
     pub fn set(&mut self, action: Action, keys: Vec<Key>) {
-        self.map.insert(action, keys);
+        self.0.set(action, keys);
     }
 
     pub fn is_down<K: KeyState + ?Sized>(&self, state: &K, action: Action) -> bool {
-        self.keys(action).iter().any(|k| state.is_down(*k))
+        self.0.is_down(state, action)
     }
 }
 
@@ -218,12 +138,6 @@ pub struct InputFrame {
     pub restart: bool,
     pub quit: bool,
     pub toggle_mouse_look: bool,
-}
-
-/// Supplies mouse motion to the input layer. Platform access stays in the
-/// executable, allowing the library and tests to use deterministic sources.
-pub trait MouseSource {
-    fn delta(&mut self) -> (f32, f32);
 }
 
 /// Polls devices once per frame and keeps the little bit of state needed for

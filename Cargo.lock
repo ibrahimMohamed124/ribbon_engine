@@ -67,6 +67,12 @@ dependencies = [
 [[package]]
 name = "blocks_engine_desktop"
 version = "0.1.0"
+dependencies = [
+ "blocks_engine",
+ "enigo",
+ "minifb",
+ "rodio",
+]
 
 [[package]]
 name = "bumpalo"
@@ -1168,10 +1174,9 @@ name = "studs"
 version = "0.3.0"
 dependencies = [
  "blocks_engine",
+ "blocks_engine_desktop",
  "enigo",
  "minifb",
- "rayon",
- "rodio",
 ]
 
 [[package]]
