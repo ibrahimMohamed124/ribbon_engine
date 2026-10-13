@@ -140,6 +140,42 @@ pub struct InputFrame {
     pub toggle_mouse_look: bool,
 }
 
+impl InputFrame {
+    /// Combine frames while simulation is waiting for its next fixed step.
+    /// Held controls use the latest frame; mouse deltas and one-shot actions accumulate.
+    pub fn merge(&mut self, latest: Self) {
+        let mouse_yaw = self.controls.mouse_yaw + latest.controls.mouse_yaw;
+        let mouse_pitch = self.controls.mouse_pitch + latest.controls.mouse_pitch;
+        self.controls = latest.controls;
+        self.controls.mouse_yaw = mouse_yaw;
+        self.controls.mouse_pitch = mouse_pitch;
+        self.toggle_flashlight |= latest.toggle_flashlight;
+        self.restart |= latest.restart;
+        self.quit |= latest.quit;
+        self.toggle_mouse_look |= latest.toggle_mouse_look;
+    }
+
+    /// Keep held controls for later fixed substeps, consuming all one-shots and deltas.
+    pub fn level_only(self) -> Self {
+        Self {
+            controls: Controls {
+                look_up: self.controls.look_up,
+                look_down: self.controls.look_down,
+                look_left: self.controls.look_left,
+                look_right: self.controls.look_right,
+                forward: self.controls.forward,
+                back: self.controls.back,
+                left: self.controls.left,
+                right: self.controls.right,
+                jump: self.controls.jump,
+                sprint: self.controls.sprint,
+                ..Controls::default()
+            },
+            ..Self::default()
+        }
+    }
+}
+
 /// Polls devices once per frame and keeps the little bit of state needed for
 /// edge detection (flashlight toggle) and mouse deltas.
 pub struct Input {

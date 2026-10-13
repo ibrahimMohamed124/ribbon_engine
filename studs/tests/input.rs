@@ -1,6 +1,6 @@
 use raycast_blocks::input::Key;
 use raycast_blocks::input::{
-    key_name, parse_key, Action, Input, KeyBindings, KeyState, MouseSource,
+    key_name, parse_key, Action, Controls, Input, InputFrame, KeyBindings, KeyState, MouseSource,
 };
 
 struct FakeKeys(Vec<Key>);
@@ -186,4 +186,55 @@ fn zero_sensitivity_does_not_capture_mouse_look() {
     let input = Input::with_mouse_look(KeyBindings::default(), 0.0, true, false);
     assert!(input.mouse_look_enabled());
     assert!(!input.mouse_look_active());
+}
+
+#[test]
+fn fixed_step_input_merge_carries_deltas_and_one_shots_only_once() {
+    let mut pending = InputFrame::default();
+    pending.merge(InputFrame {
+        controls: Controls {
+            forward: true,
+            mouse_yaw: 0.12,
+            mouse_pitch: -0.04,
+            ..Controls::default()
+        },
+        toggle_flashlight: true,
+        ..InputFrame::default()
+    });
+    pending.merge(InputFrame {
+        controls: Controls {
+            sprint: true,
+            mouse_yaw: 0.08,
+            mouse_pitch: 0.01,
+            ..Controls::default()
+        },
+        toggle_mouse_look: true,
+        ..InputFrame::default()
+    });
+
+    assert!(
+        !pending.controls.forward,
+        "held controls use the latest frame"
+    );
+    assert!(pending.controls.sprint);
+    assert!((pending.controls.mouse_yaw - 0.2).abs() < 1e-6);
+    assert!((pending.controls.mouse_pitch + 0.03).abs() < 1e-6);
+    assert!(
+        pending.toggle_flashlight,
+        "one-shot survives zero-step frames"
+    );
+    assert!(pending.toggle_mouse_look);
+
+    let first = pending;
+    let substeps = [first, first.level_only(), first.level_only()];
+    assert!(substeps[0].toggle_flashlight);
+    assert!(substeps[0].toggle_mouse_look);
+    assert!((substeps[0].controls.mouse_yaw - 0.2).abs() < 1e-6);
+    for step in &substeps[1..] {
+        assert!(!step.toggle_flashlight);
+        assert!(!step.toggle_mouse_look);
+        assert_eq!(step.controls.mouse_yaw, 0.0);
+        assert_eq!(step.controls.mouse_pitch, 0.0);
+        assert!(step.controls.sprint);
+    }
 }

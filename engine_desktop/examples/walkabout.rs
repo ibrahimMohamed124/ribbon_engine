@@ -127,6 +127,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             width: 640,
             height: 360,
             scale: 1,
+            fixed_hz: 120,
+            max_steps: 10,
         },
     )
 }

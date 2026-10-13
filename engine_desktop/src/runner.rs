@@ -7,6 +7,7 @@ use blocks_engine::app::{
 };
 use blocks_engine::gfx::Framebuffer;
 use blocks_engine::input::MouseSource;
+use blocks_engine::time::FixedStepper;
 
 use crate::cursor::CursorMouse;
 use crate::keys::snapshot;
@@ -21,10 +22,12 @@ pub fn run<A: App>(mut app: A, mut config: WindowConfig) -> Result<(), Box<dyn E
     let mut framebuffer = Framebuffer::new(config.width, config.height);
     let mut mouse = CursorMouse::new();
     let mut timer = FrameTimer::new();
+    let mut stepper = FixedStepper::new(config.fixed_hz, config.max_steps);
     let mut frame = 0u32;
 
     while window.is_open() {
         let sample = timer.begin_frame();
+        let fixed_steps = stepper.advance(sample.dt);
         frame = frame.wrapping_add(1);
         let pressed = pressed_keys(&mut window);
         let keys = snapshot(&window);
@@ -35,6 +38,9 @@ pub fn run<A: App>(mut app: A, mut config: WindowConfig) -> Result<(), Box<dyn E
                 dt: sample.dt,
                 frame,
                 fps: sample.fps,
+                fixed_dt: stepper.step(),
+                fixed_steps,
+                alpha: stepper.alpha(),
             },
             &keys,
             &pressed,
