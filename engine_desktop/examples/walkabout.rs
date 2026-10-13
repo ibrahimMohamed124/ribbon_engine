@@ -15,7 +15,7 @@ const WALL: u8 = 2;
 struct RoomSurface;
 
 impl SurfaceShader for RoomSurface {
-    fn albedo(&self, block: u8, hit: &Hit, _direction: Vect) -> f32 {
+    fn albedo(&self, block: u8, hit: &Hit, _direction: Vect, _style: &RenderStyle) -> f32 {
         if hit.normal[2] != 0 {
             if block == FLOOR {
                 0.52

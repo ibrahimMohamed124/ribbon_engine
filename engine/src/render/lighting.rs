@@ -1,13 +1,23 @@
 //! Distance falloff and surface shading interface.
 
 use crate::math::Vect;
+use crate::render::style::RenderStyle;
 use crate::voxel::{Hit, VoxelWorld};
 
 pub const CONE_INNER: f32 = 0.985;
 pub const CONE_OUTER: f32 = 0.86;
 
 pub trait SurfaceShader: Sync {
-    fn albedo(&self, block: u8, hit: &Hit, direction: Vect) -> f32;
+    fn albedo(&self, block: u8, hit: &Hit, direction: Vect, style: &RenderStyle) -> f32;
+}
+
+pub struct SurfaceContext<'a> {
+    pub illumination: f32,
+    pub hit: &'a Hit,
+    pub direction: Vect,
+    pub cone: f32,
+    pub empty_voxel: u8,
+    pub style: &'a RenderStyle,
 }
 
 pub fn cone_factor(cosang: f32) -> f32 {
@@ -27,12 +37,16 @@ pub fn light(illumination: f32, distance: f32, ndotl: f32, cone: f32) -> f32 {
 pub fn shade_surface<S: SurfaceShader + ?Sized>(
     shader: &S,
     world: &VoxelWorld,
-    illumination: f32,
-    hit: &Hit,
-    direction: Vect,
-    cone: f32,
-    empty_voxel: u8,
+    context: SurfaceContext<'_>,
 ) -> f32 {
+    let SurfaceContext {
+        illumination,
+        hit,
+        direction,
+        cone,
+        empty_voxel,
+        style,
+    } = context;
     if hit.normal == [0, 0, 0] {
         return 0.0;
     }
@@ -47,5 +61,5 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
         2
     };
     let ndotl = direction.axis(axis).abs();
-    shader.albedo(block, hit, direction) * light(illumination, hit.dist, ndotl, cone)
+    shader.albedo(block, hit, direction, style) * light(illumination, hit.dist, ndotl, cone)
 }

@@ -3,7 +3,7 @@
 use rayon::prelude::*;
 
 use super::entities::{EntHit, EntView};
-use super::lighting::{cone_factor, light, shade_surface, SurfaceShader};
+use super::lighting::{cone_factor, light, shade_surface, SurfaceContext, SurfaceShader};
 use super::post::{finish_pixel_styled, PixelSample};
 use super::style::RenderStyle;
 use super::RENDER_DIST;
@@ -48,11 +48,14 @@ fn shade_pixel<S: SurfaceShader + Sync>(f: &Frame, shader: &S, fwd: Vect, dir: V
         Some(hit) => shade_surface(
             shader,
             f.world,
-            f.illumination,
-            &hit,
-            dir,
-            cone,
-            f.empty_voxel,
+            SurfaceContext {
+                illumination: f.illumination,
+                hit: &hit,
+                direction: dir,
+                cone,
+                empty_voxel: f.empty_voxel,
+                style: &f.style,
+            },
         ),
         None => 0.0,
     }

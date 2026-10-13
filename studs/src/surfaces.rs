@@ -1,60 +1,94 @@
 //! Game-specific voxel materials and renderable shapes.
 
+use std::sync::OnceLock;
+
+use blocks_engine::gfx::texture::Texture;
 use blocks_engine::math::{hash4, Vect};
 use blocks_engine::render::entities::{Bounds3, Box3, EntView, EntitySurface};
 use blocks_engine::render::lighting::SurfaceShader;
-use blocks_engine::voxel::Hit;
+use blocks_engine::render::RenderStyle;
+use blocks_engine::voxel::{face_uv, Hit};
 
-use crate::level::CEIL;
+use crate::level::{CEIL, FLOOR, WALL};
 
 pub struct StudsSurface;
 
 impl SurfaceShader for StudsSurface {
-    fn albedo(&self, block: u8, hit: &Hit, _direction: Vect) -> f32 {
-        if hit.normal == [0, 0, 0] {
-            return 0.0;
-        }
-        let point = hit.point;
-        let axis = if hit.normal[0] != 0 {
-            0
-        } else if hit.normal[1] != 0 {
-            1
+    fn albedo(&self, block: u8, hit: &Hit, _direction: Vect, style: &RenderStyle) -> f32 {
+        let base = classic_albedo(block, hit);
+        let strength = if style.texture_strength.is_finite() {
+            style.texture_strength.clamp(0.0, 1.0)
         } else {
-            2
+            0.0
         };
+        if strength == 0.0 {
+            return base;
+        }
 
-        if axis == 2 {
-            let fx = point.x - point.x.floor();
-            let fy = point.y - point.y.floor();
-            let base = if block == CEIL { 0.30 } else { 0.40 };
-            let distance = ((fx - 0.5) * (fx - 0.5) + (fy - 0.5) * (fy - 0.5)).sqrt();
-            let mut albedo = base;
-            if distance < 0.27 {
-                albedo *= 1.25;
-            } else if distance < 0.34 {
-                albedo *= 0.6;
-            }
-            if fx < 0.025 || fx > 0.975 || fy < 0.025 || fy > 0.975 {
-                albedo *= 0.65;
-            }
-            albedo * (1.0 + 0.05 * hash4(hit.cell.0, hit.cell.1, hit.cell.2, 7))
+        static BRICKS: OnceLock<Texture> = OnceLock::new();
+        static TILES: OnceLock<Texture> = OnceLock::new();
+        static NOISE: OnceLock<Texture> = OnceLock::new();
+        let texture = if block == WALL {
+            BRICKS.get_or_init(|| Texture::bricks(64, 64, 17))
+        } else if block == FLOOR || block == CEIL {
+            TILES.get_or_init(|| Texture::tiles(64, 64, 29))
         } else {
-            let height = if axis == 0 { point.y } else { point.x };
-            let row_fraction = point.z * 2.0;
-            let row = row_fraction.floor() as i32;
-            let offset = if row & 1 == 1 { 0.5 } else { 0.0 };
-            let horizontal = height + offset;
-            if row_fraction.fract() < 0.10 || horizontal.fract() < 0.06 {
-                0.20
-            } else {
-                let id = hash4(
-                    horizontal.floor() as i32,
-                    row,
-                    axis as i32 + 3 * hit.normal[axis],
-                    hit.cell.0 + hit.cell.1 * 31,
-                );
-                0.52 + 0.10 * id
-            }
+            NOISE.get_or_init(|| Texture::noise(64, 64, 41))
+        };
+        let (u, v) = face_uv(hit);
+        let detail = texture.sample_faded(u, v, hit.dist, 7.0, 17.0);
+        let fine_noise = NOISE
+            .get_or_init(|| Texture::noise(64, 64, 41))
+            .sample_faded(u * 2.0, v * 2.0, hit.dist, 5.0, 14.0);
+        let textured = (detail * 0.92 + fine_noise * 0.08).clamp(0.0, 1.0);
+        base * (1.0 - strength) + textured * strength
+    }
+}
+
+fn classic_albedo(block: u8, hit: &Hit) -> f32 {
+    if hit.normal == [0, 0, 0] {
+        return 0.0;
+    }
+    let point = hit.point;
+    let axis = if hit.normal[0] != 0 {
+        0
+    } else if hit.normal[1] != 0 {
+        1
+    } else {
+        2
+    };
+
+    if axis == 2 {
+        let fx = point.x - point.x.floor();
+        let fy = point.y - point.y.floor();
+        let base = if block == CEIL { 0.30 } else { 0.40 };
+        let distance = ((fx - 0.5) * (fx - 0.5) + (fy - 0.5) * (fy - 0.5)).sqrt();
+        let mut albedo = base;
+        if distance < 0.27 {
+            albedo *= 1.25;
+        } else if distance < 0.34 {
+            albedo *= 0.6;
+        }
+        if fx < 0.025 || fx > 0.975 || fy < 0.025 || fy > 0.975 {
+            albedo *= 0.65;
+        }
+        albedo * (1.0 + 0.05 * hash4(hit.cell.0, hit.cell.1, hit.cell.2, 7))
+    } else {
+        let height = if axis == 0 { point.y } else { point.x };
+        let row_fraction = point.z * 2.0;
+        let row = row_fraction.floor() as i32;
+        let offset = if row & 1 == 1 { 0.5 } else { 0.0 };
+        let horizontal = height + offset;
+        if row_fraction.fract() < 0.10 || horizontal.fract() < 0.06 {
+            0.20
+        } else {
+            let id = hash4(
+                horizontal.floor() as i32,
+                row,
+                axis as i32 + 3 * hit.normal[axis],
+                hit.cell.0 + hit.cell.1 * 31,
+            );
+            0.52 + 0.10 * id
         }
     }
 }

@@ -10,6 +10,29 @@ pub struct Hit {
     pub point: Vect,
 }
 
+/// Repeating texture coordinates on the plane of the hit face.
+///
+/// The normal axis is omitted, so neighboring voxel faces meet at matching
+/// integer texture boundaries. Procedural textures should tile at those edges.
+pub fn face_uv(hit: &Hit) -> (f32, f32) {
+    let fract = |value: f32| {
+        let value = value - value.floor();
+        if value >= 1.0 {
+            0.0
+        } else {
+            value
+        }
+    };
+    let (u, v) = if hit.normal[0] != 0 {
+        (hit.point.y, hit.point.z)
+    } else if hit.normal[1] != 0 {
+        (hit.point.x, hit.point.z)
+    } else {
+        (hit.point.x, hit.point.y)
+    };
+    (fract(u), fract(v))
+}
+
 pub struct VoxelWorld {
     width: usize,
     height: usize,
@@ -122,5 +145,52 @@ impl VoxelWorld {
 
     pub fn idx(width: usize, height: usize, z: usize, y: usize, x: usize) -> usize {
         (z * height + y) * width + x
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{face_uv, Hit};
+    use crate::math::Vect;
+
+    #[test]
+    fn face_uv_uses_the_two_axes_of_each_face() {
+        let point = Vect::new(-2.25, 3.5, 4.75);
+        let cases = [
+            ([1, 0, 0], (0.5, 0.75)),
+            ([-1, 0, 0], (0.5, 0.75)),
+            ([0, 1, 0], (0.75, 0.75)),
+            ([0, -1, 0], (0.75, 0.75)),
+            ([0, 0, 1], (0.75, 0.5)),
+            ([0, 0, -1], (0.75, 0.5)),
+        ];
+        for (normal, expected) in cases {
+            let hit = Hit {
+                cell: (0, 0, 0),
+                normal,
+                dist: 0.0,
+                point,
+            };
+            let uv = face_uv(&hit);
+            assert_eq!(uv, expected);
+            assert!((0.0..1.0).contains(&uv.0));
+            assert!((0.0..1.0).contains(&uv.1));
+        }
+    }
+
+    #[test]
+    fn adjacent_cells_share_uv_for_the_same_world_point() {
+        let point = Vect::new(4.375, 8.625, 2.125);
+        let left = Hit {
+            cell: (1, 2, 3),
+            normal: [0, 0, 1],
+            dist: 0.0,
+            point,
+        };
+        let right = Hit {
+            cell: (2, 2, 3),
+            ..left
+        };
+        assert_eq!(face_uv(&left), face_uv(&right));
     }
 }
