@@ -26,9 +26,24 @@ pub fn cone_factor(cosang: f32) -> f32 {
 }
 
 pub fn light(illumination: f32, distance: f32, ndotl: f32, cone: f32) -> f32 {
-    let fog = (1.0 - distance / super::RENDER_DIST).clamp(0.0, 1.0);
-    let ambient = 0.035;
-    let lamp = 0.12 / (1.0 + 0.7 * distance * distance);
+    light_with_style(illumination, distance, ndotl, cone, &RenderStyle::classic())
+}
+
+pub fn light_with_style(
+    illumination: f32,
+    distance: f32,
+    ndotl: f32,
+    cone: f32,
+    style: &RenderStyle,
+) -> f32 {
+    let fog_distance = if style.fog_distance.is_finite() && style.fog_distance > 0.0 {
+        style.fog_distance
+    } else {
+        super::RENDER_DIST
+    };
+    let fog = (1.0 - distance / fog_distance).clamp(0.0, 1.0);
+    let ambient = style.ambient;
+    let lamp = style.lamp / (1.0 + 0.7 * distance * distance);
     let beam =
         illumination * cone * (0.3 + 0.7 * ndotl) * (1.7 / (1.0 + 0.06 * distance * distance));
     (ambient + lamp + beam) * fog
@@ -73,6 +88,6 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
     };
     let occlusion = 1.0 + (ao - 1.0) * ao_strength;
     shader.albedo(block, hit, direction, style)
-        * light(illumination, hit.dist, ndotl, cone)
+        * light_with_style(illumination, hit.dist, ndotl, cone, style)
         * occlusion
 }

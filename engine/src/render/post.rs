@@ -1,7 +1,7 @@
 //! Screen-space vignette, grain, and ordered dithering.
 
 use crate::math::hash4;
-use crate::render::style::{RenderStyle, LEVEL_COUNT};
+use crate::render::style::{LevelLut, RenderStyle, LEVEL_COUNT};
 
 pub const LEVELS: f32 = LEVEL_COUNT as f32;
 pub const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
@@ -32,6 +32,16 @@ pub fn finish_pixel(g: f32, u: f32, v: f32, x: usize, y: usize, frame: u32, inte
 }
 
 pub fn finish_pixel_styled(g: f32, sample: PixelSample, style: &RenderStyle) -> u32 {
+    let lut = style.level_lut();
+    finish_pixel_styled_with_lut(g, sample, style, &lut)
+}
+
+pub(crate) fn finish_pixel_styled_with_lut(
+    g: f32,
+    sample: PixelSample,
+    style: &RenderStyle,
+    lut: &LevelLut,
+) -> u32 {
     if !g.is_finite()
         || !sample.u.is_finite()
         || !sample.v.is_finite()
@@ -47,18 +57,8 @@ pub fn finish_pixel_styled(g: f32, sample: PixelSample, style: &RenderStyle) -> 
         * 0.025
         * (1.0 + 3.0 * sample.intensity);
     let gv = (mapped * vig + grain).clamp(0.0, 1.0);
-    let gamma = if style.gamma.is_finite() && style.gamma > 0.0 {
-        style.gamma
-    } else {
-        1.0
-    };
-    let encoded = if gamma == 1.0 {
-        gv
-    } else {
-        gv.powf(1.0 / gamma)
-    };
     let b = (BAYER[sample.y & 3][sample.x & 3] as f32 + 0.5) / 16.0;
-    let level = (encoded * (LEVELS - 1.0) + b)
+    let level = (lut.level_for(style, gv) + b)
         .floor()
         .clamp(0.0, LEVELS - 1.0) as usize;
     style.palette.color(level)

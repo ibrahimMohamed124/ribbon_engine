@@ -3,8 +3,10 @@
 use rayon::prelude::*;
 
 use super::entities::{EntHit, EntView};
-use super::lighting::{cone_factor, light, shade_surface, SurfaceContext, SurfaceShader};
-use super::post::{finish_pixel_styled, PixelSample};
+use super::lighting::{
+    cone_factor, light_with_style, shade_surface, SurfaceContext, SurfaceShader,
+};
+use super::post::{finish_pixel_styled_with_lut, PixelSample};
 use super::style::RenderStyle;
 use super::RENDER_DIST;
 use crate::gfx::Framebuffer;
@@ -42,7 +44,7 @@ fn shade_pixel<S: SurfaceShader + Sync>(f: &Frame, shader: &S, fwd: Vect, dir: V
             let fall = (1.0 - hit.t / (RENDER_DIST * 1.4)).clamp(0.0, 1.0);
             return hit.gray * fall;
         }
-        return hit.gray * light(f.illumination, hit.t, hit.ndotl, cone);
+        return hit.gray * light_with_style(f.illumination, hit.t, hit.ndotl, cone, &f.style);
     }
     match world_hit {
         Some(hit) => shade_surface(
@@ -62,6 +64,7 @@ fn shade_pixel<S: SurfaceShader + Sync>(f: &Frame, shader: &S, fwd: Vect, dir: V
 }
 
 pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Frame, shader: &S) {
+    let level_lut = frame.style.level_lut();
     let (width, height) = (fb.width, fb.height);
     let view = frame.view;
     let forward = forward_vec(view);
@@ -84,7 +87,7 @@ pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Frame, shad
                 let direction =
                     (forward + right.scale(u * tan_h) + up.scale(v * tan_v)).normalize();
                 let gray = shade_pixel(frame, shader, forward, direction);
-                *pixel = finish_pixel_styled(
+                *pixel = finish_pixel_styled_with_lut(
                     gray,
                     PixelSample {
                         u,
@@ -95,6 +98,7 @@ pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Frame, shad
                         intensity: frame.intensity,
                     },
                     &frame.style,
+                    &level_lut,
                 );
             }
         });

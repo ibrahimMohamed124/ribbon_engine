@@ -1,8 +1,10 @@
 //! Color management and materials applied after lighting.
 
+use super::RENDER_DIST;
 use crate::math::pack_gray;
 
 pub const LEVEL_COUNT: usize = 14;
+const LEVEL_LUT_SIZE: usize = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tonemap {
@@ -73,6 +75,12 @@ pub struct RenderStyle {
     pub texture_strength: f32,
     /// Blend voxel face occlusion into world surfaces.
     pub ao_strength: f32,
+    /// Constant world illumination with the flashlight off.
+    pub ambient: f32,
+    /// Secondary point-like illumination around the player.
+    pub lamp: f32,
+    /// Distance where fog has faded lighting to black.
+    pub fog_distance: f32,
 }
 
 impl RenderStyle {
@@ -83,6 +91,9 @@ impl RenderStyle {
             palette: Palette::gray(),
             texture_strength: 0.0,
             ao_strength: 0.0,
+            ambient: 0.035,
+            lamp: 0.12,
+            fog_distance: RENDER_DIST,
         }
     }
 
@@ -93,7 +104,61 @@ impl RenderStyle {
             palette: Palette::ramp(0x05_08_06, 0xcf_e3_d4),
             texture_strength: 0.55,
             ao_strength: 0.45,
+            ambient: 0.035,
+            lamp: 0.12,
+            fog_distance: RENDER_DIST,
         }
+    }
+
+    /// Continuous palette level after tone mapping and display gamma.
+    /// Vignette, grain, and dithering are deliberately excluded.
+    pub fn level_for(&self, gray: f32) -> f32 {
+        if !gray.is_finite() {
+            return 0.0;
+        }
+        let mapped = self.tonemap.apply(gray).clamp(0.0, 1.0);
+        let gamma = if self.gamma.is_finite() && self.gamma > 0.0 {
+            self.gamma
+        } else {
+            1.0
+        };
+        let encoded = if gamma == 1.0 {
+            mapped
+        } else {
+            mapped.powf(1.0 / gamma)
+        };
+        encoded * (LEVEL_COUNT - 1) as f32
+    }
+
+    pub(crate) fn level_lut(&self) -> LevelLut {
+        let bypass = matches!(self.tonemap, Tonemap::None) && self.gamma == 1.0;
+        let values = if bypass {
+            [0.0; LEVEL_LUT_SIZE]
+        } else {
+            std::array::from_fn(|i| self.level_for(i as f32 * 2.0 / (LEVEL_LUT_SIZE - 1) as f32))
+        };
+        LevelLut { values, bypass }
+    }
+}
+
+pub(crate) struct LevelLut {
+    values: [f32; LEVEL_LUT_SIZE],
+    bypass: bool,
+}
+
+impl LevelLut {
+    pub(crate) fn level_for(&self, style: &RenderStyle, gray: f32) -> f32 {
+        if !gray.is_finite() {
+            return 0.0;
+        }
+        if self.bypass {
+            return style.level_for(gray);
+        }
+        let position = gray.clamp(0.0, 2.0) * (LEVEL_LUT_SIZE - 1) as f32 / 2.0;
+        let low = position.floor() as usize;
+        let high = (low + 1).min(LEVEL_LUT_SIZE - 1);
+        let fraction = position - low as f32;
+        self.values[low] * (1.0 - fraction) + self.values[high] * fraction
     }
 }
 
@@ -145,5 +210,16 @@ mod tests {
     #[test]
     fn classic_is_the_default_style() {
         assert_eq!(RenderStyle::default(), RenderStyle::classic());
+    }
+
+    #[test]
+    fn level_lut_tracks_exact_levels_and_classic_bypasses_it() {
+        let style = RenderStyle::moody();
+        let lut = style.level_lut();
+        for i in 0..=1000 {
+            let gray = i as f32 * 1.9 / 1000.0;
+            assert!((lut.level_for(&style, gray) - style.level_for(gray)).abs() < 0.02);
+        }
+        assert!(RenderStyle::classic().level_lut().bypass);
     }
 }
