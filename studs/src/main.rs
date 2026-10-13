@@ -14,167 +14,26 @@
 // This file is only the OS glue: window, clock, and the frame loop.
 // All game logic lives in the library crate (see lib.rs for the module map).
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use enigo::{Coordinate, Enigo, Mouse, Settings as EnigoSettings};
-use minifb::{KeyRepeat, MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
-
+use blocks_engine_desktop::cursor::CursorMouse;
+use blocks_engine_desktop::timer::FrameTimer;
+use blocks_engine_desktop::window::{
+    create_window, left_mouse_down, mouse_position_in_framebuffer, pressed_keys, scroll_y,
+    WindowConfig,
+};
 use raycast_blocks::audio::{Audio, AudioAmbience};
 use raycast_blocks::game::{Game, PAGES_TOTAL};
-use raycast_blocks::input::{Input, InputFrame, MouseSource};
+use raycast_blocks::input::{Input, InputFrame};
 use raycast_blocks::renderer::Framebuffer;
 use raycast_blocks::settings::Settings;
 use raycast_blocks::ui::{Screen as UiScreen, Ui, UiInput};
-
-const TARGET_FRAME: Duration = Duration::from_micros(16_000);
-
-/// Cursor capture built on `enigo` (minifb has no pointer lock).
-///
-/// Everything is measured in *screen* pixels via `Enigo::location`, so it does
-/// not depend on minifb's cached mouse position (which is divided by the window
-/// scale factor and only refreshes on window events). Each frame we read the
-/// cursor, compute `delta = cursor - reference`, then warp it back to a fixed
-/// anchor inside the window.
-struct CursorMouse {
-    enigo: Option<Enigo>,
-    unavailable: bool,
-    anchor: (i32, i32),
-    reference: (i32, i32),
-    delta: (f32, f32),
-    captured: bool,
-}
-
-impl CursorMouse {
-    fn new() -> Self {
-        Self {
-            enigo: None,
-            unavailable: false,
-            anchor: (0, 0),
-            reference: (0, 0),
-            delta: (0.0, 0.0),
-            captured: false,
-        }
-    }
-
-    fn update(&mut self, window: &mut Window, should_capture: bool) {
-        self.delta = (0.0, 0.0);
-        if !should_capture || self.unavailable {
-            self.release(window);
-            return;
-        }
-        if let Err(err) = self.capture_step(window) {
-            eprintln!("mouse look unavailable (cursor control failed): {err}");
-            self.unavailable = true;
-            self.release(window);
-        }
-    }
-
-    fn capture_step(&mut self, window: &mut Window) -> Result<(), Box<dyn std::error::Error>> {
-        if self.enigo.is_none() {
-            self.enigo = Some(Enigo::new(&EnigoSettings::default())?);
-        }
-        window.set_cursor_visibility(false);
-        let enigo = self.enigo.as_mut().expect("initialized above");
-        let (x, y) = enigo.location()?;
-
-        if !self.captured {
-            // Anchor = window centre in screen space. `get_unscaled_mouse_pos`
-            // and `get_size` are both in real window pixels (unlike
-            // `get_mouse_pos`, which is divided by the scale factor).
-            self.anchor = match window.get_unscaled_mouse_pos(MouseMode::Discard) {
-                Some((lx, ly)) => {
-                    let (w, h) = window.get_size();
-                    (
-                        x + (w as f32 / 2.0 - lx).round() as i32,
-                        y + (h as f32 / 2.0 - ly).round() as i32,
-                    )
-                }
-                None => (x, y),
-            };
-            self.captured = true;
-        } else {
-            self.delta = ((x - self.reference.0) as f32, (y - self.reference.1) as f32);
-        }
-
-        enigo.move_mouse(self.anchor.0, self.anchor.1, Coordinate::Abs)?;
-        // Some platforms round the warp target by a pixel; use where the cursor
-        // really landed as next frame's reference so that never drifts the camera.
-        let (px, py) = enigo.location()?;
-        self.reference = if (px - self.anchor.0).abs() <= 2 && (py - self.anchor.1).abs() <= 2 {
-            (px, py)
-        } else {
-            self.anchor
-        };
-        Ok(())
-    }
-
-    fn release(&mut self, window: &mut Window) {
-        // `capture_step` hides the cursor before the first fallible OS call.
-        // Always restore visibility on release, including a partially failed
-        // capture where `captured` was never set.
-        window.set_cursor_visibility(true);
-        self.captured = false;
-        self.delta = (0.0, 0.0);
-    }
-}
-
-impl MouseSource for CursorMouse {
-    fn delta(&mut self) -> (f32, f32) {
-        std::mem::replace(&mut self.delta, (0.0, 0.0))
-    }
-}
 
 fn seed_now() -> u32 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.subsec_nanos() ^ (d.as_secs() as u32))
         .unwrap_or(12345)
-}
-
-fn scale_from(factor: u32) -> Scale {
-    match factor {
-        1 => Scale::X1,
-        2 => Scale::X2,
-        _ => Scale::X4,
-    }
-}
-
-fn create_window(settings: &Settings) -> Result<Window, minifb::Error> {
-    Window::new(
-        "STUDS",
-        settings.render_width,
-        settings.render_height,
-        WindowOptions {
-            scale: scale_from(settings.window_scale),
-            scale_mode: ScaleMode::AspectRatioStretch,
-            resize: true,
-            ..WindowOptions::default()
-        },
-    )
-}
-
-fn mouse_position_in_framebuffer(
-    window: &Window,
-    framebuffer_size: (usize, usize),
-) -> Option<(f32, f32)> {
-    let (x, y) = window.get_unscaled_mouse_pos(MouseMode::Discard)?;
-    let (window_width, window_height) = window.get_size();
-    let (framebuffer_width, framebuffer_height) = framebuffer_size;
-    if window_width == 0 || window_height == 0 || framebuffer_width == 0 || framebuffer_height == 0
-    {
-        return None;
-    }
-
-    // Match minifb's AspectRatioStretch viewport, including any letterbox area
-    // introduced when the resizable window no longer matches the render aspect.
-    let scale = (window_width as f32 / framebuffer_width as f32)
-        .min(window_height as f32 / framebuffer_height as f32);
-    let offset_x = (window_width as f32 - framebuffer_width as f32 * scale) * 0.5;
-    let offset_y = (window_height as f32 - framebuffer_height as f32 * scale) * 0.5;
-    let x = (x - offset_x) / scale;
-    let y = (y - offset_y) / scale;
-    (x >= 0.0 && y >= 0.0 && x < framebuffer_width as f32 && y < framebuffer_height as f32)
-        .then_some((x, y))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -195,7 +54,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = settings.save(&settings_path);
     }
 
-    let mut window = create_window(&settings)?;
+    let window_config = WindowConfig {
+        title: "STUDS",
+        width: settings.render_width,
+        height: settings.render_height,
+        scale: settings.window_scale,
+    };
+    let mut window = create_window(&window_config)?;
     window.set_cursor_visibility(true);
 
     let mut game = Game::new(seed_now());
@@ -223,28 +88,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ui = Ui::new();
 
     let mut frame_no: u32 = 0;
-    let mut last = Instant::now();
-    let mut fps = 60.0f32;
+    let mut timer = FrameTimer::new();
     let mut title_timer = 0.0f32;
 
     while window.is_open() {
-        let frame_start = Instant::now();
-        let dt = frame_start.duration_since(last).as_secs_f32().min(0.05);
-        last = frame_start;
-        if dt > 0.0 {
-            fps = fps * 0.9 + (1.0 / dt) * 0.1;
-        }
+        let sample = timer.begin_frame();
+        let dt = sample.dt;
+        let fps = sample.fps;
         frame_no = frame_no.wrapping_add(1);
 
-        let ui_keys = window
-            .get_keys_pressed(KeyRepeat::No)
-            .into_iter()
-            .filter_map(blocks_engine_desktop::keys::from_minifb)
-            .collect();
-        let ui_input = UiInput::from_keys(ui_keys).with_mouse(
+        let ui_input = UiInput::from_keys(pressed_keys(&mut window)).with_mouse(
             mouse_position_in_framebuffer(&window, (fb.width, fb.height)),
-            window.get_mouse_down(MouseButton::Left),
-            window.get_scroll_wheel().map_or(0.0, |(_, y)| y),
+            left_mouse_down(&window),
+            scroll_y(&window),
             (fb.width, fb.height),
         );
         let ui_outcome = ui.update(&ui_input, &mut settings);
@@ -263,7 +119,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if ui_outcome.window_changed {
             mouse.release(&mut window);
-            window = create_window(&settings)?;
+            let window_config = WindowConfig {
+                title: "STUDS",
+                width: settings.render_width,
+                height: settings.render_height,
+                scale: settings.window_scale,
+            };
+            window = create_window(&window_config)?;
             window.set_cursor_visibility(true);
             fb = Framebuffer::new(settings.render_width, settings.render_height);
         }
@@ -343,7 +205,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         window.update_with_buffer(&fb.pixels, fb.width, fb.height)?;
 
-        // minifb refreshes its cached mouse position during update_with_buffer.
+        // Window events refresh the cached mouse position during buffer update.
         // Sample and recenter only after that event pump, then consume this
         // delta during the next frame's input poll.
         let capture_mouse = ui.is_playing()
@@ -368,10 +230,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             window.set_title(&title);
         }
 
-        let elapsed = frame_start.elapsed();
-        if elapsed < TARGET_FRAME {
-            std::thread::sleep(TARGET_FRAME - elapsed);
-        }
+        timer.cap_frame();
     }
     mouse.release(&mut window);
     Ok(())

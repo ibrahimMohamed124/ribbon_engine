@@ -1175,8 +1175,6 @@ version = "0.3.0"
 dependencies = [
  "blocks_engine",
  "blocks_engine_desktop",
- "enigo",
- "minifb",
 ]
 
 [[package]]
