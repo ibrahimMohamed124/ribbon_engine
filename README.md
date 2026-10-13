@@ -34,8 +34,8 @@ cargo test --locked
 
 | Action | Default keys |
 | --- | --- |
-| Look | W / A / S / D or arrow keys |
-| Move | I / J / K / L |
+| Move | W / A / S / D |
+| Look | Arrow keys (or mouse look) |
 | Jump | E |
 | Sprint | Left or right Shift |
 | Flashlight | F |
@@ -43,7 +43,7 @@ cargo test --locked
 | Toggle mouse look | Tab or M |
 | Quit | Esc or Q |
 
-Bindings are configurable and saved in `settings.cfg` in the application's working directory. Mouse look starts disabled. Press `Tab` or `M` to toggle it; while active, the cursor is hidden and recentered so you can turn continuously. Adjust `mouse_sensitivity` (default `0.0025` radians/pixel), `mouse_look_on_start`, and `invert_y` in `settings.cfg`.
+Bindings are configurable and saved in `settings.cfg` (`%APPDATA%\raycast_blocks\` on Windows, `~/.config/raycast_blocks/` on Linux/macOS, or `$XDG_CONFIG_HOME`). Mouse look starts disabled. Press `Tab` or `M` to toggle it; while active, the cursor is hidden and recentered so you can turn continuously. Adjust `mouse_sensitivity` (default `0.0025` radians/pixel), `mouse_look_on_start`, and `invert_y` in `settings.cfg`.
 
 Cursor recentering uses Enigo. On Wayland, cursor warping may be restricted or experimental depending on the compositor and Enigo backend. macOS may request Accessibility permission to control the cursor. If cursor warping is denied, use the keyboard look controls or disable mouse look.
 
@@ -92,10 +92,10 @@ cargo test --locked
 
 ### أزرار التحكم الافتراضية
 
-- النظر: `W / A / S / D` أو الأسهم
-- الحركة: `I / J / K / L`
+- الحركة: `W / A / S / D`
+- النظر: الأسهم أو الماوس
 - القفز: `E`، الجري: `Shift`، الكشاف: `F`
 - تشغيل/إيقاف النظر بالماوس: `Tab` أو `M` (يبدأ متوقفًا افتراضيًا)
 - إعادة اللعب: `R`، الخروج: `Esc` أو `Q`
 
-يمكن تعديل الأزرار، وتُحفظ الإعدادات في `settings.cfg` داخل مجلد التشغيل.
+يمكن تعديل الأزرار، وتُحفظ الإعدادات في `settings.cfg` (في `%APPDATA%\raycast_blocks\` على ويندوز، أو `~/.config/raycast_blocks/` على لينكس/ماك).

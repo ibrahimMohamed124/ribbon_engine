@@ -95,7 +95,7 @@ fn bad_binding_keeps_the_default() {
     let s = Settings::parse("key.forward = Banana\n");
     let keys = s.bindings.keys(Action::Forward);
     assert_eq!(keys.len(), 1);
-    assert!(matches!(keys[0], Key::I));
+    assert!(matches!(keys[0], Key::W));
 }
 
 #[test]
@@ -119,4 +119,17 @@ fn missing_file_falls_back_to_defaults() {
     let path = std::env::temp_dir().join("raycast_blocks_definitely_missing.cfg");
     let s = Settings::load_or_default(&path);
     assert_eq!(s.window_scale, Settings::default().window_scale);
+}
+
+#[test]
+fn legacy_file_keeps_new_movement_defaults() {
+    // A file without `settings_version` holds the old IJKL/WASD-look bindings.
+    let s = Settings::parse("key.forward = I\nkey.look_left = A,Left\nkey.flashlight = G\n");
+    assert!(matches!(s.bindings.keys(Action::Forward)[0], Key::W));
+    assert_eq!(s.bindings.keys(Action::LookLeft).len(), 1);
+    // non-movement bindings are still honoured
+    assert!(matches!(s.bindings.keys(Action::Flashlight)[0], Key::G));
+    // current-version files are honoured in full
+    let s = Settings::parse("settings_version = 2\nkey.forward = I\n");
+    assert!(matches!(s.bindings.keys(Action::Forward)[0], Key::I));
 }

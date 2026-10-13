@@ -55,6 +55,24 @@ impl Default for Settings {
     }
 }
 
+/// Bumped when default key bindings change. Files without this key were written
+/// by an older version and may hold stale movement/look bindings.
+pub const SETTINGS_VERSION: u32 = 2;
+
+fn is_movement_or_look(action: Action) -> bool {
+    matches!(
+        action,
+        Action::Forward
+            | Action::Back
+            | Action::Left
+            | Action::Right
+            | Action::LookUp
+            | Action::LookDown
+            | Action::LookLeft
+            | Action::LookRight
+    )
+}
+
 fn parse_finite(v: &str) -> Option<f32> {
     v.parse::<f32>().ok().filter(|x| x.is_finite())
 }
@@ -77,6 +95,11 @@ impl Settings {
     /// Parse settings text; anything missing or invalid keeps its default.
     pub fn parse(text: &str) -> Settings {
         let mut s = Settings::default();
+        let current = format!("settings_version = {SETTINGS_VERSION}");
+        let legacy = !text.lines().any(|raw| {
+            let line = raw.split('#').next().unwrap_or("");
+            line.split_whitespace().collect::<Vec<_>>().join(" ") == current
+        });
         for raw in text.lines() {
             let line = raw.split('#').next().unwrap_or("").trim();
             let (key, value) = match line.split_once('=') {
@@ -133,6 +156,11 @@ impl Settings {
                 }
                 _ => {
                     if let Some(action) = key.strip_prefix("key.").and_then(Action::from_name) {
+                        // Old files hold the previous default movement/look keys
+                        // (IJKL / WASD-look); keep the new defaults instead.
+                        if legacy && is_movement_or_look(action) {
+                            continue;
+                        }
                         let keys: Vec<_> = value.split(',').filter_map(parse_key).collect();
                         if !keys.is_empty() {
                             s.bindings.set(action, keys);
@@ -148,6 +176,7 @@ impl Settings {
     pub fn to_text(&self) -> String {
         let mut out = String::new();
         out.push_str("# raycast_blocks settings\n");
+        out.push_str(&format!("settings_version = {}\n", SETTINGS_VERSION));
         out.push_str(&format!("master_volume = {}\n", self.master_volume));
         out.push_str(&format!("hfov_degrees = {}\n", self.hfov_degrees));
         out.push_str(&format!("render_width = {}\n", self.render_width));

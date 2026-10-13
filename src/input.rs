@@ -156,14 +156,14 @@ pub struct KeyBindings {
 impl Default for KeyBindings {
     fn default() -> Self {
         let mut map = HashMap::new();
-        map.insert(Action::LookUp, vec![Key::W, Key::Up]);
-        map.insert(Action::LookDown, vec![Key::S, Key::Down]);
-        map.insert(Action::LookLeft, vec![Key::A, Key::Left]);
-        map.insert(Action::LookRight, vec![Key::D, Key::Right]);
-        map.insert(Action::Forward, vec![Key::I]);
-        map.insert(Action::Back, vec![Key::K]);
-        map.insert(Action::Left, vec![Key::J]);
-        map.insert(Action::Right, vec![Key::L]);
+        map.insert(Action::LookUp, vec![Key::Up]);
+        map.insert(Action::LookDown, vec![Key::Down]);
+        map.insert(Action::LookLeft, vec![Key::Left]);
+        map.insert(Action::LookRight, vec![Key::Right]);
+        map.insert(Action::Forward, vec![Key::W]);
+        map.insert(Action::Back, vec![Key::S]);
+        map.insert(Action::Left, vec![Key::A]);
+        map.insert(Action::Right, vec![Key::D]);
         map.insert(Action::Jump, vec![Key::E]);
         map.insert(Action::Sprint, vec![Key::LeftShift, Key::RightShift]);
         map.insert(Action::Flashlight, vec![Key::F]);

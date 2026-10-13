@@ -28,7 +28,7 @@ fn input() -> Input {
 #[test]
 fn default_bindings_map_to_controls() {
     let mut i = input();
-    let f = i.poll(&FakeKeys(vec![Key::I, Key::LeftShift, Key::E]), None);
+    let f = i.poll(&FakeKeys(vec![Key::W, Key::LeftShift, Key::E]), None);
     assert!(f.controls.forward && f.controls.sprint && f.controls.jump);
     assert!(!f.controls.back && !f.controls.left && !f.controls.right);
     assert_eq!(
@@ -38,10 +38,11 @@ fn default_bindings_map_to_controls() {
 }
 
 #[test]
-fn arrows_and_letters_both_look() {
+fn arrows_look_and_wasd_move() {
     let mut i = input();
     assert!(i.poll(&FakeKeys(vec![Key::Left]), None).controls.look_left);
-    assert!(i.poll(&FakeKeys(vec![Key::A]), None).controls.look_left);
+    let f = i.poll(&FakeKeys(vec![Key::A]), None);
+    assert!(f.controls.left && !f.controls.look_left);
 }
 
 #[test]
@@ -69,7 +70,7 @@ fn rebinding_replaces_the_default() {
     let mut b = KeyBindings::default();
     b.set(Action::Forward, vec![Key::Up]);
     let mut i = Input::new(b, 0.0);
-    assert!(!i.poll(&FakeKeys(vec![Key::I]), None).controls.forward);
+    assert!(!i.poll(&FakeKeys(vec![Key::W]), None).controls.forward);
     assert!(i.poll(&FakeKeys(vec![Key::Up]), None).controls.forward);
 }
 
