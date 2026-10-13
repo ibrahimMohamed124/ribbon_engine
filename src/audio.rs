@@ -34,7 +34,10 @@ pub struct Audio {
 
 impl Audio {
     pub fn new(backend: Box<dyn AudioBackend>, master_volume: f32) -> Self {
-        Audio { backend, master_volume: master_volume.clamp(0.0, 1.0) }
+        Audio {
+            backend,
+            master_volume: master_volume.clamp(0.0, 1.0),
+        }
     }
 
     pub fn null(master_volume: f32) -> Self {

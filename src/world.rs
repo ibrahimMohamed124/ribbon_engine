@@ -80,7 +80,11 @@ impl World {
     pub fn cast(&self, origin: Vect, dir: Vect, max_dist: f32) -> Option<Hit> {
         let o = [origin.x, origin.y, origin.z];
         let d = [dir.x, dir.y, dir.z];
-        let mut cell = [o[0].floor() as i32, o[1].floor() as i32, o[2].floor() as i32];
+        let mut cell = [
+            o[0].floor() as i32,
+            o[1].floor() as i32,
+            o[2].floor() as i32,
+        ];
 
         let mut step = [0i32; 3];
         let mut t_delta = [f32::INFINITY; 3];
@@ -106,11 +110,15 @@ impl World {
                     cell: (cell[0], cell[1], cell[2]),
                     normal,
                     dist: t,
-                    point: origin.add(dir.scale(t)),
+                    point: origin + dir.scale(t),
                 });
             }
             let axis = if t_max[0] < t_max[1] {
-                if t_max[0] < t_max[2] { 0 } else { 2 }
+                if t_max[0] < t_max[2] {
+                    0
+                } else {
+                    2
+                }
             } else if t_max[1] < t_max[2] {
                 1
             } else {
@@ -146,10 +154,18 @@ impl World {
         visited[0][0] = true;
         while let Some(&(cx, cy)) = stack.last() {
             let mut nbrs: Vec<(usize, usize)> = Vec::new();
-            if cx + 1 < CELLS && !visited[cy][cx + 1] { nbrs.push((cx + 1, cy)); }
-            if cx > 0 && !visited[cy][cx - 1] { nbrs.push((cx - 1, cy)); }
-            if cy + 1 < CELLS && !visited[cy + 1][cx] { nbrs.push((cx, cy + 1)); }
-            if cy > 0 && !visited[cy - 1][cx] { nbrs.push((cx, cy - 1)); }
+            if cx + 1 < CELLS && !visited[cy][cx + 1] {
+                nbrs.push((cx + 1, cy));
+            }
+            if cx > 0 && !visited[cy][cx - 1] {
+                nbrs.push((cx - 1, cy));
+            }
+            if cy + 1 < CELLS && !visited[cy + 1][cx] {
+                nbrs.push((cx, cy + 1));
+            }
+            if cy > 0 && !visited[cy - 1][cx] {
+                nbrs.push((cx, cy - 1));
+            }
             if nbrs.is_empty() {
                 stack.pop();
                 continue;
@@ -163,10 +179,16 @@ impl World {
         // extra openings so there are loops to run around
         for cy in 0..CELLS {
             for cx in 0..CELLS {
-                if cx + 1 < CELLS && !open[origin(cy) * X_BLOCKS + origin(cx) + 2] && rng.chance(0.18) {
+                if cx + 1 < CELLS
+                    && !open[origin(cy) * X_BLOCKS + origin(cx) + 2]
+                    && rng.chance(0.18)
+                {
                     carve_east(&mut open, cx, cy);
                 }
-                if cy + 1 < CELLS && !open[(origin(cy) + 2) * X_BLOCKS + origin(cx)] && rng.chance(0.18) {
+                if cy + 1 < CELLS
+                    && !open[(origin(cy) + 2) * X_BLOCKS + origin(cx)]
+                    && rng.chance(0.18)
+                {
                     carve_south(&mut open, cx, cy);
                 }
             }

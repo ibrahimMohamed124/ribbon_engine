@@ -55,7 +55,10 @@ fn enemy_sleeps_at_first() {
 #[test]
 fn flashlight_toggle_comes_from_input() {
     let mut g = Game::new(1);
-    let toggle = InputFrame { toggle_flashlight: true, ..InputFrame::default() };
+    let toggle = InputFrame {
+        toggle_flashlight: true,
+        ..InputFrame::default()
+    };
     g.update(&toggle, DT);
     assert!(!g.flashlight_on);
     g.update(&toggle, DT);

@@ -27,9 +27,17 @@ pub fn shade_world(world: &World, flash: f32, hit: &Hit, dir: Vect, spot: f32) -
     if hit.normal == [0, 0, 0] {
         return 0.0;
     }
-    let block = world.get_checked(hit.cell.2, hit.cell.1, hit.cell.0).unwrap_or(WALL);
+    let block = world
+        .get_checked(hit.cell.2, hit.cell.1, hit.cell.0)
+        .unwrap_or(WALL);
     let p = hit.point;
-    let axis = if hit.normal[0] != 0 { 0 } else if hit.normal[1] != 0 { 1 } else { 2 };
+    let axis = if hit.normal[0] != 0 {
+        0
+    } else if hit.normal[1] != 0 {
+        1
+    } else {
+        2
+    };
     let ndotl = dir.axis(axis).abs();
 
     let albedo = if axis == 2 {

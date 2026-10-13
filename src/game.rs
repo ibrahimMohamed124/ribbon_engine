@@ -62,7 +62,14 @@ impl Game {
         let far = cell_center(CELLS - 1);
         Game {
             world,
-            player: Player::new(start, start, Angles { psi: 0.0, phi: 0.785 }),
+            player: Player::new(
+                start,
+                start,
+                Angles {
+                    psi: 0.0,
+                    phi: 0.785,
+                },
+            ),
             enemy: Enemy::new(far, far),
             got: vec![false; pages.len()],
             pages,
@@ -140,9 +147,12 @@ impl Game {
         // enemy
         let awake = self.enemy_awake();
         if awake {
-            let seen = self
-                .enemy
-                .is_seen_from(self.player.pos, self.player.view, &self.world, RENDER_DIST);
+            let seen = self.enemy.is_seen_from(
+                self.player.pos,
+                self.player.view,
+                &self.world,
+                RENDER_DIST,
+            );
             let speed = Enemy::speed(self.collected, seen);
             let pp = self.player.pos;
             self.enemy.update(&self.world, pp, speed, dt);
@@ -176,7 +186,12 @@ impl Game {
 
                 let eye = self.player.pos;
                 let mut ents: Vec<EntView> = Vec::with_capacity(1 + self.pages.len());
-                ents.push(EntView::enemy(self.enemy.pos, self.enemy.yaw, self.enemy.phase, eye));
+                ents.push(EntView::enemy(
+                    self.enemy.pos,
+                    self.enemy.yaw,
+                    self.enemy.phase,
+                    eye,
+                ));
                 for (i, p) in self.pages.iter().enumerate() {
                     if self.got[i] {
                         continue;
@@ -197,7 +212,13 @@ impl Game {
                     prox,
                 };
                 render(fb, &frame);
-                draw_hud(fb, self.collected, PAGES_TOTAL, self.player.stamina, self.player.exhausted);
+                draw_hud(
+                    fb,
+                    self.collected,
+                    PAGES_TOTAL,
+                    self.player.stamina,
+                    self.player.exhausted,
+                );
             }
             State::Caught => draw_caught(fb, self.state_t, frame_no),
             State::Won => draw_won(fb, self.state_t, frame_no),

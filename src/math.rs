@@ -1,5 +1,7 @@
 //! Small math / noise / RNG helpers shared by every subsystem.
 
+use std::ops::Add;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Vect {
     pub x: f32,
@@ -11,15 +13,16 @@ impl Vect {
     pub fn new(x: f32, y: f32, z: f32) -> Self {
         Vect { x, y, z }
     }
-    pub fn add(self, o: Vect) -> Vect {
-        Vect::new(self.x + o.x, self.y + o.y, self.z + o.z)
-    }
     pub fn scale(self, s: f32) -> Vect {
         Vect::new(self.x * s, self.y * s, self.z * s)
     }
     pub fn normalize(self) -> Vect {
         let len = (self.x * self.x + self.y * self.y + self.z * self.z).sqrt();
-        if len == 0.0 { self } else { self.scale(1.0 / len) }
+        if len == 0.0 {
+            self
+        } else {
+            self.scale(1.0 / len)
+        }
     }
     pub fn dot(self, o: Vect) -> f32 {
         self.x * o.x + self.y * o.y + self.z * o.z
@@ -39,6 +42,14 @@ impl Vect {
     }
 }
 
+impl Add for Vect {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self::Output {
+        Vect::new(self.x + other.x, self.y + other.y, self.z + other.z)
+    }
+}
+
 /// psi = pitch (up/down), phi = yaw (left/right)
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Angles {
@@ -47,7 +58,11 @@ pub struct Angles {
 }
 
 pub fn forward_vec(a: Angles) -> Vect {
-    Vect::new(a.psi.cos() * a.phi.cos(), a.psi.cos() * a.phi.sin(), a.psi.sin())
+    Vect::new(
+        a.psi.cos() * a.phi.cos(),
+        a.psi.cos() * a.phi.sin(),
+        a.psi.sin(),
+    )
 }
 
 /// Deterministic noise in [-1, 1].

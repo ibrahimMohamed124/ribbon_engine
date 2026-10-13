@@ -70,15 +70,42 @@ impl Action {
 // ------------------------------------------------------------------ key names
 
 const KEY_NAMES: &[(&str, Key)] = &[
-    ("A", Key::A), ("B", Key::B), ("C", Key::C), ("D", Key::D), ("E", Key::E),
-    ("F", Key::F), ("G", Key::G), ("H", Key::H), ("I", Key::I), ("J", Key::J),
-    ("K", Key::K), ("L", Key::L), ("M", Key::M), ("N", Key::N), ("O", Key::O),
-    ("P", Key::P), ("Q", Key::Q), ("R", Key::R), ("S", Key::S), ("T", Key::T),
-    ("U", Key::U), ("V", Key::V), ("W", Key::W), ("X", Key::X), ("Y", Key::Y),
+    ("A", Key::A),
+    ("B", Key::B),
+    ("C", Key::C),
+    ("D", Key::D),
+    ("E", Key::E),
+    ("F", Key::F),
+    ("G", Key::G),
+    ("H", Key::H),
+    ("I", Key::I),
+    ("J", Key::J),
+    ("K", Key::K),
+    ("L", Key::L),
+    ("M", Key::M),
+    ("N", Key::N),
+    ("O", Key::O),
+    ("P", Key::P),
+    ("Q", Key::Q),
+    ("R", Key::R),
+    ("S", Key::S),
+    ("T", Key::T),
+    ("U", Key::U),
+    ("V", Key::V),
+    ("W", Key::W),
+    ("X", Key::X),
+    ("Y", Key::Y),
     ("Z", Key::Z),
-    ("Up", Key::Up), ("Down", Key::Down), ("Left", Key::Left), ("Right", Key::Right),
-    ("LeftShift", Key::LeftShift), ("RightShift", Key::RightShift),
-    ("Space", Key::Space), ("Escape", Key::Escape), ("Enter", Key::Enter), ("Tab", Key::Tab),
+    ("Up", Key::Up),
+    ("Down", Key::Down),
+    ("Left", Key::Left),
+    ("Right", Key::Right),
+    ("LeftShift", Key::LeftShift),
+    ("RightShift", Key::RightShift),
+    ("Space", Key::Space),
+    ("Escape", Key::Escape),
+    ("Enter", Key::Enter),
+    ("Tab", Key::Tab),
 ];
 
 fn same_key(a: Key, b: Key) -> bool {
@@ -87,7 +114,10 @@ fn same_key(a: Key, b: Key) -> bool {
 
 /// Settings-file name of a key (`None` for keys we don't expose).
 pub fn key_name(key: Key) -> Option<&'static str> {
-    KEY_NAMES.iter().find(|(_, k)| same_key(*k, key)).map(|(n, _)| *n)
+    KEY_NAMES
+        .iter()
+        .find(|(_, k)| same_key(*k, key))
+        .map(|(n, _)| *n)
 }
 
 /// Parse a key name from the settings file (case-insensitive).
@@ -196,14 +226,23 @@ pub struct Input {
 impl Input {
     /// `mouse_sensitivity` is radians per pixel; 0 disables mouse look.
     pub fn new(bindings: KeyBindings, mouse_sensitivity: f32) -> Self {
-        Input { bindings, mouse_sensitivity, prev_flashlight: false, last_mouse: None }
+        Input {
+            bindings,
+            mouse_sensitivity,
+            prev_flashlight: false,
+            last_mouse: None,
+        }
     }
 
     pub fn bindings(&self) -> &KeyBindings {
         &self.bindings
     }
 
-    pub fn poll<K: KeyState + ?Sized>(&mut self, keys: &K, mouse: Option<(f32, f32)>) -> InputFrame {
+    pub fn poll<K: KeyState + ?Sized>(
+        &mut self,
+        keys: &K,
+        mouse: Option<(f32, f32)>,
+    ) -> InputFrame {
         let mut mouse_yaw = 0.0f32;
         let mut mouse_pitch = 0.0f32;
         if self.mouse_sensitivity > 0.0 {
@@ -238,6 +277,11 @@ impl Input {
         let toggle_flashlight = flashlight_now && !self.prev_flashlight;
         self.prev_flashlight = flashlight_now;
 
-        InputFrame { controls, toggle_flashlight, restart, quit }
+        InputFrame {
+            controls,
+            toggle_flashlight,
+            restart,
+            quit,
+        }
     }
 }

@@ -49,10 +49,18 @@ impl Player {
         let mut events = PlayerEvents::default();
 
         // ---- look
-        if c.look_up { self.view.psi += TURN_SPEED * dt; }
-        if c.look_down { self.view.psi -= TURN_SPEED * dt; }
-        if c.look_right { self.view.phi += TURN_SPEED * dt; }
-        if c.look_left { self.view.phi -= TURN_SPEED * dt; }
+        if c.look_up {
+            self.view.psi += TURN_SPEED * dt;
+        }
+        if c.look_down {
+            self.view.psi -= TURN_SPEED * dt;
+        }
+        if c.look_right {
+            self.view.phi += TURN_SPEED * dt;
+        }
+        if c.look_left {
+            self.view.phi -= TURN_SPEED * dt;
+        }
         self.view.phi += c.mouse_yaw;
         self.view.psi += c.mouse_pitch;
         self.view.psi = self.view.psi.clamp(-PSI_LIMIT, PSI_LIMIT);
@@ -61,10 +69,22 @@ impl Player {
         let (sin, cos) = self.view.phi.sin_cos();
         let mut mx = 0.0;
         let mut my = 0.0;
-        if c.forward { mx += cos; my += sin; }
-        if c.back { mx -= cos; my -= sin; }
-        if c.right { mx -= sin; my += cos; }
-        if c.left { mx += sin; my -= cos; }
+        if c.forward {
+            mx += cos;
+            my += sin;
+        }
+        if c.back {
+            mx -= cos;
+            my -= sin;
+        }
+        if c.right {
+            mx -= sin;
+            my += cos;
+        }
+        if c.left {
+            mx += sin;
+            my -= cos;
+        }
         let len = (mx * mx + my * my).sqrt();
         let moving = len > 0.0;
 

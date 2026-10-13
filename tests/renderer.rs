@@ -5,8 +5,13 @@ use raycast_blocks::renderer::{Framebuffer, DEFAULT_HFOV};
 
 #[test]
 fn ray_box_front_face() {
-    let (t, axis, sign) =
-        ray_box([-1.0, 0.5, 0.5], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]).unwrap();
+    let (t, axis, sign) = ray_box(
+        [-1.0, 0.5, 0.5],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [1.0, 1.0, 1.0],
+    )
+    .unwrap();
     assert!((t - 1.0).abs() < 1e-5);
     assert_eq!(axis, 0);
     assert_eq!(sign, -1.0);

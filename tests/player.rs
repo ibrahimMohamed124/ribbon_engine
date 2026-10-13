@@ -25,7 +25,10 @@ fn player_stands_on_floor() {
 #[test]
 fn jump_then_land_reports_events() {
     let (w, mut p) = setup();
-    let jump = Controls { jump: true, ..Controls::default() };
+    let jump = Controls {
+        jump: true,
+        ..Controls::default()
+    };
     let idle = Controls::default();
 
     let ev = p.update(&w, &jump, 0.02);
@@ -45,11 +48,19 @@ fn jump_then_land_reports_events() {
 #[test]
 fn sprinting_drains_stamina_until_exhausted() {
     let (w, mut p) = setup();
-    let sprint = Controls { forward: true, sprint: true, ..Controls::default() };
+    let sprint = Controls {
+        forward: true,
+        sprint: true,
+        ..Controls::default()
+    };
     for _ in 0..100 {
         p.update(&w, &sprint, 0.02);
     }
-    assert!(p.stamina > 0.4 && p.stamina < 0.6, "stamina = {}", p.stamina);
+    assert!(
+        p.stamina > 0.4 && p.stamina < 0.6,
+        "stamina = {}",
+        p.stamina
+    );
     for _ in 0..150 {
         p.update(&w, &sprint, 0.02);
     }
@@ -59,7 +70,10 @@ fn sprinting_drains_stamina_until_exhausted() {
 #[test]
 fn pitch_is_clamped() {
     let (w, mut p) = setup();
-    let up = Controls { look_up: true, ..Controls::default() };
+    let up = Controls {
+        look_up: true,
+        ..Controls::default()
+    };
     for _ in 0..500 {
         p.update(&w, &up, 0.02);
     }
@@ -71,7 +85,10 @@ fn walls_stop_the_player() {
     let (w, mut p) = setup();
     // walk "forward" along -x for a long time: the outer wall must stop us
     p.view.phi = std::f32::consts::PI;
-    let walk = Controls { forward: true, ..Controls::default() };
+    let walk = Controls {
+        forward: true,
+        ..Controls::default()
+    };
     for _ in 0..300 {
         p.update(&w, &walk, 0.02);
     }

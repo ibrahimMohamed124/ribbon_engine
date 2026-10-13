@@ -39,14 +39,16 @@ fn inline_comments_are_stripped() {
 
 #[test]
 fn round_trip_through_text() {
-    let mut s = Settings::default();
-    s.master_volume = 0.25;
-    s.hfov_degrees = 100.0;
-    s.render_width = 400;
-    s.render_height = 225;
-    s.window_scale = 2;
-    s.flashlight_on_start = false;
-    s.mouse_sensitivity = 0.004;
+    let mut s = Settings {
+        master_volume: 0.25,
+        hfov_degrees: 100.0,
+        render_width: 400,
+        render_height: 225,
+        window_scale: 2,
+        flashlight_on_start: false,
+        mouse_sensitivity: 0.004,
+        ..Settings::default()
+    };
     s.bindings.set(Action::Forward, vec![Key::Up, Key::W]);
 
     let back = Settings::parse(&s.to_text());
@@ -77,8 +79,10 @@ fn save_and_load_file() {
     let dir = std::env::temp_dir().join(format!("raycast_blocks_test_{}", std::process::id()));
     let path = dir.join("nested").join("settings.cfg");
 
-    let mut s = Settings::default();
-    s.window_scale = 8;
+    let s = Settings {
+        window_scale: 8,
+        ..Settings::default()
+    };
     s.save(&path).expect("save");
     let loaded = Settings::load(&path).expect("load");
     assert_eq!(loaded.window_scale, 8);

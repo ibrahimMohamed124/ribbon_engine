@@ -30,7 +30,7 @@ fn shade_pixel(f: &Frame, fwd: Vect, dir: Vect) -> f32 {
     let mut best: Option<EntHit> = None;
     for e in &f.ents {
         if let Some(h) = e.hit(dir) {
-            if h.t < wt && best.map_or(true, |b| h.t < b.t) {
+            if h.t < wt && best.is_none_or(|b| h.t < b.t) {
                 best = Some(h);
             }
         }
@@ -62,16 +62,16 @@ pub fn render(fb: &mut Framebuffer, f: &Frame) {
     let tan_h = (f.hfov / 2.0).tan();
     let tan_v = tan_h * h as f32 / w as f32;
 
-    fb.pixels.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
-        let v = 1.0 - ((y as f32 + 0.5) / h as f32) * 2.0;
-        for (x, px) in row.iter_mut().enumerate() {
-            let u = ((x as f32 + 0.5) / w as f32) * 2.0 - 1.0;
-            let dir = fwd
-                .add(right.scale(u * tan_h))
-                .add(up.scale(v * tan_v))
-                .normalize();
-            let g = shade_pixel(f, fwd, dir);
-            *px = finish_pixel(g, u, v, x, y, f.frame, f.prox);
-        }
-    });
+    fb.pixels
+        .par_chunks_mut(w)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let v = 1.0 - ((y as f32 + 0.5) / h as f32) * 2.0;
+            for (x, px) in row.iter_mut().enumerate() {
+                let u = ((x as f32 + 0.5) / w as f32) * 2.0 - 1.0;
+                let dir = (fwd + right.scale(u * tan_h) + up.scale(v * tan_v)).normalize();
+                let g = shade_pixel(f, fwd, dir);
+                *px = finish_pixel(g, u, v, x, y, f.frame, f.prox);
+            }
+        });
 }

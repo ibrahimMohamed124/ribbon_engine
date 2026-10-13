@@ -73,7 +73,10 @@ fn seen_only_when_facing_it() {
     let enemy = Enemy::new(2.8, 2.0);
     let eye = Vect::new(1.2, 2.0, 2.5);
     let facing = Angles { psi: 0.0, phi: 0.0 };
-    let away = Angles { psi: 0.0, phi: std::f32::consts::PI };
+    let away = Angles {
+        psi: 0.0,
+        phi: std::f32::consts::PI,
+    };
     assert!(enemy.is_seen_from(eye, facing, &w, 18.0));
     assert!(!enemy.is_seen_from(eye, away, &w, 18.0));
     assert!(!enemy.is_seen_from(eye, facing, &w, 0.5)); // too far for the given range

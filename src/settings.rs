@@ -139,7 +139,10 @@ impl Settings {
         out.push_str(&format!("render_width = {}\n", self.render_width));
         out.push_str(&format!("render_height = {}\n", self.render_height));
         out.push_str(&format!("window_scale = {}\n", self.window_scale));
-        out.push_str(&format!("flashlight_on_start = {}\n", self.flashlight_on_start));
+        out.push_str(&format!(
+            "flashlight_on_start = {}\n",
+            self.flashlight_on_start
+        ));
         out.push_str(&format!("mouse_sensitivity = {}\n", self.mouse_sensitivity));
         out.push_str("\n# key bindings: comma-separated key names\n");
         for action in Action::ALL {

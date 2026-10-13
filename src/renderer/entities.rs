@@ -100,7 +100,14 @@ impl EntView {
         let dy = eye.y - pos.y;
         let lo = [c * dx + s * dy, -s * dx + c * dy, eye.z - pos.z];
         let inside = (0..3).all(|i| lo[i] >= ENEMY_BBOX.0[i] && lo[i] <= ENEMY_BBOX.1[i]);
-        EntView { kind, lo, c, s, outside: !inside, boxes }
+        EntView {
+            kind,
+            lo,
+            c,
+            s,
+            outside: !inside,
+            boxes,
+        }
     }
 
     /// The hunter, with its walk-cycle `phase`.
@@ -115,7 +122,11 @@ impl EntView {
 
     /// Nearest hit of the world-space ray direction `d` (from the eye) with this entity.
     pub fn hit(&self, d: Vect) -> Option<EntHit> {
-        let dl = [self.c * d.x + self.s * d.y, -self.s * d.x + self.c * d.y, d.z];
+        let dl = [
+            self.c * d.x + self.s * d.y,
+            -self.s * d.x + self.c * d.y,
+            d.z,
+        ];
         if self.kind == EntKind::Enemy
             && self.outside
             && ray_box(self.lo, dl, ENEMY_BBOX.0, ENEMY_BBOX.1).is_none()
@@ -125,7 +136,7 @@ impl EntView {
         let mut best: Option<(f32, usize, f32, u8)> = None;
         for (mn, mx, part) in &self.boxes {
             if let Some((t, axis, sign)) = ray_box(self.lo, dl, *mn, *mx) {
-                if best.map_or(true, |b| t < b.0) {
+                if best.is_none_or(|b| t < b.0) {
                     best = Some((t, axis, sign, *part));
                 }
             }
@@ -147,10 +158,20 @@ impl EntView {
                     let eyes = u > 0.05 && u < 0.17 && v > 1.93 && v < 2.06;
                     let mouth = u < 0.13 && v > 1.78 && v < 1.82;
                     if eyes || mouth {
-                        return Some(EntHit { t, gray: 1.0, emissive: true, ndotl });
+                        return Some(EntHit {
+                            t,
+                            gray: 1.0,
+                            emissive: true,
+                            ndotl,
+                        });
                     }
                 }
-                Some(EntHit { t, gray: 0.10, emissive: false, ndotl })
+                Some(EntHit {
+                    t,
+                    gray: 0.10,
+                    emissive: false,
+                    ndotl,
+                })
             }
             EntKind::Page => {
                 // a page of paper with dark "text" lines
@@ -161,7 +182,12 @@ impl EntView {
                         g = 0.35;
                     }
                 }
-                Some(EntHit { t, gray: g, emissive: true, ndotl })
+                Some(EntHit {
+                    t,
+                    gray: g,
+                    emissive: true,
+                    ndotl,
+                })
             }
         }
     }

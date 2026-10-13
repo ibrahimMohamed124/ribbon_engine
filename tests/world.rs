@@ -20,7 +20,10 @@ fn maze_is_fully_connected() {
     for y in 0..Y_BLOCKS as i32 {
         for x in 0..X_BLOCKS as i32 {
             if w.tile_open(x, y) && (x, y) != goal {
-                assert!(bfs_next(&w, (x, y), goal).is_some(), "tile {x},{y} unreachable");
+                assert!(
+                    bfs_next(&w, (x, y), goal).is_some(),
+                    "tile {x},{y} unreachable"
+                );
             }
         }
     }

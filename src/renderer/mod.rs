@@ -31,6 +31,10 @@ pub struct Framebuffer {
 
 impl Framebuffer {
     pub fn new(width: usize, height: usize) -> Self {
-        Framebuffer { width, height, pixels: vec![0u32; width * height] }
+        Framebuffer {
+            width,
+            height,
+            pixels: vec![0u32; width * height],
+        }
     }
 }
