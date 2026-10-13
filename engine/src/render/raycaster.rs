@@ -4,7 +4,8 @@ use rayon::prelude::*;
 
 use super::entities::{EntHit, EntView};
 use super::lighting::{cone_factor, light, shade_surface, SurfaceShader};
-use super::post::finish_pixel;
+use super::post::{finish_pixel_styled, PixelSample};
+use super::style::RenderStyle;
 use super::RENDER_DIST;
 use crate::gfx::Framebuffer;
 use crate::math::{forward_vec, Angles, Vect};
@@ -20,6 +21,7 @@ pub struct Frame<'a> {
     pub ents: Vec<EntView>,
     pub frame: u32,
     pub intensity: f32,
+    pub style: RenderStyle,
 }
 
 fn shade_pixel<S: SurfaceShader + Sync>(f: &Frame, shader: &S, fwd: Vect, dir: Vect) -> f32 {
@@ -79,7 +81,18 @@ pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Frame, shad
                 let direction =
                     (forward + right.scale(u * tan_h) + up.scale(v * tan_v)).normalize();
                 let gray = shade_pixel(frame, shader, forward, direction);
-                *pixel = finish_pixel(gray, u, v, x, y, frame.frame, frame.intensity);
+                *pixel = finish_pixel_styled(
+                    gray,
+                    PixelSample {
+                        u,
+                        v,
+                        x,
+                        y,
+                        frame: frame.frame,
+                        intensity: frame.intensity,
+                    },
+                    &frame.style,
+                );
             }
         });
 }

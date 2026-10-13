@@ -1,7 +1,7 @@
 use raycast_blocks::game::{Game, State};
 use raycast_blocks::input::{Controls, InputFrame};
 use raycast_blocks::math::Rng;
-use raycast_blocks::renderer::{Framebuffer, DEFAULT_HFOV};
+use raycast_blocks::renderer::{Framebuffer, RenderStyle, DEFAULT_HFOV};
 use raycast_blocks::settings::Settings;
 use raycast_blocks::world::World;
 
@@ -45,7 +45,8 @@ fn simulation_fingerprint(game: &Game) -> u64 {
 fn golden_render_world_simulation_and_settings() {
     let game = Game::new(42);
     let mut framebuffer = Framebuffer::new(160, 90);
-    game.draw(&mut framebuffer, 137, DEFAULT_HFOV);
+    // Golden output is intentionally pinned to the legacy renderer path.
+    game.draw_styled(&mut framebuffer, 137, DEFAULT_HFOV, RenderStyle::classic());
     let framebuffer_hash = pixels_hash(&framebuffer.pixels);
 
     let world_hashes: Vec<_> = [1, 42, 0xdead_beef]

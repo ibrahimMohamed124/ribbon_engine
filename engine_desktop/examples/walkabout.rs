@@ -4,7 +4,7 @@ use blocks_engine::input::Key;
 use blocks_engine::math::{Angles, Vect};
 use blocks_engine::render::entities::{Box3, EntView, EntitySurface};
 use blocks_engine::render::lighting::SurfaceShader;
-use blocks_engine::render::{render, Frame};
+use blocks_engine::render::{render, Frame, RenderStyle};
 use blocks_engine::voxel::{Hit, VoxelWorld};
 use blocks_engine_desktop::run;
 
@@ -113,6 +113,7 @@ impl App for Walkabout {
             ents: vec![object],
             frame: ctx.frame,
             intensity: 0.0,
+            style: RenderStyle::classic(),
         };
         render(framebuffer, &frame, &RoomSurface);
     }
