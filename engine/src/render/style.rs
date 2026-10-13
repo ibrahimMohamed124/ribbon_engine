@@ -2,7 +2,8 @@
 
 use super::RENDER_DIST;
 use crate::math::pack_gray;
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub const LEVEL_COUNT: usize = 14;
 const LEVEL_LUT_SIZE: usize = 1024;
@@ -135,32 +136,42 @@ impl RenderStyle {
         let bypass = matches!(self.tonemap, Tonemap::None) && self.gamma == 1.0;
         if bypass {
             return LevelLut {
-                tone: None,
-                gamma: None,
+                tables: None,
                 bypass: true,
             };
         }
-        let is_moody = matches!(self.tonemap, Tonemap::Exp { exposure } if exposure == 2.0)
-            && self.gamma == 1.6;
-        static MOODY_TONE: OnceLock<Arc<[f32; LEVEL_LUT_SIZE]>> = OnceLock::new();
-        static MOODY_GAMMA: OnceLock<Arc<[f32; LEVEL_LUT_SIZE]>> = OnceLock::new();
-        let tone = if is_moody {
-            MOODY_TONE
-                .get_or_init(|| Arc::new(self.build_tone_table()))
-                .clone()
-        } else {
-            Arc::new(self.build_tone_table())
+        let key = LutKey {
+            tonemap: match self.tonemap {
+                Tonemap::None => (0, 0),
+                Tonemap::Exp { exposure } => (1, exposure.to_bits()),
+            },
+            gamma_bits: self.gamma.to_bits(),
         };
-        let gamma = if is_moody {
-            MOODY_GAMMA
-                .get_or_init(|| Arc::new(self.build_gamma_table()))
-                .clone()
-        } else {
-            Arc::new(self.build_gamma_table())
+        static LUTS: OnceLock<Mutex<HashMap<LutKey, Arc<LutTables>>>> = OnceLock::new();
+        let cache = LUTS.get_or_init(|| Mutex::new(HashMap::new()));
+        let tables = {
+            let mut cache = cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(tables) = cache.get(&key) {
+                Arc::clone(tables)
+            } else {
+                let tables = Arc::new(LutTables {
+                    tone: self.build_tone_table(),
+                    gamma: self.build_gamma_table(),
+                });
+                // Styles are user-configurable; cap retained entries to avoid unbounded growth.
+                if cache.len() >= 8 {
+                    if let Some(oldest) = cache.keys().next().copied() {
+                        cache.remove(&oldest);
+                    }
+                }
+                cache.insert(key, Arc::clone(&tables));
+                tables
+            }
         };
         LevelLut {
-            tone: Some(tone),
-            gamma: Some(gamma),
+            tables: Some(tables),
             bypass: false,
         }
     }
@@ -192,9 +203,19 @@ impl RenderStyle {
 }
 
 pub(crate) struct LevelLut {
-    tone: Option<Arc<[f32; LEVEL_LUT_SIZE]>>,
-    gamma: Option<Arc<[f32; LEVEL_LUT_SIZE]>>,
+    tables: Option<Arc<LutTables>>,
     bypass: bool,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct LutKey {
+    tonemap: (u8, u32),
+    gamma_bits: u32,
+}
+
+struct LutTables {
+    tone: [f32; LEVEL_LUT_SIZE],
+    gamma: [f32; LEVEL_LUT_SIZE],
 }
 
 impl LevelLut {
@@ -213,7 +234,7 @@ impl LevelLut {
         if self.bypass {
             return style.tonemap.apply(gray);
         }
-        Self::sample(self.tone.as_ref().expect("tone table"), gray, 2.0)
+        Self::sample(&self.tables.as_ref().expect("tone table").tone, gray, 2.0)
     }
 
     pub(crate) fn level(&self, gray: f32) -> f32 {
@@ -223,7 +244,7 @@ impl LevelLut {
         if self.bypass {
             return gray.clamp(0.0, 1.0) * (LEVEL_COUNT - 1) as f32;
         }
-        Self::sample(self.gamma.as_ref().expect("gamma table"), gray, 1.0)
+        Self::sample(&self.tables.as_ref().expect("gamma table").gamma, gray, 1.0)
     }
 }
 
@@ -237,6 +258,7 @@ impl Default for RenderStyle {
 mod tests {
     use super::{Palette, RenderStyle, Tonemap, LEVEL_COUNT};
     use crate::math::pack_gray;
+    use std::sync::Arc;
 
     #[test]
     fn gray_palette_matches_the_legacy_packing() {
@@ -288,6 +310,24 @@ mod tests {
             assert!((sampled - exact).abs() < 0.02);
         }
         assert!(RenderStyle::classic().level_lut().bypass);
+    }
+
+    #[test]
+    fn equal_styles_share_tables_but_gamma_changes_do_not() {
+        let first = RenderStyle::moody().level_lut();
+        let second = RenderStyle::moody().level_lut();
+        assert!(Arc::ptr_eq(
+            first.tables.as_ref().unwrap(),
+            second.tables.as_ref().unwrap()
+        ));
+
+        let mut changed_gamma = RenderStyle::moody();
+        changed_gamma.gamma += 0.1;
+        let changed = changed_gamma.level_lut();
+        assert!(!Arc::ptr_eq(
+            first.tables.as_ref().unwrap(),
+            changed.tables.as_ref().unwrap()
+        ));
     }
 
     #[test]
