@@ -1,0 +1,12 @@
+[package]
+name = "raycast_blocks"
+version = "0.3.0"
+edition = "2021"
+
+[dependencies]
+minifb = "0.29.0"
+rayon = "1.10"
+
+[profile.release]
+opt-level = 3
+lto = true
