@@ -2,7 +2,7 @@
 
 use crate::math::Vect;
 use crate::render::style::RenderStyle;
-use crate::voxel::{Hit, VoxelWorld};
+use crate::voxel::{face_ao, Hit, VoxelWorld};
 
 pub const CONE_INNER: f32 = 0.985;
 pub const CONE_OUTER: f32 = 0.86;
@@ -61,5 +61,18 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
         2
     };
     let ndotl = direction.axis(axis).abs();
-    shader.albedo(block, hit, direction, style) * light(illumination, hit.dist, ndotl, cone)
+    let ao_strength = if style.ao_strength.is_finite() {
+        style.ao_strength.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let ao = if ao_strength == 0.0 {
+        1.0
+    } else {
+        face_ao(world, hit, empty_voxel)
+    };
+    let occlusion = 1.0 + (ao - 1.0) * ao_strength;
+    shader.albedo(block, hit, direction, style)
+        * light(illumination, hit.dist, ndotl, cone)
+        * occlusion
 }

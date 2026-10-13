@@ -33,6 +33,60 @@ pub fn face_uv(hit: &Hit) -> (f32, f32) {
     (fract(u), fract(v))
 }
 
+/// Sample classic voxel ambient occlusion around the four corners of a face.
+///
+/// The outside face cell is `hit.cell + hit.normal`. Three neighboring cells
+/// are sampled per corner; out-of-bounds space is treated as solid.
+pub fn face_ao(world: &VoxelWorld, hit: &Hit, empty: u8) -> f32 {
+    let normal_axis = if hit.normal[0] != 0 {
+        0
+    } else if hit.normal[1] != 0 {
+        1
+    } else if hit.normal[2] != 0 {
+        2
+    } else {
+        return 1.0;
+    };
+    let axes = match normal_axis {
+        0 => [1, 2],
+        1 => [0, 2],
+        _ => [0, 1],
+    };
+    let mut outside = [hit.cell.0, hit.cell.1, hit.cell.2];
+    outside[normal_axis] += hit.normal[normal_axis];
+
+    let (u, v) = face_uv(hit);
+    let mut corners = [[0.0; 2]; 2];
+    for (iu, su) in [-1, 1].into_iter().enumerate() {
+        for (iv, sv) in [-1, 1].into_iter().enumerate() {
+            let mut side_u = outside;
+            let mut side_v = outside;
+            let mut corner = outside;
+            side_u[axes[0]] += su;
+            side_v[axes[1]] += sv;
+            corner[axes[0]] += su;
+            corner[axes[1]] += sv;
+            let solid = |cell: [i32; 3]| {
+                world
+                    .get_checked(cell[2], cell[1], cell[0])
+                    .is_none_or(|block| block != empty)
+            };
+            let a = solid(side_u);
+            let b = solid(side_v);
+            let c = solid(corner);
+            corners[iu][iv] = if a && b {
+                0.0
+            } else {
+                (3 - i32::from(a) - i32::from(b) - i32::from(c)) as f32 / 3.0
+            };
+        }
+    }
+
+    let top = corners[0][0] * (1.0 - u) + corners[1][0] * u;
+    let bottom = corners[0][1] * (1.0 - u) + corners[1][1] * u;
+    (top * (1.0 - v) + bottom * v).clamp(0.0, 1.0)
+}
+
 pub struct VoxelWorld {
     width: usize,
     height: usize,
@@ -150,8 +204,29 @@ impl VoxelWorld {
 
 #[cfg(test)]
 mod tests {
-    use super::{face_uv, Hit};
+    use super::{face_ao, face_uv, Hit, VoxelWorld};
     use crate::math::Vect;
+
+    const EMPTY: u8 = 0;
+    const SOLID: u8 = 1;
+
+    fn world_with_solids(cells: &[(i32, i32, i32)]) -> VoxelWorld {
+        let (width, height, depth) = (8, 8, 8);
+        let mut blocks = vec![EMPTY; width * height * depth];
+        for &(x, y, z) in cells {
+            blocks[VoxelWorld::idx(width, height, z as usize, y as usize, x as usize)] = SOLID;
+        }
+        VoxelWorld::new(width, height, depth, blocks)
+    }
+
+    fn x_face(point: Vect) -> Hit {
+        Hit {
+            cell: (3, 3, 3),
+            normal: [1, 0, 0],
+            dist: 1.0,
+            point,
+        }
+    }
 
     #[test]
     fn face_uv_uses_the_two_axes_of_each_face() {
@@ -192,5 +267,35 @@ mod tests {
             ..left
         };
         assert_eq!(face_uv(&left), face_uv(&right));
+    }
+
+    #[test]
+    fn flat_face_center_has_no_occlusion() {
+        let world = world_with_solids(&[(3, 3, 3)]);
+        assert_eq!(
+            face_ao(&world, &x_face(Vect::new(4.0, 3.5, 3.5)), EMPTY),
+            1.0
+        );
+    }
+
+    #[test]
+    fn concave_corner_is_darker_and_ao_is_bounded() {
+        let world = world_with_solids(&[(3, 3, 3), (4, 2, 3), (4, 3, 2), (4, 2, 2)]);
+        let corner = face_ao(&world, &x_face(Vect::new(4.0, 3.01, 3.01)), EMPTY);
+        assert!(corner < 1.0);
+        for u in [0.0, 0.1, 0.5, 0.9, 0.999] {
+            for v in [0.0, 0.1, 0.5, 0.9, 0.999] {
+                let ao = face_ao(&world, &x_face(Vect::new(4.0, 3.0 + u, 3.0 + v)), EMPTY);
+                assert!((0.0..=1.0).contains(&ao));
+            }
+        }
+    }
+
+    #[test]
+    fn symmetric_concave_corner_has_symmetric_interpolation() {
+        let world = world_with_solids(&[(3, 3, 3), (4, 2, 3), (4, 3, 2), (4, 2, 2)]);
+        let a = face_ao(&world, &x_face(Vect::new(4.0, 3.25, 3.75)), EMPTY);
+        let b = face_ao(&world, &x_face(Vect::new(4.0, 3.75, 3.25)), EMPTY);
+        assert!((a - b).abs() < 1e-6);
     }
 }
