@@ -41,6 +41,10 @@ impl SoundBank {
     pub fn ambience(&self, id: AmbienceId) -> Option<AmbienceAsset> {
         self.ambiences.iter().find(|asset| asset.id == id).copied()
     }
+
+    pub fn sounds(&self) -> impl Iterator<Item = SoundAsset> + '_ {
+        self.sounds.iter().copied()
+    }
 }
 
 pub trait AudioBackend {
