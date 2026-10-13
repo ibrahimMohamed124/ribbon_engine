@@ -9,6 +9,8 @@ fn empty_text_gives_defaults() {
     assert_eq!(s.render_width, d.render_width);
     assert_eq!(s.window_scale, d.window_scale);
     assert!((s.master_volume - d.master_volume).abs() < 1e-6);
+    assert!(!s.mouse_look_on_start);
+    assert!((s.mouse_sensitivity - 0.0025).abs() < 1e-6);
 }
 
 #[test]
@@ -46,10 +48,13 @@ fn round_trip_through_text() {
         render_height: 225,
         window_scale: 2,
         flashlight_on_start: false,
+        mouse_look_on_start: true,
+        invert_y: true,
         mouse_sensitivity: 0.004,
         ..Settings::default()
     };
     s.bindings.set(Action::Forward, vec![Key::Up, Key::W]);
+    s.bindings.set(Action::ToggleMouseLook, vec![Key::M]);
 
     let back = Settings::parse(&s.to_text());
     assert!((back.master_volume - 0.25).abs() < 1e-6);
@@ -59,11 +64,30 @@ fn round_trip_through_text() {
     assert_eq!(back.window_scale, 2);
     assert!(!back.flashlight_on_start);
     assert!((back.mouse_sensitivity - 0.004).abs() < 1e-6);
+    assert!(back.mouse_look_on_start);
+    assert!(back.invert_y);
+    assert_eq!(back.bindings.keys(Action::ToggleMouseLook), &[Key::M]);
 
     let keys = back.bindings.keys(Action::Forward);
     assert_eq!(keys.len(), 2);
     assert!(matches!(keys[0], Key::Up));
     assert!(matches!(keys[1], Key::W));
+}
+
+#[test]
+fn mouse_settings_parse_and_serialize() {
+    let settings = Settings::parse(
+        "mouse_look_on_start = true\ninvert_y = true\nmouse_sensitivity = 0.003\nkey.toggle_mouse_look = M\n",
+    );
+    assert!(settings.mouse_look_on_start);
+    assert!(settings.invert_y);
+    assert!((settings.mouse_sensitivity - 0.003).abs() < 1e-6);
+    assert_eq!(settings.bindings.keys(Action::ToggleMouseLook), &[Key::M]);
+
+    let parsed = Settings::parse(&settings.to_text());
+    assert!(parsed.mouse_look_on_start);
+    assert!(parsed.invert_y);
+    assert_eq!(parsed.bindings.keys(Action::ToggleMouseLook), &[Key::M]);
 }
 
 #[test]

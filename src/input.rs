@@ -24,10 +24,11 @@ pub enum Action {
     Flashlight,
     Restart,
     Quit,
+    ToggleMouseLook,
 }
 
 impl Action {
-    pub const ALL: [Action; 13] = [
+    pub const ALL: [Action; 14] = [
         Action::LookUp,
         Action::LookDown,
         Action::LookLeft,
@@ -41,6 +42,7 @@ impl Action {
         Action::Flashlight,
         Action::Restart,
         Action::Quit,
+        Action::ToggleMouseLook,
     ];
 
     /// Stable name used in the settings file.
@@ -59,6 +61,7 @@ impl Action {
             Action::Flashlight => "flashlight",
             Action::Restart => "restart",
             Action::Quit => "quit",
+            Action::ToggleMouseLook => "toggle_mouse_look",
         }
     }
 
@@ -166,6 +169,7 @@ impl Default for KeyBindings {
         map.insert(Action::Flashlight, vec![Key::F]);
         map.insert(Action::Restart, vec![Key::R]);
         map.insert(Action::Quit, vec![Key::Escape, Key::Q]);
+        map.insert(Action::ToggleMouseLook, vec![Key::Tab, Key::M]);
         KeyBindings { map }
     }
 }
@@ -212,6 +216,13 @@ pub struct InputFrame {
     pub toggle_flashlight: bool,
     pub restart: bool,
     pub quit: bool,
+    pub toggle_mouse_look: bool,
+}
+
+/// Supplies mouse motion to the input layer. Platform access stays in the
+/// executable, allowing the library and tests to use deterministic sources.
+pub trait MouseSource {
+    fn delta(&mut self) -> (f32, f32);
 }
 
 /// Polls devices once per frame and keeps the little bit of state needed for
@@ -221,6 +232,10 @@ pub struct Input {
     mouse_sensitivity: f32,
     prev_flashlight: bool,
     last_mouse: Option<(f32, f32)>,
+    mouse_look_enabled: bool,
+    invert_y: bool,
+    prev_mouse_look: bool,
+    ignore_mouse_delta: bool,
 }
 
 impl Input {
@@ -231,30 +246,66 @@ impl Input {
             mouse_sensitivity,
             prev_flashlight: false,
             last_mouse: None,
+            mouse_look_enabled: false,
+            invert_y: false,
+            prev_mouse_look: false,
+            ignore_mouse_delta: false,
         }
     }
 
-    pub fn bindings(&self) -> &KeyBindings {
-        &self.bindings
+    pub fn with_mouse_look(
+        bindings: KeyBindings,
+        mouse_sensitivity: f32,
+        enabled: bool,
+        invert_y: bool,
+    ) -> Self {
+        let mut input = Self::new(bindings, mouse_sensitivity);
+        input.mouse_look_enabled = enabled;
+        input.ignore_mouse_delta = enabled;
+        input.invert_y = invert_y;
+        input
     }
 
-    pub fn poll<K: KeyState + ?Sized>(
+    pub fn mouse_look_enabled(&self) -> bool {
+        self.mouse_look_enabled
+    }
+
+    /// Poll keyboard controls and a cursor source that reports relative deltas.
+    pub fn poll_with_mouse_source<K: KeyState + ?Sized, M: MouseSource + ?Sized>(
         &mut self,
         keys: &K,
-        mouse: Option<(f32, f32)>,
+        mouse: &mut M,
+        focused_and_playing: bool,
     ) -> InputFrame {
-        let mut mouse_yaw = 0.0f32;
-        let mut mouse_pitch = 0.0f32;
-        if self.mouse_sensitivity > 0.0 {
-            if let (Some((x, y)), Some((lx, ly))) = (mouse, self.last_mouse) {
-                mouse_yaw = (x - lx) * self.mouse_sensitivity;
-                mouse_pitch = -(y - ly) * self.mouse_sensitivity;
-            }
-            self.last_mouse = mouse;
-        } else {
-            self.last_mouse = None;
+        let mut frame = self.poll_keyboard(keys);
+        let toggle_now = self.bindings.is_down(keys, Action::ToggleMouseLook);
+        frame.toggle_mouse_look = toggle_now && !self.prev_mouse_look;
+        self.prev_mouse_look = toggle_now;
+        if frame.toggle_mouse_look {
+            self.mouse_look_enabled = !self.mouse_look_enabled;
+            self.ignore_mouse_delta = self.mouse_look_enabled;
         }
 
+        if !focused_and_playing || !self.mouse_look_enabled {
+            self.ignore_mouse_delta = true;
+            return frame;
+        }
+
+        let (dx, dy) = mouse.delta();
+        if self.ignore_mouse_delta {
+            self.ignore_mouse_delta = false;
+            return frame;
+        }
+        const MAX_DELTA_PIXELS: f32 = 100.0;
+        let dx = dx.clamp(-MAX_DELTA_PIXELS, MAX_DELTA_PIXELS);
+        let dy = dy.clamp(-MAX_DELTA_PIXELS, MAX_DELTA_PIXELS);
+        frame.controls.mouse_yaw = dx * self.mouse_sensitivity;
+        let pitch_sign = if self.invert_y { 1.0 } else { -1.0 };
+        frame.controls.mouse_pitch = dy * self.mouse_sensitivity * pitch_sign;
+        frame
+    }
+
+    fn poll_keyboard<K: KeyState + ?Sized>(&mut self, keys: &K) -> InputFrame {
         let b = &self.bindings;
         let controls = Controls {
             look_up: b.is_down(keys, Action::LookUp),
@@ -267,21 +318,46 @@ impl Input {
             right: b.is_down(keys, Action::Right),
             jump: b.is_down(keys, Action::Jump),
             sprint: b.is_down(keys, Action::Sprint),
-            mouse_yaw,
-            mouse_pitch,
+            ..Controls::default()
         };
         let flashlight_now = b.is_down(keys, Action::Flashlight);
         let restart = b.is_down(keys, Action::Restart);
         let quit = b.is_down(keys, Action::Quit);
-
         let toggle_flashlight = flashlight_now && !self.prev_flashlight;
         self.prev_flashlight = flashlight_now;
-
         InputFrame {
             controls,
             toggle_flashlight,
             restart,
             quit,
+            toggle_mouse_look: false,
         }
+    }
+
+    pub fn bindings(&self) -> &KeyBindings {
+        &self.bindings
+    }
+
+    pub fn poll<K: KeyState + ?Sized>(
+        &mut self,
+        keys: &K,
+        mouse: Option<(f32, f32)>,
+    ) -> InputFrame {
+        let mut frame = self.poll_keyboard(keys);
+        let mut mouse_yaw = 0.0f32;
+        let mut mouse_pitch = 0.0f32;
+        if self.mouse_sensitivity > 0.0 {
+            if let (Some((x, y)), Some((lx, ly))) = (mouse, self.last_mouse) {
+                mouse_yaw = (x - lx) * self.mouse_sensitivity;
+                mouse_pitch = -(y - ly) * self.mouse_sensitivity;
+            }
+            self.last_mouse = mouse;
+        } else {
+            self.last_mouse = None;
+        }
+
+        frame.controls.mouse_yaw = mouse_yaw;
+        frame.controls.mouse_pitch = mouse_pitch;
+        frame
     }
 }

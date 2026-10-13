@@ -31,6 +31,8 @@ pub struct Settings {
     /// Window scale factor: 1, 2, 4, 8 or 16.
     pub window_scale: u32,
     pub flashlight_on_start: bool,
+    pub mouse_look_on_start: bool,
+    pub invert_y: bool,
     /// Radians per pixel of mouse movement; 0 disables mouse look.
     pub mouse_sensitivity: f32,
     pub bindings: KeyBindings,
@@ -45,7 +47,9 @@ impl Default for Settings {
             render_height: DEFAULT_HEIGHT,
             window_scale: 4,
             flashlight_on_start: true,
-            mouse_sensitivity: 0.0,
+            mouse_look_on_start: false,
+            invert_y: false,
+            mouse_sensitivity: 0.0025,
             bindings: KeyBindings::default(),
         }
     }
@@ -112,6 +116,16 @@ impl Settings {
                         s.flashlight_on_start = v;
                     }
                 }
+                "mouse_look_on_start" => {
+                    if let Ok(v) = value.parse::<bool>() {
+                        s.mouse_look_on_start = v;
+                    }
+                }
+                "invert_y" => {
+                    if let Ok(v) = value.parse::<bool>() {
+                        s.invert_y = v;
+                    }
+                }
                 "mouse_sensitivity" => {
                     if let Some(v) = parse_finite(value) {
                         s.mouse_sensitivity = v.clamp(0.0, 0.05);
@@ -143,6 +157,11 @@ impl Settings {
             "flashlight_on_start = {}\n",
             self.flashlight_on_start
         ));
+        out.push_str(&format!(
+            "mouse_look_on_start = {}\n",
+            self.mouse_look_on_start
+        ));
+        out.push_str(&format!("invert_y = {}\n", self.invert_y));
         out.push_str(&format!("mouse_sensitivity = {}\n", self.mouse_sensitivity));
         out.push_str("\n# key bindings: comma-separated key names\n");
         for action in Action::ALL {

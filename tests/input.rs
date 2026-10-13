@@ -1,7 +1,17 @@
 use minifb::Key;
-use raycast_blocks::input::{key_name, parse_key, Action, Input, KeyBindings, KeyState};
+use raycast_blocks::input::{
+    key_name, parse_key, Action, Input, KeyBindings, KeyState, MouseSource,
+};
 
 struct FakeKeys(Vec<Key>);
+
+struct FakeMouse((f32, f32));
+
+impl MouseSource for FakeMouse {
+    fn delta(&mut self) -> (f32, f32) {
+        self.0
+    }
+}
 
 impl KeyState for FakeKeys {
     fn is_down(&self, key: Key) -> bool {
@@ -21,6 +31,10 @@ fn default_bindings_map_to_controls() {
     let f = i.poll(&FakeKeys(vec![Key::I, Key::LeftShift, Key::E]), None);
     assert!(f.controls.forward && f.controls.sprint && f.controls.jump);
     assert!(!f.controls.back && !f.controls.left && !f.controls.right);
+    assert_eq!(
+        KeyBindings::default().keys(Action::ToggleMouseLook),
+        &[Key::Tab, Key::M]
+    );
 }
 
 #[test]
@@ -95,4 +109,73 @@ fn action_names_round_trip() {
         assert_eq!(Action::from_name(a.name()), Some(a));
     }
     assert_eq!(Action::from_name("nope"), None);
+}
+
+#[test]
+fn mouse_look_toggle_uses_a_press_edge() {
+    let mut input = Input::with_mouse_look(KeyBindings::default(), 0.0025, false, false);
+    let mut mouse = FakeMouse((0.0, 0.0));
+    let toggle = FakeKeys(vec![Key::Tab]);
+    let none = FakeKeys(vec![]);
+
+    assert!(
+        input
+            .poll_with_mouse_source(&toggle, &mut mouse, true)
+            .toggle_mouse_look
+    );
+    assert!(input.mouse_look_enabled());
+    assert!(
+        !input
+            .poll_with_mouse_source(&toggle, &mut mouse, true)
+            .toggle_mouse_look
+    );
+    input.poll_with_mouse_source(&none, &mut mouse, true);
+    assert!(
+        input
+            .poll_with_mouse_source(&toggle, &mut mouse, true)
+            .toggle_mouse_look
+    );
+    assert!(!input.mouse_look_enabled());
+}
+
+#[test]
+fn mouse_source_scales_deltas_and_inverts_pitch() {
+    let mut normal = Input::with_mouse_look(KeyBindings::default(), 0.01, true, false);
+    let none = FakeKeys(vec![]);
+    let mut mouse = FakeMouse((0.0, 0.0));
+    normal.poll_with_mouse_source(&none, &mut mouse, true); // activation baseline
+    mouse.0 = (10.0, 20.0);
+    let frame = normal.poll_with_mouse_source(&none, &mut mouse, true);
+    assert!((frame.controls.mouse_yaw - 0.1).abs() < 1e-6);
+    assert!((frame.controls.mouse_pitch + 0.2).abs() < 1e-6);
+
+    let mut inverted = Input::with_mouse_look(KeyBindings::default(), 0.01, true, true);
+    inverted.poll_with_mouse_source(&none, &mut mouse, true);
+    let frame = inverted.poll_with_mouse_source(&none, &mut mouse, true);
+    assert!(frame.controls.mouse_pitch > 0.0);
+}
+
+#[test]
+fn mouse_look_ignores_activation_frame_and_clamps_large_deltas() {
+    let mut input = Input::with_mouse_look(KeyBindings::default(), 0.0025, false, false);
+    let mut mouse = FakeMouse((0.0, 0.0));
+    let none = FakeKeys(vec![]);
+    let toggle = FakeKeys(vec![Key::M]);
+
+    let enabled = input.poll_with_mouse_source(&toggle, &mut mouse, true);
+    assert!(enabled.toggle_mouse_look);
+    assert_eq!(enabled.controls.mouse_yaw, 0.0);
+    mouse.0 = (10_000.0, -10_000.0);
+    let clamped = input.poll_with_mouse_source(&none, &mut mouse, true);
+    assert!((clamped.controls.mouse_yaw - 0.25).abs() < 1e-6);
+    assert!((clamped.controls.mouse_pitch - 0.25).abs() < 1e-6);
+}
+
+#[test]
+fn disabled_mouse_look_ignores_mouse_motion() {
+    let mut input = Input::with_mouse_look(KeyBindings::default(), 0.0025, false, false);
+    let mut mouse = FakeMouse((500.0, -200.0));
+    let frame = input.poll_with_mouse_source(&FakeKeys(vec![]), &mut mouse, true);
+    assert_eq!(frame.controls.mouse_yaw, 0.0);
+    assert_eq!(frame.controls.mouse_pitch, 0.0);
 }
