@@ -2,12 +2,12 @@
 
 use std::error::Error;
 
-use blocks_engine::app::{
-    App, Ctx, CursorRequest, Flow, FrameInfo, MouseButtons, MouseInput, WindowConfig,
-};
-use blocks_engine::gfx::Framebuffer;
-use blocks_engine::input::MouseSource;
-use blocks_engine::time::FixedStepper;
+use engine_core::app::{CursorRequest, FrameInfo, MouseButtons, MouseInput, WindowConfig};
+use engine_core::gfx::Framebuffer;
+use engine_core::input::MouseSource;
+use engine_core::time::FixedStepper;
+use engine_scene::app::{App, Ctx, Flow};
+use engine_scene::renderer::Renderer;
 
 use crate::cursor::CursorMouse;
 use crate::keys::snapshot;
@@ -16,10 +16,15 @@ use crate::window::{
     create_window, mouse_buttons, mouse_position_in_framebuffer, pressed_keys, scroll_y,
 };
 
-pub fn run<A: App>(mut app: A, mut config: WindowConfig) -> Result<(), Box<dyn Error>> {
+pub fn run<A: App, R: Renderer>(
+    mut app: A,
+    mut config: WindowConfig,
+    mut renderer: R,
+) -> Result<(), Box<dyn Error>> {
     let mut window = create_window(&config)?;
     window.set_cursor_visibility(true);
     let mut framebuffer = Framebuffer::new(config.width, config.height);
+    renderer.resize(config.width as u32, config.height as u32);
     let mut mouse = CursorMouse::new();
     let mut timer = FrameTimer::new();
     let mut stepper = FixedStepper::new(config.fixed_hz, config.max_steps);
@@ -73,9 +78,20 @@ pub fn run<A: App>(mut app: A, mut config: WindowConfig) -> Result<(), Box<dyn E
             window = create_window(&config)?;
             window.set_cursor_visibility(true);
             framebuffer = Framebuffer::new(config.width, config.height);
+            renderer.resize(config.width as u32, config.height as u32);
         }
 
-        app.render(&mut framebuffer, &ctx);
+        if let Some(scene) = app.scene(ctx.alpha) {
+            renderer.render_world(&scene, app.materials());
+            // Materialize the world into the CPU overlay target so legacy
+            // opaque drawing stays pixel-identical, including black pixels.
+            renderer.present(&mut framebuffer);
+        } else {
+            framebuffer.pixels.fill(0);
+        }
+        app.overlay(&mut framebuffer, &ctx);
+        renderer.draw_overlay(&framebuffer);
+        renderer.present(&mut framebuffer);
         window.update_with_buffer(&framebuffer.pixels, framebuffer.width, framebuffer.height)?;
 
         let should_capture = ctx.requests.cursor == CursorRequest::Capture && window.is_active();

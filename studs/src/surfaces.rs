@@ -2,15 +2,15 @@
 
 use std::sync::OnceLock;
 
-use blocks_engine::gfx::texture::Texture;
-use blocks_engine::math::{hash4, Vect};
-use blocks_engine::render::entities::EntitySurface;
-use blocks_engine::render::lighting::SurfaceShader;
-use blocks_engine::render::RenderStyle;
-use blocks_engine::voxel::{face_uv, Hit};
+use engine_core::math::{hash4, Vect};
+use engine_core::voxel::{face_uv, Hit};
 pub use engine_scene::entities::ENEMY_BOUNDS;
 use engine_scene::entities::{EntityInstance, EntityKind, PAGE, WARDEN};
+use engine_scene::texture::Texture;
+use engine_scene::RenderStyle;
 use engine_scene::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
+use render_cpu::render::entities::EntitySurface;
+use render_cpu::render::lighting::SurfaceShader;
 
 use crate::level::{CEIL, FLOOR, WALL};
 
@@ -246,9 +246,9 @@ pub fn page_view(pos: Vect, time: f32, index: f32) -> EntityInstance {
 #[cfg(test)]
 mod tests {
     use super::{apply_texture_modulation, wall_texture_modulation};
-    use blocks_engine::gfx::texture::Texture;
-    use blocks_engine::math::Vect;
-    use blocks_engine::voxel::Hit;
+    use engine_core::math::Vect;
+    use engine_core::voxel::Hit;
+    use engine_scene::texture::Texture;
 
     #[test]
     fn texture_modulation_preserves_classic_at_zero_and_stays_moderate() {

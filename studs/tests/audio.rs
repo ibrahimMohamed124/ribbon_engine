@@ -67,7 +67,7 @@ fn bundled_sounds_decode_once_into_a_shared_sample_footprint() {
         if unique_data.contains(&asset.data) {
             continue;
         }
-        let decoded = blocks_engine_desktop::audio::decode_sound(asset.data).unwrap();
+        let decoded = platform::audio::decode_sound(asset.data).unwrap();
         sample_bytes += decoded.memory_bytes();
         unique_data.push(asset.data);
     }

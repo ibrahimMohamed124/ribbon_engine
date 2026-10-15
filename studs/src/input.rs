@@ -4,8 +4,8 @@
 //! (continuous intent) and [`InputFrame`] (intent + one-shot events).
 //! Physical keys live in [`KeyBindings`], which are user-configurable.
 
-use blocks_engine::input::Bindings;
-pub use blocks_engine::input::{key_name, parse_key, Key, KeyState, MouseSource};
+use engine_core::input::Bindings;
+pub use engine_core::input::{key_name, parse_key, Key, KeyState, MouseSource};
 
 /// Everything the player can ask the game to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

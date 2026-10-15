@@ -3,7 +3,7 @@
 use enigo::{Coordinate, Enigo, Mouse, Settings as EnigoSettings};
 use minifb::{MouseMode, Window};
 
-use blocks_engine::input::MouseSource;
+use engine_core::input::MouseSource;
 
 pub struct CursorMouse {
     enigo: Option<Enigo>,

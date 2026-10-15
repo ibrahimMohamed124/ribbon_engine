@@ -1,14 +1,16 @@
-use blocks_engine::app::{App, Ctx, Flow, WindowConfig};
-use blocks_engine::gfx::Framebuffer;
-use blocks_engine::input::Key;
-use blocks_engine::math::{Angles, Vect};
-use blocks_engine::render::lighting::SurfaceShader;
-use blocks_engine::render::{render, Camera, LightingParams, RenderStyle, Scene};
-use blocks_engine::voxel::{Hit, VoxelWorld};
+use engine_core::app::WindowConfig;
+use engine_core::gfx::Framebuffer;
+use engine_core::input::Key;
+use engine_core::math::{Angles, Vect};
+use engine_core::voxel::{Hit, VoxelWorld};
+use engine_scene::app::{App, Ctx, Flow};
 use engine_scene::entities::{
     EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
 };
+use engine_scene::{Camera, LightingParams, RenderStyle, Scene};
 use platform::run;
+use render_cpu::render::lighting::SurfaceShader;
+use render_cpu::renderer::CpuRenderer;
 
 const EMPTY: u8 = 0;
 const FLOOR: u8 = 1;
@@ -98,9 +100,9 @@ impl App for Walkabout {
         Flow::Continue
     }
 
-    fn render(&mut self, framebuffer: &mut Framebuffer, ctx: &Ctx<'_>) {
+    fn scene(&self, _alpha: f32) -> Option<Scene<'_>> {
         let (position, yaw) = &self.entity;
-        let frame = Scene {
+        Some(Scene {
             world: &self.world,
             empty_voxel: EMPTY,
             camera: Camera {
@@ -111,7 +113,7 @@ impl App for Walkabout {
             lighting: LightingParams {
                 illumination: 0.75,
                 intensity: 0.0,
-                frame: ctx.frame,
+                frame: 0,
                 style: RenderStyle::classic(),
             },
             entities: vec![EntityInstance {
@@ -121,9 +123,10 @@ impl App for Walkabout {
                 params: [0.0; 4],
             }],
             entity_registry: &WALKABOUT_REGISTRY,
-        };
-        render(framebuffer, &frame, &RoomSurface);
+        })
     }
+
+    fn overlay(&mut self, _overlay: &mut Framebuffer, _ctx: &Ctx<'_>) {}
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -137,5 +140,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fixed_hz: 120,
             max_steps: 10,
         },
+        CpuRenderer::new(640, 360, RoomSurface),
     )
 }

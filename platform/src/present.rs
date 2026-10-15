@@ -1,6 +1,6 @@
 //! Pure framebuffer scaling and pointer-to-image coordinate conversion.
 
-use blocks_engine::gfx::Framebuffer;
+use engine_core::gfx::Framebuffer;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Viewport {
@@ -105,7 +105,7 @@ pub fn blit_scaled(fb: &Framebuffer, dst: &mut [u32], dst_w: u32, dst_h: u32) {
 #[cfg(test)]
 mod tests {
     use super::{blit_scaled, viewport, window_to_framebuffer};
-    use blocks_engine::gfx::Framebuffer;
+    use engine_core::gfx::Framebuffer;
 
     #[test]
     fn viewport_centers_pillarbox_letterbox_and_integer_scale() {

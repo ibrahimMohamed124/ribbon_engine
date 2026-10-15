@@ -307,6 +307,13 @@ impl Game {
     }
 
     pub fn draw_styled(&self, fb: &mut Framebuffer, frame_no: u32, hfov: f32, style: RenderStyle) {
+        if let Some(scene) = self.scene_styled(frame_no, hfov, style) {
+            render_with_materials(fb, &scene, &StudsSurface, StudsSurface.materials());
+        }
+        self.draw_overlay(fb, frame_no);
+    }
+
+    pub fn scene_styled(&self, frame_no: u32, hfov: f32, style: RenderStyle) -> Option<Scene<'_>> {
         match self.state {
             State::Playing => {
                 let prox = self.proximity();
@@ -336,7 +343,7 @@ impl Game {
                     ents.push(page_view(pos, self.time, i as f32));
                 }
 
-                let frame = Scene {
+                Some(Scene {
                     world: &self.world,
                     empty_voxel: AIR,
                     camera: engine_scene::Camera { eye, view, hfov },
@@ -348,16 +355,21 @@ impl Game {
                     },
                     entities: ents,
                     entity_registry: &engine_scene::entities::BUILTIN_ENTITY_REGISTRY,
-                };
-                render_with_materials(fb, &frame, &StudsSurface, StudsSurface.materials());
-                draw_hud(
-                    fb,
-                    self.collected,
-                    PAGES_TOTAL,
-                    self.player.stamina,
-                    self.player.exhausted,
-                );
+                })
             }
+            State::Caught | State::Won => None,
+        }
+    }
+
+    pub fn draw_overlay(&self, fb: &mut Framebuffer, frame_no: u32) {
+        match self.state {
+            State::Playing => draw_hud(
+                fb,
+                self.collected,
+                PAGES_TOTAL,
+                self.player.stamina,
+                self.player.exhausted,
+            ),
             State::Caught => draw_caught(fb, self.state_t, frame_no),
             State::Won => draw_won(fb, self.state_t, frame_no),
         }

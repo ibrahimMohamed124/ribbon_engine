@@ -1,7 +1,7 @@
 //! minifb window setup and coordinate conversion helpers.
 
-use blocks_engine::app::WindowConfig;
-use blocks_engine::input::Key;
+use engine_core::app::WindowConfig;
+use engine_core::input::Key;
 use minifb::{KeyRepeat, MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
 
 pub fn scale_from(factor: u32) -> Scale {

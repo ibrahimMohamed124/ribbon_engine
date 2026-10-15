@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use blocks_engine::app::{MouseButtons, MouseInput};
-use blocks_engine::input::{Key, KeyState};
+use engine_core::app::{MouseButtons, MouseInput};
+use engine_core::input::{Key, KeyState};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 use winit::keyboard::KeyCode;
 
@@ -136,7 +136,7 @@ impl MouseState {
 }
 
 pub const fn key_mapping() -> [(KeyCode, Key); 36] {
-    use blocks_engine::input::Key as K;
+    use engine_core::input::Key as K;
     use KeyCode as C;
     [
         (C::KeyA, K::A),
@@ -181,7 +181,7 @@ pub const fn key_mapping() -> [(KeyCode, Key); 36] {
 #[cfg(test)]
 mod tests {
     use super::{from_winit, key_mapping, KeyboardState, MouseState};
-    use blocks_engine::input::{Key, KeyState, ALL_KEYS};
+    use engine_core::input::{Key, KeyState, ALL_KEYS};
     use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 
     #[test]

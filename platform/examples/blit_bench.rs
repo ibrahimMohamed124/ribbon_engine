@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use blocks_engine::gfx::Framebuffer;
+use engine_core::gfx::Framebuffer;
 use platform::present::blit_scaled;
 
 fn main() {

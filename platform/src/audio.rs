@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::time::Instant;
 
-use blocks_engine::audio::{AmbienceId, AudioBackend, SoundBank, SoundId};
+use engine_core::audio::{AmbienceId, AudioBackend, SoundBank, SoundId};
 use rodio::source::Source;
 
 /// Fully decoded sound samples, independent of any audio output device.

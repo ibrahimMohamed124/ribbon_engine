@@ -1,6 +1,5 @@
 //! Minimal application contract and per-frame input/request context.
 
-use crate::gfx::Framebuffer;
 use crate::input::{Key, KeyState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,9 +124,4 @@ impl<'a> Ctx<'a> {
     pub fn release_cursor(&mut self) {
         self.requests.cursor = CursorRequest::Release;
     }
-}
-
-pub trait App {
-    fn update(&mut self, ctx: &mut Ctx<'_>) -> Flow;
-    fn render(&mut self, framebuffer: &mut Framebuffer, ctx: &Ctx<'_>);
 }

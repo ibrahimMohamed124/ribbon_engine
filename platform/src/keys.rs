@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use blocks_engine::input::{Key, KeyState, ALL_KEYS};
+use engine_core::input::{Key, KeyState, ALL_KEYS};
 use minifb::{Key as DesktopKey, Window};
 
 pub fn from_minifb(key: DesktopKey) -> Option<Key> {
@@ -157,7 +157,7 @@ mod tests {
             "Enter",
             "Tab",
         ] {
-            let key = blocks_engine::input::parse_key(name).unwrap();
+            let key = engine_core::input::parse_key(name).unwrap();
             assert_eq!(from_minifb(to_minifb(key)), Some(key));
         }
     }

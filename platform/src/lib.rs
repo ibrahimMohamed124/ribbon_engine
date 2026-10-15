@@ -1,4 +1,4 @@
-//! Desktop platform integration for `blocks_engine`.
+//! Desktop platform integration for core applications and scene renderers.
 
 pub mod audio;
 pub mod cursor;
@@ -10,5 +10,5 @@ pub mod window;
 
 mod runner;
 
-pub use blocks_engine::app::WindowConfig;
+pub use engine_core::app::WindowConfig;
 pub use runner::run;
