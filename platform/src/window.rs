@@ -1,73 +1,33 @@
-//! minifb window setup and coordinate conversion helpers.
+//! Winit window attributes and framebuffer pointer conversion.
 
 use engine_core::app::WindowConfig;
-use engine_core::input::Key;
-use minifb::{KeyRepeat, MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
+use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::window::{Window, WindowAttributes};
 
-pub fn scale_from(factor: u32) -> Scale {
-    match factor {
-        1 => Scale::X1,
-        2 => Scale::X2,
-        _ => Scale::X4,
-    }
+pub fn attributes(config: &WindowConfig) -> WindowAttributes {
+    Window::default_attributes()
+        .with_title(config.title.clone())
+        .with_inner_size(physical_size(config))
+        .with_resizable(true)
 }
 
-pub fn create_window(config: &WindowConfig) -> Result<Window, minifb::Error> {
-    Window::new(
-        &config.title,
-        config.width,
-        config.height,
-        WindowOptions {
-            scale: scale_from(config.scale),
-            scale_mode: ScaleMode::AspectRatioStretch,
-            resize: true,
-            ..WindowOptions::default()
-        },
+pub fn physical_size(config: &WindowConfig) -> PhysicalSize<u32> {
+    PhysicalSize::new(
+        (config.width as u32).saturating_mul(config.scale.max(1)),
+        (config.height as u32).saturating_mul(config.scale.max(1)),
     )
 }
 
 pub fn mouse_position_in_framebuffer(
-    window: &Window,
+    position: PhysicalPosition<f64>,
+    window_size: PhysicalSize<u32>,
     framebuffer_size: (usize, usize),
 ) -> Option<(f32, f32)> {
-    let (x, y) = window.get_unscaled_mouse_pos(MouseMode::Discard)?;
-    let (window_width, window_height) = window.get_size();
-    let (framebuffer_width, framebuffer_height) = framebuffer_size;
-    if window_width == 0 || window_height == 0 || framebuffer_width == 0 || framebuffer_height == 0
-    {
-        return None;
-    }
-
-    let scale = (window_width as f32 / framebuffer_width as f32)
-        .min(window_height as f32 / framebuffer_height as f32);
-    let offset_x = (window_width as f32 - framebuffer_width as f32 * scale) * 0.5;
-    let offset_y = (window_height as f32 - framebuffer_height as f32 * scale) * 0.5;
-    let x = (x - offset_x) / scale;
-    let y = (y - offset_y) / scale;
-    (x >= 0.0 && y >= 0.0 && x < framebuffer_width as f32 && y < framebuffer_height as f32)
-        .then_some((x, y))
-}
-
-pub fn pressed_keys(window: &mut Window) -> Vec<Key> {
-    window
-        .get_keys_pressed(KeyRepeat::No)
-        .into_iter()
-        .filter_map(super::keys::from_minifb)
-        .collect()
-}
-
-pub fn left_mouse_down(window: &Window) -> bool {
-    window.get_mouse_down(MouseButton::Left)
-}
-
-pub fn mouse_buttons(window: &Window) -> (bool, bool, bool) {
-    (
-        window.get_mouse_down(MouseButton::Left),
-        window.get_mouse_down(MouseButton::Right),
-        window.get_mouse_down(MouseButton::Middle),
+    let viewport =
+        super::present::viewport((window_size.width, window_size.height), framebuffer_size);
+    super::present::window_to_framebuffer(
+        (position.x as f32, position.y as f32),
+        &viewport,
+        framebuffer_size,
     )
-}
-
-pub fn scroll_y(window: &Window) -> f32 {
-    window.get_scroll_wheel().map_or(0.0, |(_, y)| y)
 }

@@ -6,9 +6,9 @@ edition = "2021"
 [dependencies]
 engine_core = { path = "../engine_core" }
 engine_scene = { path = "../engine_scene" }
-minifb = "0.29.0"
-enigo = "0.6.1"
 winit = "0.30.13"
+softbuffer = "0.4.6"
+render_gpu = { path = "../render_gpu" }
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }
 
 [dev-dependencies]

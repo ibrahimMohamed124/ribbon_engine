@@ -20,7 +20,7 @@ graph TD
   render_cpu --> engine_scene
   render_cpu --> engine_core
   engine_scene --> engine_core
-  render_gpu -. future backend .-> engine_scene
+  render_gpu --> engine_scene
 ```
 
 `default-members` stays `studs`, so root `cargo run` behavior remains the same.
@@ -54,3 +54,14 @@ graph TD
 The GPU crate is only a skeleton. A real backend still needs equivalents for the CPU voxel DDA and `face_ao`, entity box intersection and phase transforms, flashlight/fog equations, `StudsSurface`'s hit-coordinate and cell-hash albedo formulas, procedural texture filtering/fade, tone mapping and display gamma, palette lookup, vignette, frame grain, and Bayer dithering. Entity point appearance is also currently provided by CPU `SurfaceShader::entity_surface`; it must become data or a renderer-side material rule before entities can be shaded on a GPU.
 
 See [`render_gpu/shaders/README.md`](render_gpu/shaders/README.md) for the rendering-stage checklist.
+
+## Phase 2: desktop and GPU presentation
+
+- Desktop windows use winit 0.30.13 and wgpu 25.0.2 with raw-window-handle 0.6. The GPU presenter uploads the CPU reference framebuffer into a persistent RGBA texture and uses a nearest-neighbor WGSL upscale pass with the same aspect-fit math as `platform::present::viewport`.
+- Adapter/surface initialization prefers a high-performance adapter. If it fails, the platform logs the reason and uses softbuffer for CPU presentation. Winit owns keyboard, mouse buttons, scroll, focus, resize, and window events; mouse look consumes raw device deltas, preferring Locked cursor grab and falling back to Confined plus recenter.
+
+### Manual platform smoke checklist
+
+- Launch the desktop app and confirm the internal image is nearest-upscaled with centered letterbox bars.
+- Walk, look, pause, adjust a setting that requests a new size, and close the window.
+- Confirm a missing GPU adapter reports a fallback message and the software presenter continues running.
