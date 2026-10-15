@@ -1792,6 +1792,7 @@ dependencies = [
 name = "render_gpu"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_scene",
  "pollster",

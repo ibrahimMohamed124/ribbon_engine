@@ -141,13 +141,13 @@ impl Canvas for Framebuffer {
 }
 
 fn hash4(x: i32, y: i32, z: i32, w: i32) -> f32 {
-    let mut h = (x as u32).wrapping_mul(0x8da6_b343);
-    h ^= (y as u32).wrapping_mul(0xd816_3841);
-    h ^= (z as u32).wrapping_mul(0xcb1a_b31f);
-    h ^= (w as u32).wrapping_mul(0x1656_67b1);
+    let mut h = (x as u32).wrapping_mul(73_856_093)
+        ^ (y as u32).wrapping_mul(19_349_663)
+        ^ (z as u32).wrapping_mul(83_492_791)
+        ^ (w as u32).wrapping_mul(2_654_435_761);
     h ^= h >> 13;
-    h = h.wrapping_mul(0x85eb_ca6b);
-    h ^= h >> 16;
+    h = h.wrapping_mul(0x5bd1_e995);
+    h ^= h >> 15;
     (h & 0xffff) as f32 / 32767.5 - 1.0
 }
 
@@ -265,5 +265,11 @@ mod canvas_tests {
             frame: 13,
         });
         assert_eq!(first.pixels, second.pixels);
+        for point in [(-1, 0, 0, 0), (0, 1, 13, 71), (1280, -720, 8, 6)] {
+            assert_eq!(
+                super::hash4(point.0, point.1, point.2, point.3),
+                crate::math::hash4(point.0, point.1, point.2, point.3)
+            );
+        }
     }
 }

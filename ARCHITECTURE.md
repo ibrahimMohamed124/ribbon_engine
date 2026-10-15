@@ -65,3 +65,9 @@ See [`render_gpu/shaders/README.md`](render_gpu/shaders/README.md) for the rende
 - Launch the desktop app and confirm the internal image is nearest-upscaled with centered letterbox bars.
 - Walk, look, pause, adjust a setting that requests a new size, and close the window.
 - Confirm a missing GPU adapter reports a fallback message and the software presenter continues running.
+
+## Phase 3: GPU overlays
+
+The renderer uploads only the CPU-rendered world image. It then composites the world HUD layer, brightness pass, and UI layer on GPU targets in command order, before nearest-neighbor presentation. Rectangles are instanced; text pixels are expanded from the shared 5x7 glyph data into quad instances. Fog, caught/won noise, dim, solid white, and brightness are full-screen shader passes. Ping-pong RGBA8 targets preserve read/write ordering, and pass uniforms and quad data use persistent buffers.
+
+World casting and shading still run on the CPU. GPU/CPU overlay readback parity thresholds are not established yet; the Phase 4 parity harness remains outstanding.

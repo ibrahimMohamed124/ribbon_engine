@@ -100,10 +100,11 @@ impl Presenter {
         &mut self,
         window: &Window,
         framebuffer: &Framebuffer,
+        plan: Option<&engine_scene::app::FramePlan<'_>>,
     ) -> Result<(), Box<dyn Error>> {
         match self {
             Self::Gpu(gpu) => gpu
-                .present(framebuffer)
+                .present_frame(framebuffer, plan.expect("GPU presents with a frame plan"))
                 .map_err(std::io::Error::other)
                 .map_err(Into::into),
             Self::Cpu(cpu) => cpu.present(window, framebuffer),
@@ -213,10 +214,21 @@ impl<A: App, R: Renderer> Runner<A, R> {
             let _ = window.request_inner_size(physical_size(&self.config));
         }
         let plan = self.app.frame_plan(&ctx);
-        self.renderer.render_frame(&plan, self.app.materials());
-        self.renderer.present(&mut self.framebuffer);
         if let Some(presenter) = &mut self.presenter {
-            if let Err(error) = presenter.present(&window, &self.framebuffer) {
+            let result = match presenter {
+                Presenter::Gpu(_) => {
+                    self.renderer
+                        .render_scene(plan.scene.as_ref(), self.app.materials());
+                    self.renderer.present(&mut self.framebuffer);
+                    presenter.present(&window, &self.framebuffer, Some(&plan))
+                }
+                Presenter::Cpu(_) => {
+                    self.renderer.render_frame(&plan, self.app.materials());
+                    self.renderer.present(&mut self.framebuffer);
+                    presenter.present(&window, &self.framebuffer, None)
+                }
+            };
+            if let Err(error) = result {
                 self.failure = Some(error.to_string());
                 event_loop.exit();
                 return;

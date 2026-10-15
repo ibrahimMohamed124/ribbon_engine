@@ -1,14 +1,5 @@
-# GPU shader port checklist
+# GPU shader stages
 
-The eventual wgpu backend must preserve the CPU reference renderer's behavior
-for these stages:
-
-- voxel DDA cast and world-boundary behavior
-- `face_ao` neighborhood sampling and interpolation
-- entity box tests, model bounds, and phase-driven transforms
-- flashlight cone, distance falloff, fog, and entity lighting
-- tone mapping, display gamma, and palette lookup table
-- vignette, frame grain, and ordered Bayer dithering
-- procedural brick/noise texture sampling and distance fade
-
-No shader source or GPU dependency is included yet.
+- `present.wgsl` contains the CPU image upload's nearest-neighbor letterbox pass and the GPU full-screen passes for fog, caught/won noise, dim, brightness, and solid white. Its integer `hash4` matches `engine_core::math::hash4`.
+- `ui.wgsl` contains the instanced rectangle and 5x7 glyph-pixel quad shaders. Glyph data is generated from the shared `engine_core::gfx::font::glyph` table.
+- `world.wgsl` will contain the world DDA, materials, lighting, entities, and palette path in Phase 4; the CPU remains the world renderer until that port is complete.

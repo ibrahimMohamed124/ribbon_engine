@@ -28,6 +28,17 @@ impl<S: SurfaceShader + Sync> Renderer for CpuRenderer<S> {
         self.framebuffer = Framebuffer::new(width as usize, height as usize);
     }
 
+    fn render_scene(
+        &mut self,
+        scene: Option<&engine_scene::scene::Scene<'_>>,
+        materials: &MaterialTable,
+    ) {
+        self.framebuffer.pixels.fill(0);
+        if let Some(scene) = scene {
+            render_with_materials(&mut self.framebuffer, scene, &self.shader, materials);
+        }
+    }
+
     fn render_frame(&mut self, plan: &FramePlan<'_>, materials: &MaterialTable) {
         if self.framebuffer.width != plan.world_layer.width
             || self.framebuffer.height != plan.world_layer.height
@@ -37,10 +48,7 @@ impl<S: SurfaceShader + Sync> Renderer for CpuRenderer<S> {
                 plan.world_layer.height as u32,
             );
         }
-        self.framebuffer.pixels.fill(0);
-        if let Some(scene) = &plan.scene {
-            render_with_materials(&mut self.framebuffer, scene, &self.shader, materials);
-        }
+        self.render_scene(plan.scene.as_ref(), materials);
         apply_draw_list(&mut self.framebuffer, &plan.world_layer);
         adjust_brightness(&mut self.framebuffer, plan.brightness);
         apply_draw_list(&mut self.framebuffer, &plan.ui_layer);
@@ -94,25 +102,33 @@ mod tests {
     }
 
     #[test]
-    fn flattened_overlay_is_copied_byte_for_byte() {
+    fn frame_plan_composites_world_brightness_then_ui_in_order() {
         let mut renderer = CpuRenderer::new(2, 1, NoopShader);
-        let mut overlay = DrawList::new(2, 1);
-        overlay.commands.push(DrawCommand::Rect {
+        let mut world_layer = DrawList::new(2, 1);
+        world_layer.commands.push(DrawCommand::Rect {
+            x: 0,
+            y: 0,
+            w: 2,
+            h: 1,
+            color: 0x00c8_c8c8,
+        });
+        let mut ui_layer = DrawList::new(2, 1);
+        ui_layer.commands.push(DrawCommand::Rect {
             x: 0,
             y: 0,
             w: 1,
             h: 1,
-            color: 0x0012_3456,
+            color: 0x00ff_ffff,
         });
         let plan = FramePlan {
             scene: None,
-            world_layer: overlay,
-            brightness: 1.0,
-            ui_layer: DrawList::new(2, 1),
+            world_layer,
+            brightness: 0.5,
+            ui_layer,
         };
         renderer.render_frame(&plan, &engine_scene::EMPTY_MATERIAL_TABLE);
         let mut output = Framebuffer::new(2, 1);
         renderer.present(&mut output);
-        assert_eq!(output.pixels, vec![0x0012_3456, 0]);
+        assert_eq!(output.pixels, vec![0x00ff_ffff, 0x0064_6464]);
     }
 }
