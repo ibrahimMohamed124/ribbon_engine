@@ -9,13 +9,17 @@ use super::lighting::{
 use super::post::{finish_pixel_styled_with_lut, PixelSample};
 use engine_core::gfx::Framebuffer;
 use engine_core::math::{forward_vec, Vect};
+use engine_scene::material::MaterialTable;
 use engine_scene::scene::Scene;
 use engine_scene::RENDER_DIST;
+
+const EMPTY_MATERIALS: MaterialTable = MaterialTable::new(&[]);
 
 fn shade_pixel<S: SurfaceShader + Sync>(
     f: &Scene,
     entities: &[EntView<'_>],
     shader: &S,
+    materials: &MaterialTable,
     fwd: Vect,
     dir: Vect,
 ) -> f32 {
@@ -57,6 +61,7 @@ fn shade_pixel<S: SurfaceShader + Sync>(
                 cone,
                 empty_voxel: f.empty_voxel,
                 style: &f.lighting.style,
+                materials,
             },
         ),
         None => 0.0,
@@ -64,6 +69,15 @@ fn shade_pixel<S: SurfaceShader + Sync>(
 }
 
 pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Scene, shader: &S) {
+    render_with_materials(fb, frame, shader, &EMPTY_MATERIALS);
+}
+
+pub fn render_with_materials<S: SurfaceShader + Sync>(
+    fb: &mut Framebuffer,
+    frame: &Scene,
+    shader: &S,
+    materials: &MaterialTable,
+) {
     let level_lut = frame.lighting.style.level_lut();
     let entities: Vec<_> = frame
         .entities
@@ -91,7 +105,7 @@ pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Scene, shad
                 let u = ((x as f32 + 0.5) / width as f32) * 2.0 - 1.0;
                 let direction =
                     (forward + right.scale(u * tan_h) + up.scale(v * tan_v)).normalize();
-                let gray = shade_pixel(frame, &entities, shader, forward, direction);
+                let gray = shade_pixel(frame, &entities, shader, materials, forward, direction);
                 *pixel = finish_pixel_styled_with_lut(
                     gray,
                     PixelSample {

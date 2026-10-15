@@ -13,4 +13,4 @@ pub use engine_scene::style::{Palette, RenderStyle, Tonemap, LEVEL_COUNT};
 pub use engine_scene::RENDER_DIST;
 pub use entities::{EntHit, EntView};
 pub use lighting::EntitySurface;
-pub use raycaster::render;
+pub use raycaster::{render, render_with_materials};

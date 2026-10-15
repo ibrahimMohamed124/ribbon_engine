@@ -3,6 +3,7 @@
 use engine_core::math::Vect;
 use engine_core::voxel::{face_ao, Hit, VoxelWorld};
 use engine_scene::entities::EntityKind;
+use engine_scene::material::MaterialTable;
 use engine_scene::style::RenderStyle;
 
 pub const CONE_INNER: f32 = 0.985;
@@ -10,6 +11,17 @@ pub const CONE_OUTER: f32 = 0.86;
 
 pub trait SurfaceShader: Sync {
     fn albedo(&self, block: u8, hit: &Hit, direction: Vect, style: &RenderStyle) -> f32;
+
+    fn albedo_with_materials(
+        &self,
+        block: u8,
+        hit: &Hit,
+        direction: Vect,
+        style: &RenderStyle,
+        _materials: &MaterialTable,
+    ) -> f32 {
+        self.albedo(block, hit, direction, style)
+    }
 
     fn entity_surface(
         &self,
@@ -39,6 +51,7 @@ pub struct SurfaceContext<'a> {
     pub cone: f32,
     pub empty_voxel: u8,
     pub style: &'a RenderStyle,
+    pub materials: &'a MaterialTable,
 }
 
 pub fn cone_factor(cosang: f32) -> f32 {
@@ -87,6 +100,7 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
         cone,
         empty_voxel,
         style,
+        materials,
     } = context;
     if hit.normal == [0, 0, 0] {
         return 0.0;
@@ -116,7 +130,7 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
         face_ao(world, hit, empty_voxel)
     };
     let occlusion = 1.0 + (ao - 1.0) * ao_strength;
-    shader.albedo(block, hit, direction, style)
+    shader.albedo_with_materials(block, hit, direction, style, materials)
         * light_with_style(illumination, hit.dist, ndotl, cone, style)
         * occlusion
 }

@@ -9,7 +9,7 @@ use crate::input::{Controls, InputFrame};
 use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
 use crate::renderer::hud::{draw_caught, draw_hud, draw_won};
-use crate::renderer::{render, Framebuffer, RenderStyle, Scene, RENDER_DIST};
+use crate::renderer::{render_with_materials, Framebuffer, RenderStyle, Scene, RENDER_DIST};
 use crate::surfaces::{enemy_view, page_view, StudsSurface};
 use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
 
@@ -349,7 +349,7 @@ impl Game {
                     entities: ents,
                     entity_registry: &engine_scene::entities::BUILTIN_ENTITY_REGISTRY,
                 };
-                render(fb, &frame, &StudsSurface);
+                render_with_materials(fb, &frame, &StudsSurface, StudsSurface.materials());
                 draw_hud(
                     fb,
                     self.collected,

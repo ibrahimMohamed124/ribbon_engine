@@ -73,6 +73,26 @@ impl SurfaceShader for StudsSurface {
         base
     }
 
+    fn albedo_with_materials(
+        &self,
+        block: u8,
+        hit: &Hit,
+        direction: Vect,
+        style: &RenderStyle,
+        materials: &MaterialTable,
+    ) -> f32 {
+        let Some(material) = materials.get(block) else {
+            return self.albedo(block, hit, direction, style);
+        };
+        match material.base_rule {
+            BaseAlbedoRule::Constant => material.constant_albedo,
+            BaseAlbedoRule::StudsClassic if material.texture == TextureKind::None => {
+                classic_albedo(block, hit)
+            }
+            BaseAlbedoRule::StudsClassic => self.albedo(block, hit, direction, style),
+        }
+    }
+
     fn entity_surface(
         &self,
         kind: EntityKind,
