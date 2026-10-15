@@ -1,7 +1,9 @@
+use engine_core::gfx::post::adjust_brightness;
 use engine_core::gfx::Framebuffer;
+use engine_core::gfx::{Canvas, DrawCommand, DrawList};
+use engine_scene::app::FramePlan;
 use engine_scene::material::MaterialTable;
 use engine_scene::renderer::Renderer;
-use engine_scene::scene::Scene;
 
 use crate::render::lighting::SurfaceShader;
 use crate::render::render_with_materials;
@@ -26,15 +28,22 @@ impl<S: SurfaceShader + Sync> Renderer for CpuRenderer<S> {
         self.framebuffer = Framebuffer::new(width as usize, height as usize);
     }
 
-    fn render_world(&mut self, scene: &Scene<'_>, materials: &MaterialTable) {
-        render_with_materials(&mut self.framebuffer, scene, &self.shader, materials);
-    }
-
-    fn draw_overlay(&mut self, overlay: &Framebuffer) {
-        if self.framebuffer.width != overlay.width || self.framebuffer.height != overlay.height {
-            self.resize(overlay.width as u32, overlay.height as u32);
+    fn render_frame(&mut self, plan: &FramePlan<'_>, materials: &MaterialTable) {
+        if self.framebuffer.width != plan.world_layer.width
+            || self.framebuffer.height != plan.world_layer.height
+        {
+            self.resize(
+                plan.world_layer.width as u32,
+                plan.world_layer.height as u32,
+            );
         }
-        self.framebuffer.pixels.copy_from_slice(&overlay.pixels);
+        self.framebuffer.pixels.fill(0);
+        if let Some(scene) = &plan.scene {
+            render_with_materials(&mut self.framebuffer, scene, &self.shader, materials);
+        }
+        apply_draw_list(&mut self.framebuffer, &plan.world_layer);
+        adjust_brightness(&mut self.framebuffer, plan.brightness);
+        apply_draw_list(&mut self.framebuffer, &plan.ui_layer);
     }
 
     fn present(&mut self, out: &mut Framebuffer) {
@@ -47,10 +56,27 @@ impl<S: SurfaceShader + Sync> Renderer for CpuRenderer<S> {
     }
 }
 
+pub fn apply_draw_list(framebuffer: &mut Framebuffer, draw_list: &DrawList) {
+    for command in &draw_list.commands {
+        match command {
+            DrawCommand::Rect { x, y, w, h, color } => framebuffer.rect(*x, *y, *w, *h, *color),
+            DrawCommand::Text {
+                value,
+                x,
+                y,
+                scale,
+                color,
+            } => framebuffer.text(value, *x, *y, *scale, *color),
+            DrawCommand::Dim(amount) => framebuffer.dim(*amount),
+            DrawCommand::Effect(effect) => framebuffer.effect(*effect),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::CpuRenderer;
-    use engine_core::gfx::Framebuffer;
+    use super::{CpuRenderer, FramePlan};
+    use engine_core::gfx::{DrawCommand, DrawList, Framebuffer};
     use engine_scene::renderer::Renderer;
 
     struct NoopShader;
@@ -70,14 +96,23 @@ mod tests {
     #[test]
     fn flattened_overlay_is_copied_byte_for_byte() {
         let mut renderer = CpuRenderer::new(2, 1, NoopShader);
-        let overlay = Framebuffer {
-            width: 2,
-            height: 1,
-            pixels: vec![0x0012_3456, 0],
+        let mut overlay = DrawList::new(2, 1);
+        overlay.commands.push(DrawCommand::Rect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+            color: 0x0012_3456,
+        });
+        let plan = FramePlan {
+            scene: None,
+            world_layer: overlay,
+            brightness: 1.0,
+            ui_layer: DrawList::new(2, 1),
         };
-        renderer.draw_overlay(&overlay);
+        renderer.render_frame(&plan, &engine_scene::EMPTY_MATERIAL_TABLE);
         let mut output = Framebuffer::new(2, 1);
         renderer.present(&mut output);
-        assert_eq!(output.pixels, overlay.pixels);
+        assert_eq!(output.pixels, vec![0x0012_3456, 0]);
     }
 }

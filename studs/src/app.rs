@@ -6,11 +6,10 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use engine_core::app::{Ctx, Flow, WindowConfig, WindowRequest};
-use engine_core::gfx::{post::adjust_brightness, Framebuffer};
+use engine_core::gfx::DrawList;
 use engine_core::input::MouseSource;
-use engine_scene::app::App;
+use engine_scene::app::{App, FramePlan};
 use engine_scene::material::MaterialTable;
-use engine_scene::Scene;
 
 use crate::audio::{Audio, AudioAmbience};
 use crate::game::{Game, State, PAGES_TOTAL};
@@ -233,15 +232,16 @@ impl App for StudsApp {
         Flow::Continue
     }
 
-    fn scene(&self, _alpha: f32) -> Option<Scene<'_>> {
-        if matches!(
+    fn frame_plan(&self, ctx: &Ctx<'_>) -> FramePlan<'_> {
+        let has_game_scene = matches!(
             self.ui.screen(),
             Screen::Playing
                 | Screen::Pause
                 | Screen::Settings
                 | Screen::Controls
                 | Screen::ConfirmMainMenu
-        ) {
+        );
+        let scene = if has_game_scene {
             self.game.scene_styled(
                 self.render_frame,
                 self.settings.hfov_radians(),
@@ -249,11 +249,10 @@ impl App for StudsApp {
             )
         } else {
             None
-        }
-    }
-
-    fn overlay(&mut self, framebuffer: &mut Framebuffer, ctx: &Ctx<'_>) {
-        if self.ui.is_playing()
+        };
+        let mut world_layer =
+            DrawList::new(self.settings.render_width, self.settings.render_height);
+        let apply_brightness = self.ui.is_playing()
             || matches!(
                 self.ui.screen(),
                 Screen::Result
@@ -261,16 +260,26 @@ impl App for StudsApp {
                     | Screen::Settings
                     | Screen::Controls
                     | Screen::ConfirmMainMenu
-            )
-        {
-            self.game.draw_overlay(framebuffer, ctx.frame);
-            adjust_brightness(framebuffer, self.settings.brightness);
+            );
+        if apply_brightness {
+            self.game.draw_overlay(&mut world_layer, ctx.frame);
         }
+        let mut ui_layer = DrawList::new(self.settings.render_width, self.settings.render_height);
         if !self.ui.is_playing() {
             self.ui
-                .draw(framebuffer, ctx.frame, &self.game, &self.settings);
+                .draw(&mut ui_layer, ctx.frame, &self.game, &self.settings);
         } else {
-            self.ui.draw_game_hints(framebuffer, &self.game);
+            self.ui.draw_game_hints(&mut ui_layer, &self.game);
+        }
+        FramePlan {
+            scene,
+            world_layer,
+            brightness: if apply_brightness {
+                self.settings.brightness
+            } else {
+                1.0
+            },
+            ui_layer,
         }
     }
 

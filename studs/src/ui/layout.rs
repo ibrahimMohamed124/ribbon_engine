@@ -1,4 +1,4 @@
-use crate::renderer::Framebuffer;
+use engine_core::gfx::Canvas;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Rect {
@@ -8,8 +8,8 @@ pub struct Rect {
     pub height: i32,
 }
 
-pub fn centered_panel(fb: &Framebuffer, width: i32, height: i32) -> Rect {
-    centered_panel_for_size(fb.width, fb.height, width, height)
+pub fn centered_panel(fb: &impl Canvas, width: i32, height: i32) -> Rect {
+    centered_panel_for_size(fb.width(), fb.height(), width, height)
 }
 
 pub fn centered_panel_for_size(

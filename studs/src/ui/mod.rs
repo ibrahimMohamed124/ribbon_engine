@@ -12,8 +12,8 @@ use self::settings as settings_page;
 use crate::game::{Difficulty, Game, State};
 use crate::input::{key_name, Action, Key};
 use crate::renderer::hud::fill_rect;
-use crate::renderer::Framebuffer;
 use crate::settings::Settings;
+use engine_core::gfx::Canvas;
 
 use self::theme::{ACCENT, MUTED, PANEL_EDGE, SELECTED, TEXT};
 
@@ -501,7 +501,7 @@ impl Ui {
         self.selected = 0;
     }
 
-    pub fn draw(&self, fb: &mut Framebuffer, frame: u32, game: &Game, settings: &Settings) {
+    pub fn draw(&self, fb: &mut impl Canvas, frame: u32, game: &Game, settings: &Settings) {
         if self.screen == Screen::Playing {
             return;
         }
@@ -537,23 +537,23 @@ impl Ui {
     }
 
     /// Draw short, timed gameplay instructions above the player HUD.
-    pub fn draw_game_hints(&self, fb: &mut Framebuffer, game: &Game) {
+    pub fn draw_game_hints(&self, fb: &mut impl Canvas, game: &Game) {
         if self.screen != Screen::Playing {
             return;
         }
         let mut y = 22;
         if game.time < 7.0 {
-            fill_rect(fb, 0, y - 3, fb.width as i32, 12, 0x0007_090b);
+            fill_rect(fb, 0, y - 3, fb.width() as i32, 12, 0x0007_090b);
             theme::centered_text(fb, "GOAL: FIND ALL 6 PAGES", y, 1, TEXT);
             y += 12;
         }
         if game.enemy_tip_active() {
-            fill_rect(fb, 0, y - 3, fb.width as i32, 12, 0x0007_090b);
+            fill_rect(fb, 0, y - 3, fb.width() as i32, 12, 0x0007_090b);
             theme::centered_text(fb, "KEEP THE CREATURE IN SIGHT", y, 1, ACCENT);
         }
     }
 
-    fn draw_main(&self, fb: &mut Framebuffer) {
+    fn draw_main(&self, fb: &mut impl Canvas) {
         theme::centered_text(fb, "STUDS", 14, 3, TEXT);
         theme::centered_text(fb, "THE MAZE IS LISTENING", 41, 1, MUTED);
         self.draw_menu_at(
@@ -566,25 +566,25 @@ impl Ui {
         theme::centered_text(
             fb,
             "WASD MOVE   ARROWS LOOK   Q QUIT",
-            fb.height as i32 - 10,
+            fb.height() as i32 - 10,
             1,
             MUTED,
         );
     }
 
-    fn draw_menu(&self, fb: &mut Framebuffer, title: &str, items: &[&str], hint: &str) {
+    fn draw_menu(&self, fb: &mut impl Canvas, title: &str, items: &[&str], hint: &str) {
         self.draw_menu_at(fb, title, items, hint, 0.5);
     }
 
     fn draw_menu_at(
         &self,
-        fb: &mut Framebuffer,
+        fb: &mut impl Canvas,
         title: &str,
         items: &[&str],
         hint: &str,
         y_ratio: f32,
     ) {
-        let panel = Self::menu_panel((fb.width, fb.height), items.len(), y_ratio);
+        let panel = Self::menu_panel((fb.width(), fb.height()), items.len(), y_ratio);
         theme::panel(fb, panel.x, panel.y, panel.width, panel.height);
         theme::text(fb, title, panel.x + 20, panel.y + 12, 1, TEXT);
         fill_rect(
@@ -611,7 +611,7 @@ impl Ui {
 
     fn draw_row(
         &self,
-        fb: &mut Framebuffer,
+        fb: &mut impl Canvas,
         panel: layout::Rect,
         index: usize,
         label: &str,
@@ -634,7 +634,7 @@ impl Ui {
         }
     }
 
-    fn draw_settings(&self, fb: &mut Framebuffer, settings: &Settings) {
+    fn draw_settings(&self, fb: &mut impl Canvas, settings: &Settings) {
         let panel = layout::centered_panel(fb, 266, 178);
         theme::panel(fb, panel.x, panel.y, panel.width, panel.height);
         theme::text(fb, settings_page::TITLE, panel.x + 18, panel.y + 9, 1, TEXT);
@@ -674,7 +674,7 @@ impl Ui {
         );
     }
 
-    fn draw_controls(&self, fb: &mut Framebuffer, settings: &Settings) {
+    fn draw_controls(&self, fb: &mut impl Canvas, settings: &Settings) {
         let panel = layout::centered_panel(fb, 278, 162);
         theme::panel(fb, panel.x, panel.y, panel.width, panel.height);
         theme::text(fb, controls::HEADER, panel.x + 18, panel.y + 9, 1, TEXT);
@@ -735,7 +735,7 @@ impl Ui {
         );
     }
 
-    fn draw_confirm(&self, fb: &mut Framebuffer) {
+    fn draw_confirm(&self, fb: &mut impl Canvas) {
         let panel = layout::centered_panel(fb, 250, 90);
         theme::panel(fb, panel.x, panel.y, panel.width, panel.height);
         theme::centered_text(fb, dialogs::MAIN_MENU_TITLE, panel.y + 14, 1, TEXT);
@@ -750,7 +750,7 @@ impl Ui {
         }
     }
 
-    fn draw_result(&self, fb: &mut Framebuffer, game: &Game, settings: &Settings) {
+    fn draw_result(&self, fb: &mut impl Canvas, game: &Game, settings: &Settings) {
         let won = game.state == State::Won;
         let (title, subtitle) = dialogs::result_copy(won);
         let panel = layout::centered_panel(fb, 238, 158);

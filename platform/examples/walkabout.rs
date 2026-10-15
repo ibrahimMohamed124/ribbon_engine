@@ -1,9 +1,9 @@
 use engine_core::app::WindowConfig;
-use engine_core::gfx::Framebuffer;
+use engine_core::gfx::DrawList;
 use engine_core::input::Key;
 use engine_core::math::{Angles, Vect};
 use engine_core::voxel::{Hit, VoxelWorld};
-use engine_scene::app::{App, Ctx, Flow};
+use engine_scene::app::{App, Ctx, Flow, FramePlan};
 use engine_scene::entities::{
     EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
 };
@@ -100,9 +100,9 @@ impl App for Walkabout {
         Flow::Continue
     }
 
-    fn scene(&self, _alpha: f32) -> Option<Scene<'_>> {
+    fn frame_plan(&self, _ctx: &Ctx<'_>) -> FramePlan<'_> {
         let (position, yaw) = &self.entity;
-        Some(Scene {
+        let scene = Some(Scene {
             world: &self.world,
             empty_voxel: EMPTY,
             camera: Camera {
@@ -123,10 +123,14 @@ impl App for Walkabout {
                 params: [0.0; 4],
             }],
             entity_registry: &WALKABOUT_REGISTRY,
-        })
+        });
+        FramePlan {
+            scene,
+            world_layer: DrawList::new(640, 360),
+            brightness: 1.0,
+            ui_layer: DrawList::new(640, 360),
+        }
     }
-
-    fn overlay(&mut self, _overlay: &mut Framebuffer, _ctx: &Ctx<'_>) {}
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

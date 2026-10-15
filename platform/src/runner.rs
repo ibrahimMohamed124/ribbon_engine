@@ -81,16 +81,8 @@ pub fn run<A: App, R: Renderer>(
             renderer.resize(config.width as u32, config.height as u32);
         }
 
-        if let Some(scene) = app.scene(ctx.alpha) {
-            renderer.render_world(&scene, app.materials());
-            // Materialize the world into the CPU overlay target so legacy
-            // opaque drawing stays pixel-identical, including black pixels.
-            renderer.present(&mut framebuffer);
-        } else {
-            framebuffer.pixels.fill(0);
-        }
-        app.overlay(&mut framebuffer, &ctx);
-        renderer.draw_overlay(&framebuffer);
+        let plan = app.frame_plan(&ctx);
+        renderer.render_frame(&plan, app.materials());
         renderer.present(&mut framebuffer);
         window.update_with_buffer(&framebuffer.pixels, framebuffer.width, framebuffer.height)?;
 

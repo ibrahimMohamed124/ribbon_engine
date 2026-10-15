@@ -2,10 +2,10 @@
 
 ## Crate responsibilities
 
-- `engine_core`: math, voxel storage/casting, physics, input, timing, audio logic, application context, and framebuffer drawing primitives. It has no external dependencies.
+- `engine_core`: math, voxel storage/casting, physics, input, timing, audio logic, application context, canvas primitives, framebuffer drawing, and ordered draw lists. It has no external dependencies.
 - `engine_scene`: renderer-independent `Scene`, `Camera`, `LightingParams`, entity instances/registry, materials, procedural textures, render style, and the `App`/`Renderer` contracts. It depends only on `engine_core`.
 - `render_cpu`: reference raycaster, entity intersection, lighting, material shader hooks, post-processing, and Rayon parallelism. It depends on `engine_core` and `engine_scene`.
-- `render_gpu`: empty backend skeleton for a future wgpu implementation. It has no dependencies and is not a default member.
+- `render_gpu`: wgpu backend under development; CPU renderer remains the reference/fallback.
 - `platform`: desktop window, input, cursor, audio output, event loop, and presentation. Its runner accepts any `engine_scene::Renderer` implementation; the platform crate does not select a rendering backend.
 - `studs`: game rules, levels, game-specific material shading, UI, and composition of the CPU renderer with the desktop platform.
 
@@ -35,6 +35,9 @@ graph TD
 6. Do not add dependencies to `engine_core` or `engine_scene` without updating the CI dependency-boundary check.
 
 ## Decisions
+
+- A `FramePlan` describes one frame as an optional scene, ordered world layer, brightness factor, and ordered UI layer. This preserves the former world/HUD -> brightness -> UI order.
+- `Canvas` is the shared 2D drawing API. `Framebuffer` is the immediate CPU target, while `DrawList` stores typed rectangle, text, dim, and built-in effect commands for deferred backends. The 5x7 glyph table is public data in `engine_core` and remains the sole font source.
 
 - The temporary `blocks_engine` facade was used only while packages moved. It was removed in phase five; consumers now name `engine_core`, `engine_scene`, or `render_cpu` directly.
 - `App` lives in `engine_scene`, not `engine_core`, because its `scene()` method returns a scene type. This keeps the dependency direction from core toward scene from reversing.
