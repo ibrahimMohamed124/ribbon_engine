@@ -1375,6 +1375,7 @@ name = "platform"
 version = "0.1.0"
 dependencies = [
  "blocks_engine",
+ "engine_scene",
  "enigo",
  "minifb",
  "rodio",
@@ -1737,6 +1738,7 @@ dependencies = [
  "blocks_engine",
  "engine_scene",
  "platform",
+ "render_cpu",
 ]
 
 [[package]]

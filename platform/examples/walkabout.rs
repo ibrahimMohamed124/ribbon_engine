@@ -2,10 +2,12 @@ use blocks_engine::app::{App, Ctx, Flow, WindowConfig};
 use blocks_engine::gfx::Framebuffer;
 use blocks_engine::input::Key;
 use blocks_engine::math::{Angles, Vect};
-use blocks_engine::render::entities::{Box3, EntView, EntitySurface};
 use blocks_engine::render::lighting::SurfaceShader;
 use blocks_engine::render::{render, Camera, LightingParams, RenderStyle, Scene};
 use blocks_engine::voxel::{Hit, VoxelWorld};
+use engine_scene::entities::{
+    EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
+};
 use platform::run;
 
 const EMPTY: u8 = 0;
@@ -30,18 +32,25 @@ impl SurfaceShader for RoomSurface {
     }
 }
 
-fn object_surface(_point: [f32; 3], _axis: usize, _sign: f32, _part: u8) -> EntitySurface {
-    EntitySurface {
-        gray: 0.9,
-        emissive: false,
-    }
-}
+const WALKABOUT_BOXES: [EntityBox; 1] = [EntityBox {
+    min: [-0.4, -0.4, 0.0],
+    max: [0.4, 0.4, 1.4],
+    part: 0,
+    phase_sway: 0.0,
+}];
+const WALKABOUT_KIND: EntityKind = EntityKind(7);
+const WALKABOUT_DEFINITIONS: [EntityDefinition; 1] = [EntityDefinition {
+    kind: WALKABOUT_KIND,
+    bounds: Some(([-0.5, -0.5, 0.0], [0.5, 0.5, 1.5])),
+    boxes: &WALKABOUT_BOXES,
+}];
+static WALKABOUT_REGISTRY: EntityRegistry = EntityRegistry::new(&WALKABOUT_DEFINITIONS);
 
 struct Walkabout {
     world: VoxelWorld,
     eye: Vect,
     view: Angles,
-    entity: (Vect, f32, Vec<Box3>),
+    entity: (Vect, f32),
 }
 
 impl Walkabout {
@@ -63,11 +72,7 @@ impl Walkabout {
             world: VoxelWorld::new(width, height, depth, blocks),
             eye: Vect::new(2.5, 2.5, 1.55),
             view: Angles { psi: 0.0, phi: 0.0 },
-            entity: (
-                Vect::new(7.0, 5.0, 1.0),
-                0.4,
-                vec![([-0.4, -0.4, 0.0], [0.4, 0.4, 1.4], 0)],
-            ),
+            entity: (Vect::new(7.0, 5.0, 1.0), 0.4),
         }
     }
 }
@@ -94,15 +99,7 @@ impl App for Walkabout {
     }
 
     fn render(&mut self, framebuffer: &mut Framebuffer, ctx: &Ctx<'_>) {
-        let (position, yaw, boxes) = &self.entity;
-        let object = EntView::new(
-            *position,
-            *yaw,
-            self.eye,
-            boxes.clone(),
-            Some(([-0.5, -0.5, 0.0], [0.5, 0.5, 1.5])),
-            object_surface,
-        );
+        let (position, yaw) = &self.entity;
         let frame = Scene {
             world: &self.world,
             empty_voxel: EMPTY,
@@ -117,7 +114,13 @@ impl App for Walkabout {
                 frame: ctx.frame,
                 style: RenderStyle::classic(),
             },
-            entities: vec![object],
+            entities: vec![EntityInstance {
+                kind: WALKABOUT_KIND,
+                pos: *position,
+                yaw: *yaw,
+                params: [0.0; 4],
+            }],
+            entity_registry: &WALKABOUT_REGISTRY,
         };
         render(framebuffer, &frame, &RoomSurface);
     }

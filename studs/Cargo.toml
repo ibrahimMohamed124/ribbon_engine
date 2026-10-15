@@ -14,4 +14,5 @@ path = "src/main.rs"
 [dependencies]
 blocks_engine = { path = "../engine" }
 engine_scene = { path = "../engine_scene" }
+render_cpu = { path = "../render_cpu" }
 blocks_engine_desktop = { package = "platform", path = "../platform" }

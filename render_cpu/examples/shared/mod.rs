@@ -1,7 +1,8 @@
 use engine_core::math::{forward_vec, hash4, Angles, Rng, Vect};
 use engine_core::voxel::{face_uv, Hit, VoxelWorld};
+use engine_scene::entities::{EntityInstance, BUILTIN_ENTITY_REGISTRY, PREVIEW_WARDEN};
 use engine_scene::texture::Texture;
-use render_cpu::render::entities::{EntView, EntitySurface};
+use render_cpu::render::entities::EntitySurface;
 use render_cpu::render::lighting::SurfaceShader;
 use render_cpu::render::RenderStyle;
 use render_cpu::render::Scene as RenderScene;
@@ -170,19 +171,12 @@ impl Scene {
                 view.eye.y + forward.y * 3.0,
                 0.0,
             );
-            vec![EntView::new(
+            vec![EntityInstance {
+                kind: PREVIEW_WARDEN,
                 pos,
-                view.angles.phi,
-                view.eye,
-                vec![
-                    ([-0.36, -0.36, 0.0], [0.30, 0.36, 1.8], 0),
-                    ([-0.30, -0.30, 1.55], [0.30, 0.30, 2.1], 0),
-                    ([0.30, -0.20, 1.82], [0.36, -0.06, 1.92], 1),
-                    ([0.30, 0.06, 1.82], [0.36, 0.20, 1.92], 1),
-                ],
-                None,
-                preview_enemy_surface,
-            )]
+                yaw: view.angles.phi,
+                params: [0.0; 4],
+            }]
         } else {
             Vec::new()
         };
@@ -201,6 +195,7 @@ impl Scene {
                 style,
             },
             entities: ents,
+            entity_registry: &BUILTIN_ENTITY_REGISTRY,
         }
     }
 }
@@ -254,6 +249,17 @@ impl SurfaceShader for SceneShader {
         let factor = (1.0 + (texel / self.noise.average() - 1.0) * strength).clamp(0.7, 1.3);
         base * factor
     }
+
+    fn entity_surface(
+        &self,
+        _kind: engine_scene::entities::EntityKind,
+        _point: [f32; 3],
+        _axis: usize,
+        _sign: f32,
+        part: u8,
+    ) -> EntitySurface {
+        preview_enemy_surface(part)
+    }
 }
 
 fn classic_albedo(block: u8, hit: &Hit) -> f32 {
@@ -292,7 +298,7 @@ fn classic_albedo(block: u8, hit: &Hit) -> f32 {
     }
 }
 
-fn preview_enemy_surface(_point: [f32; 3], _axis: usize, _sign: f32, part: u8) -> EntitySurface {
+fn preview_enemy_surface(part: u8) -> EntitySurface {
     if part == 1 {
         EntitySurface {
             gray: 1.0,

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 blocks_engine = { path = "../engine" }
+engine_scene = { path = "../engine_scene" }
 minifb = "0.29.0"
 enigo = "0.6.1"
 winit = "0.30.13"

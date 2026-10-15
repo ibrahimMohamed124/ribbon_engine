@@ -9,7 +9,7 @@ use crate::input::{Controls, InputFrame};
 use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
 use crate::renderer::hud::{draw_caught, draw_hud, draw_won};
-use crate::renderer::{render, EntView, Framebuffer, RenderStyle, Scene, RENDER_DIST};
+use crate::renderer::{render, Framebuffer, RenderStyle, Scene, RENDER_DIST};
 use crate::surfaces::{enemy_view, page_view, StudsSurface};
 use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
 
@@ -321,7 +321,7 @@ impl Game {
                 let flash = if self.flashlight_on { flick } else { 0.0 };
 
                 let eye = self.player.pos;
-                let mut ents: Vec<EntView> = Vec::with_capacity(1 + self.pages.len());
+                let mut ents = Vec::with_capacity(1 + self.pages.len());
                 ents.push(enemy_view(
                     self.enemy.pos,
                     self.enemy.yaw,
@@ -332,9 +332,8 @@ impl Game {
                     if self.got[i] {
                         continue;
                     }
-                    let bob = (self.time * 2.0 + i as f32).sin() * 0.08;
-                    let pos = Vect::new(p.x, p.y, p.z + bob);
-                    ents.push(page_view(pos, self.time * 1.2 + i as f32, eye));
+                    let pos = Vect::new(p.x, p.y, p.z);
+                    ents.push(page_view(pos, self.time, i as f32));
                 }
 
                 let frame = Scene {
@@ -348,6 +347,7 @@ impl Game {
                         style,
                     },
                     entities: ents,
+                    entity_registry: &engine_scene::entities::BUILTIN_ENTITY_REGISTRY,
                 };
                 render(fb, &frame, &StudsSurface);
                 draw_hud(

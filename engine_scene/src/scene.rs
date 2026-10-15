@@ -1,4 +1,4 @@
-use crate::entities::EntView;
+use crate::entities::{EntityInstance, EntityRegistry};
 use crate::style::RenderStyle;
 use engine_core::math::{Angles, Vect};
 use engine_core::voxel::VoxelWorld;
@@ -23,5 +23,6 @@ pub struct Scene<'a> {
     pub empty_voxel: u8,
     pub camera: Camera,
     pub lighting: LightingParams,
-    pub entities: Vec<EntView>,
+    pub entities: Vec<EntityInstance>,
+    pub entity_registry: &'a EntityRegistry,
 }

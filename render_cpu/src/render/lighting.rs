@@ -2,6 +2,7 @@
 
 use engine_core::math::Vect;
 use engine_core::voxel::{face_ao, Hit, VoxelWorld};
+use engine_scene::entities::EntityKind;
 use engine_scene::style::RenderStyle;
 
 pub const CONE_INNER: f32 = 0.985;
@@ -9,6 +10,26 @@ pub const CONE_OUTER: f32 = 0.86;
 
 pub trait SurfaceShader: Sync {
     fn albedo(&self, block: u8, hit: &Hit, direction: Vect, style: &RenderStyle) -> f32;
+
+    fn entity_surface(
+        &self,
+        _kind: EntityKind,
+        _point: [f32; 3],
+        _axis: usize,
+        _sign: f32,
+        _part: u8,
+    ) -> EntitySurface {
+        EntitySurface {
+            gray: 0.9,
+            emissive: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EntitySurface {
+    pub gray: f32,
+    pub emissive: bool,
 }
 
 pub struct SurfaceContext<'a> {

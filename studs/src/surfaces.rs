@@ -4,14 +4,46 @@ use std::sync::OnceLock;
 
 use blocks_engine::gfx::texture::Texture;
 use blocks_engine::math::{hash4, Vect};
-use blocks_engine::render::entities::{Bounds3, Box3, EntView, EntitySurface};
+use blocks_engine::render::entities::EntitySurface;
 use blocks_engine::render::lighting::SurfaceShader;
 use blocks_engine::render::RenderStyle;
 use blocks_engine::voxel::{face_uv, Hit};
+pub use engine_scene::entities::ENEMY_BOUNDS;
+use engine_scene::entities::{EntityInstance, EntityKind, PAGE, WARDEN};
+use engine_scene::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
 
 use crate::level::{CEIL, FLOOR, WALL};
 
 pub struct StudsSurface;
+
+const STUDS_MATERIALS: [Material; 3] = [
+    Material {
+        block_id: FLOOR,
+        base_rule: BaseAlbedoRule::StudsClassic,
+        constant_albedo: 0.0,
+        texture: TextureKind::Noise { seed: 41 },
+    },
+    Material {
+        block_id: WALL,
+        base_rule: BaseAlbedoRule::StudsClassic,
+        constant_albedo: 0.0,
+        texture: TextureKind::Bricks { seed: 17 },
+    },
+    Material {
+        block_id: CEIL,
+        base_rule: BaseAlbedoRule::StudsClassic,
+        constant_albedo: 0.0,
+        texture: TextureKind::Noise { seed: 41 },
+    },
+];
+
+pub const STUDS_MATERIAL_TABLE: MaterialTable = MaterialTable::new(&STUDS_MATERIALS);
+
+impl StudsSurface {
+    pub fn materials(&self) -> &'static MaterialTable {
+        &STUDS_MATERIAL_TABLE
+    }
+}
 
 impl SurfaceShader for StudsSurface {
     fn albedo(&self, block: u8, hit: &Hit, _direction: Vect, style: &RenderStyle) -> f32 {
@@ -39,6 +71,24 @@ impl SurfaceShader for StudsSurface {
             return apply_texture_modulation(base, texel / noise.average(), strength);
         }
         base
+    }
+
+    fn entity_surface(
+        &self,
+        kind: EntityKind,
+        point: [f32; 3],
+        axis: usize,
+        sign: f32,
+        part: u8,
+    ) -> EntitySurface {
+        match kind {
+            WARDEN => warden_surface(point, axis, sign, part),
+            PAGE => page_surface(point, axis),
+            _ => EntitySurface {
+                gray: 0.10,
+                emissive: false,
+            },
+        }
     }
 }
 
@@ -123,25 +173,7 @@ fn classic_albedo(block: u8, hit: &Hit) -> f32 {
     }
 }
 
-pub const ENEMY_BOUNDS: Bounds3 = ([-0.5, -0.75, 0.0], [1.0, 0.75, 2.25]);
-
-fn enemy_boxes(phase: f32) -> Vec<Box3> {
-    let swing = phase.sin() * 0.28;
-    vec![
-        ([-0.15 + swing, -0.35, 0.0], [0.15 + swing, -0.05, 0.9], 0),
-        ([-0.15 - swing, 0.05, 0.0], [0.15 - swing, 0.35, 0.9], 0),
-        ([-0.2, -0.4, 0.9], [0.2, 0.4, 1.7], 0),
-        ([-0.1, -0.65, 1.35], [0.85, -0.4, 1.7], 0),
-        ([-0.1, 0.4, 1.35], [0.85, 0.65, 1.7], 0),
-        ([-0.25, -0.25, 1.7], [0.25, 0.25, 2.2], 1),
-    ]
-}
-
-fn page_boxes() -> Vec<Box3> {
-    vec![([-0.2, -0.015, -0.25], [0.2, 0.015, 0.25], 0)]
-}
-
-fn enemy_surface(point: [f32; 3], axis: usize, sign: f32, part: u8) -> EntitySurface {
+fn warden_surface(point: [f32; 3], axis: usize, sign: f32, part: u8) -> EntitySurface {
     if part == 1 && axis == 0 && sign > 0.0 {
         let u = point[1].abs();
         let v = point[2];
@@ -160,7 +192,7 @@ fn enemy_surface(point: [f32; 3], axis: usize, sign: f32, part: u8) -> EntitySur
     }
 }
 
-fn page_surface(point: [f32; 3], axis: usize, _sign: f32, _part: u8) -> EntitySurface {
+fn page_surface(point: [f32; 3], axis: usize) -> EntitySurface {
     let mut gray = 0.92;
     if axis == 1 {
         let row = (point[2] + 0.25) * 9.0;
@@ -174,19 +206,22 @@ fn page_surface(point: [f32; 3], axis: usize, _sign: f32, _part: u8) -> EntitySu
     }
 }
 
-pub fn enemy_view(pos: Vect, yaw: f32, phase: f32, eye: Vect) -> EntView {
-    EntView::new(
+pub fn enemy_view(pos: Vect, yaw: f32, phase: f32, _eye: Vect) -> EntityInstance {
+    EntityInstance {
+        kind: WARDEN,
         pos,
         yaw,
-        eye,
-        enemy_boxes(phase),
-        Some(ENEMY_BOUNDS),
-        enemy_surface,
-    )
+        params: [phase, 0.0, 0.0, 0.0],
+    }
 }
 
-pub fn page_view(pos: Vect, yaw: f32, eye: Vect) -> EntView {
-    EntView::new(pos, yaw, eye, page_boxes(), None, page_surface)
+pub fn page_view(pos: Vect, time: f32, index: f32) -> EntityInstance {
+    EntityInstance {
+        kind: PAGE,
+        pos,
+        yaw: 0.0,
+        params: [time, index, 0.0, 0.0],
+    }
 }
 #[cfg(test)]
 mod tests {

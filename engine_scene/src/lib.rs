@@ -1,10 +1,12 @@
 //! Renderer-independent descriptions of worlds, cameras, lighting, and entities.
 
 pub mod entities;
+pub mod material;
 pub mod scene;
 pub mod style;
 pub mod texture;
 
+pub use material::{BaseAlbedoRule, Material, MaterialTable, TextureAtlas, TextureKind};
 pub use scene::{Camera, LightingParams, Scene};
 pub use style::{Palette, RenderStyle, Tonemap, LEVEL_COUNT};
 
