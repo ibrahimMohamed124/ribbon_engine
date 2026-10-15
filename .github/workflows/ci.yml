@@ -51,6 +51,16 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
 
+      - name: Core and scene dependency boundary
+        shell: bash
+        run: |
+          for crate in engine_core engine_scene; do
+            if cargo tree -p "$crate" -e normal | grep -E '(rayon|minifb|winit|wgpu|rodio|enigo) v[0-9]'; then
+              echo "$crate must not depend on renderer or desktop packages"
+              exit 1
+            fi
+          done
+
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -59,7 +69,7 @@ jobs:
         run: cargo build --locked --workspace --examples
       - name: Level probe
         if: runner.os == 'Linux'
-        run: cargo run --release --locked -p blocks_engine --example level_probe
+        run: cargo run --release --locked -p render_cpu --example level_probe
 
   release-build:
     name: Release binary (${{ matrix.os }})
