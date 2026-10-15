@@ -1,8 +1,8 @@
 //! Distance falloff and surface shading interface.
 
-use crate::math::Vect;
 use crate::render::style::RenderStyle;
-use crate::voxel::{face_ao, Hit, VoxelWorld};
+use engine_core::math::Vect;
+use engine_core::voxel::{face_ao, Hit, VoxelWorld};
 
 pub const CONE_INNER: f32 = 0.985;
 pub const CONE_OUTER: f32 = 0.86;

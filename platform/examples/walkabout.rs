@@ -6,7 +6,7 @@ use blocks_engine::render::entities::{Box3, EntView, EntitySurface};
 use blocks_engine::render::lighting::SurfaceShader;
 use blocks_engine::render::{render, Frame, RenderStyle};
 use blocks_engine::voxel::{Hit, VoxelWorld};
-use blocks_engine_desktop::run;
+use platform::run;
 
 const EMPTY: u8 = 0;
 const FLOOR: u8 = 1;

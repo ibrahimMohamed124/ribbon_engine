@@ -1,5 +1,5 @@
-use blocks_engine::render::lighting::light_with_style;
-use blocks_engine::render::{RenderStyle, RENDER_DIST};
+use render_cpu::render::lighting::light_with_style;
+use render_cpu::render::{RenderStyle, RENDER_DIST};
 
 struct Sample {
     name: &'static str,
@@ -14,7 +14,7 @@ fn main() {
     let classic = RenderStyle::classic();
     let moody = RenderStyle::moody();
     let mut before = RenderStyle::moody();
-    before.tonemap = blocks_engine::render::Tonemap::Exp { exposure: 1.15 };
+    before.tonemap = render_cpu::render::Tonemap::Exp { exposure: 1.15 };
     before.gamma = 2.2;
     before.ambient = 0.035;
     before.texture_strength = 0.55;

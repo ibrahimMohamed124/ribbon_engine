@@ -1,11 +1,4 @@
-//! Reusable, platform-independent game engine components.
+//! Temporary compatibility facade for the split engine crates.
 
-pub mod app;
-pub mod audio;
-pub mod gfx;
-pub mod input;
-pub mod math;
-pub mod physics;
-pub mod render;
-pub mod time;
-pub mod voxel;
+pub use engine_core::{app, audio, gfx, input, math, physics, time, voxel};
+pub use render_cpu::render;

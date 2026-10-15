@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use blocks_engine::gfx::Framebuffer;
-use blocks_engine_desktop::present::blit_scaled;
+use platform::present::blit_scaled;
 
 fn main() {
     const WIDTH: u32 = 1280;

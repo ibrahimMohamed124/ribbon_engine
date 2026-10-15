@@ -1,9 +1,9 @@
-use blocks_engine::gfx::texture::Texture;
-use blocks_engine::math::{forward_vec, hash4, Angles, Rng, Vect};
-use blocks_engine::render::entities::{EntView, EntitySurface};
-use blocks_engine::render::lighting::SurfaceShader;
-use blocks_engine::render::{Frame, RenderStyle};
-use blocks_engine::voxel::{face_uv, Hit, VoxelWorld};
+use engine_core::gfx::texture::Texture;
+use engine_core::math::{forward_vec, hash4, Angles, Rng, Vect};
+use engine_core::voxel::{face_uv, Hit, VoxelWorld};
+use render_cpu::render::entities::{EntView, EntitySurface};
+use render_cpu::render::lighting::SurfaceShader;
+use render_cpu::render::{Frame, RenderStyle};
 
 pub const WIDTH: usize = 320;
 pub const HEIGHT: usize = 180;

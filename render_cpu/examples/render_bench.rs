@@ -3,8 +3,8 @@ mod shared;
 
 use std::time::Instant;
 
-use blocks_engine::gfx::Framebuffer;
-use blocks_engine::render::{render, RenderStyle};
+use engine_core::gfx::Framebuffer;
+use render_cpu::render::{render, RenderStyle};
 use shared::{Scene, SceneShader, HEIGHT, WIDTH};
 
 fn main() {

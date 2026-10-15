@@ -1,5 +1,5 @@
-use blocks_engine::math::{Rng, Vect};
-use blocks_engine::voxel::{Hit, VoxelWorld};
+use engine_core::math::{Rng, Vect};
+use engine_core::voxel::{Hit, VoxelWorld};
 
 const EMPTY: u8 = 0;
 const SOLID: u8 = 1;

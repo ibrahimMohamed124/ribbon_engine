@@ -9,9 +9,9 @@ use super::lighting::{
 use super::post::{finish_pixel_styled_with_lut, PixelSample};
 use super::style::RenderStyle;
 use super::RENDER_DIST;
-use crate::gfx::Framebuffer;
-use crate::math::{forward_vec, Angles, Vect};
-use crate::voxel::VoxelWorld;
+use engine_core::gfx::Framebuffer;
+use engine_core::math::{forward_vec, Angles, Vect};
+use engine_core::voxel::VoxelWorld;
 
 pub struct Frame<'a> {
     pub world: &'a VoxelWorld,

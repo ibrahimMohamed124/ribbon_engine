@@ -1,6 +1,6 @@
 //! Rotated box geometry and ray intersection for renderable objects.
 
-use crate::math::Vect;
+use engine_core::math::Vect;
 
 pub type Box3 = ([f32; 3], [f32; 3], u8);
 pub type Bounds3 = ([f32; 3], [f32; 3]);

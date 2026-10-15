@@ -1,7 +1,7 @@
 //! Screen-space vignette, grain, and ordered dithering.
 
-use crate::math::hash4;
 use crate::render::style::{LevelLut, RenderStyle, LEVEL_COUNT};
+use engine_core::math::hash4;
 
 pub const LEVELS: f32 = LEVEL_COUNT as f32;
 pub const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];

@@ -1,7 +1,7 @@
 //! Color management and materials applied after lighting.
 
 use super::RENDER_DIST;
-use crate::math::pack_gray;
+use engine_core::math::pack_gray;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -257,7 +257,7 @@ impl Default for RenderStyle {
 #[cfg(test)]
 mod tests {
     use super::{Palette, RenderStyle, Tonemap, LEVEL_COUNT};
-    use crate::math::pack_gray;
+    use engine_core::math::pack_gray;
     use std::sync::Arc;
 
     #[test]
