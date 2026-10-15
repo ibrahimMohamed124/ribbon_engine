@@ -2,37 +2,23 @@
 
 use rayon::prelude::*;
 
-use super::entities::{EntHit, EntView};
 use super::lighting::{
     cone_factor, light_with_style, shade_surface, SurfaceContext, SurfaceShader,
 };
 use super::post::{finish_pixel_styled_with_lut, PixelSample};
-use super::style::RenderStyle;
-use super::RENDER_DIST;
 use engine_core::gfx::Framebuffer;
-use engine_core::math::{forward_vec, Angles, Vect};
-use engine_core::voxel::VoxelWorld;
+use engine_core::math::{forward_vec, Vect};
+use engine_scene::entities::EntHit;
+use engine_scene::scene::Scene;
+use engine_scene::RENDER_DIST;
 
-pub struct Frame<'a> {
-    pub world: &'a VoxelWorld,
-    pub eye: Vect,
-    pub view: Angles,
-    pub hfov: f32,
-    pub illumination: f32,
-    pub empty_voxel: u8,
-    pub ents: Vec<EntView>,
-    pub frame: u32,
-    pub intensity: f32,
-    pub style: RenderStyle,
-}
-
-fn shade_pixel<S: SurfaceShader + Sync>(f: &Frame, shader: &S, fwd: Vect, dir: Vect) -> f32 {
+fn shade_pixel<S: SurfaceShader + Sync>(f: &Scene, shader: &S, fwd: Vect, dir: Vect) -> f32 {
     let cone = cone_factor(dir.dot(fwd));
-    let world_hit = f.world.cast(f.eye, dir, RENDER_DIST, f.empty_voxel);
+    let world_hit = f.world.cast(f.camera.eye, dir, RENDER_DIST, f.empty_voxel);
     let world_distance = world_hit.map_or(f32::INFINITY, |hit| hit.dist);
 
     let mut best: Option<EntHit> = None;
-    for entity in &f.ents {
+    for entity in &f.entities {
         if let Some(hit) = entity.hit(dir) {
             if hit.t < world_distance && best.is_none_or(|current| hit.t < current.t) {
                 best = Some(hit);
@@ -44,29 +30,36 @@ fn shade_pixel<S: SurfaceShader + Sync>(f: &Frame, shader: &S, fwd: Vect, dir: V
             let fall = (1.0 - hit.t / (RENDER_DIST * 1.4)).clamp(0.0, 1.0);
             return hit.gray * fall;
         }
-        return hit.gray * light_with_style(f.illumination, hit.t, hit.ndotl, cone, &f.style);
+        return hit.gray
+            * light_with_style(
+                f.lighting.illumination,
+                hit.t,
+                hit.ndotl,
+                cone,
+                &f.lighting.style,
+            );
     }
     match world_hit {
         Some(hit) => shade_surface(
             shader,
             f.world,
             SurfaceContext {
-                illumination: f.illumination,
+                illumination: f.lighting.illumination,
                 hit: &hit,
                 direction: dir,
                 cone,
                 empty_voxel: f.empty_voxel,
-                style: &f.style,
+                style: &f.lighting.style,
             },
         ),
         None => 0.0,
     }
 }
 
-pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Frame, shader: &S) {
-    let level_lut = frame.style.level_lut();
+pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Scene, shader: &S) {
+    let level_lut = frame.lighting.style.level_lut();
     let (width, height) = (fb.width, fb.height);
-    let view = frame.view;
+    let view = frame.camera.view;
     let forward = forward_vec(view);
     let right = Vect::new(-view.phi.sin(), view.phi.cos(), 0.0);
     let up = Vect::new(
@@ -74,7 +67,7 @@ pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Frame, shad
         -view.psi.sin() * view.phi.sin(),
         view.psi.cos(),
     );
-    let tan_h = (frame.hfov / 2.0).tan();
+    let tan_h = (frame.camera.hfov / 2.0).tan();
     let tan_v = tan_h * height as f32 / width as f32;
 
     fb.pixels
@@ -94,10 +87,10 @@ pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Frame, shad
                         v,
                         x,
                         y,
-                        frame: frame.frame,
-                        intensity: frame.intensity,
+                        frame: frame.lighting.frame,
+                        intensity: frame.lighting.intensity,
                     },
-                    &frame.style,
+                    &frame.lighting.style,
                     &level_lut,
                 );
             }

@@ -143,6 +143,7 @@ name = "blocks_engine"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_scene",
  "render_cpu",
 ]
 
@@ -464,6 +465,13 @@ dependencies = [
 [[package]]
 name = "engine_core"
 version = "0.1.0"
+
+[[package]]
+name = "engine_scene"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+]
 
 [[package]]
 name = "enigo"
@@ -1484,6 +1492,7 @@ name = "render_cpu"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_scene",
  "rayon",
 ]
 
@@ -1726,6 +1735,7 @@ name = "studs"
 version = "0.3.0"
 dependencies = [
  "blocks_engine",
+ "engine_scene",
  "platform",
 ]
 

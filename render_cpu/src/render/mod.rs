@@ -1,13 +1,15 @@
 //! Shared voxel rendering algorithms and geometry.
 
-pub mod entities;
 pub mod lighting;
 pub mod post;
 pub mod raycaster;
-pub mod style;
+#[cfg(test)]
+mod style_contract_tests;
 
-pub use entities::{EntView, EntitySurface};
-pub use raycaster::{render, Frame};
-pub use style::{Palette, RenderStyle, Tonemap, LEVEL_COUNT};
-
-pub const RENDER_DIST: f32 = 18.0;
+pub use engine_scene::entities;
+pub use engine_scene::entities::{EntView, EntitySurface};
+pub use engine_scene::scene::{Camera, LightingParams, Scene};
+pub use engine_scene::style;
+pub use engine_scene::style::{Palette, RenderStyle, Tonemap, LEVEL_COUNT};
+pub use engine_scene::RENDER_DIST;
+pub use raycaster::render;

@@ -9,7 +9,7 @@ use crate::input::{Controls, InputFrame};
 use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
 use crate::renderer::hud::{draw_caught, draw_hud, draw_won};
-use crate::renderer::{render, EntView, Frame, Framebuffer, RenderStyle, RENDER_DIST};
+use crate::renderer::{render, EntView, Framebuffer, RenderStyle, Scene, RENDER_DIST};
 use crate::surfaces::{enemy_view, page_view, StudsSurface};
 use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
 
@@ -337,17 +337,17 @@ impl Game {
                     ents.push(page_view(pos, self.time * 1.2 + i as f32, eye));
                 }
 
-                let frame = Frame {
+                let frame = Scene {
                     world: &self.world,
-                    eye,
-                    view,
-                    hfov,
-                    illumination: flash,
                     empty_voxel: AIR,
-                    ents,
-                    frame: frame_no,
-                    intensity: prox,
-                    style,
+                    camera: engine_scene::Camera { eye, view, hfov },
+                    lighting: engine_scene::LightingParams {
+                        illumination: flash,
+                        intensity: prox,
+                        frame: frame_no,
+                        style,
+                    },
+                    entities: ents,
                 };
                 render(fb, &frame, &StudsSurface);
                 draw_hud(

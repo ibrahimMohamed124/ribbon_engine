@@ -1,8 +1,8 @@
 //! Distance falloff and surface shading interface.
 
-use crate::render::style::RenderStyle;
 use engine_core::math::Vect;
 use engine_core::voxel::{face_ao, Hit, VoxelWorld};
+use engine_scene::style::RenderStyle;
 
 pub const CONE_INNER: f32 = 0.985;
 pub const CONE_OUTER: f32 = 0.86;
@@ -26,7 +26,7 @@ pub fn cone_factor(cosang: f32) -> f32 {
 }
 
 pub fn light(illumination: f32, distance: f32, ndotl: f32, cone: f32) -> f32 {
-    let fog = (1.0 - distance / super::RENDER_DIST).clamp(0.0, 1.0);
+    let fog = (1.0 - distance / engine_scene::RENDER_DIST).clamp(0.0, 1.0);
     let ambient = 0.035;
     let lamp = 0.12 / (1.0 + 0.7 * distance * distance);
     let beam =
@@ -44,7 +44,7 @@ pub fn light_with_style(
     let fog_distance = if style.fog_distance.is_finite() && style.fog_distance > 0.0 {
         style.fog_distance
     } else {
-        super::RENDER_DIST
+        engine_scene::RENDER_DIST
     };
     let fog = (1.0 - distance / fog_distance).clamp(0.0, 1.0);
     let ambient = style.ambient;

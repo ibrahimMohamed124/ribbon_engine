@@ -1,9 +1,10 @@
-use engine_core::gfx::texture::Texture;
 use engine_core::math::{forward_vec, hash4, Angles, Rng, Vect};
 use engine_core::voxel::{face_uv, Hit, VoxelWorld};
+use engine_scene::texture::Texture;
 use render_cpu::render::entities::{EntView, EntitySurface};
 use render_cpu::render::lighting::SurfaceShader;
-use render_cpu::render::{Frame, RenderStyle};
+use render_cpu::render::RenderStyle;
+use render_cpu::render::Scene as RenderScene;
 
 pub const WIDTH: usize = 320;
 pub const HEIGHT: usize = 180;
@@ -156,7 +157,12 @@ impl Scene {
         ]
     }
 
-    pub fn frame<'a>(&'a self, view: &Viewpoint, style: RenderStyle, frame: u32) -> Frame<'a> {
+    pub fn frame<'a>(
+        &'a self,
+        view: &Viewpoint,
+        style: RenderStyle,
+        frame: u32,
+    ) -> RenderScene<'a> {
         let ents = if view.enemy {
             let forward = forward_vec(view.angles);
             let pos = Vect::new(
@@ -180,17 +186,21 @@ impl Scene {
         } else {
             Vec::new()
         };
-        Frame {
+        RenderScene {
             world: &self.world,
-            eye: view.eye,
-            view: view.angles,
-            hfov: 1.35,
-            illumination: view.illumination,
             empty_voxel: EMPTY,
-            ents,
-            frame,
-            intensity: 0.0,
-            style,
+            camera: engine_scene::Camera {
+                eye: view.eye,
+                view: view.angles,
+                hfov: 1.35,
+            },
+            lighting: engine_scene::LightingParams {
+                illumination: view.illumination,
+                intensity: 0.0,
+                frame,
+                style,
+            },
+            entities: ents,
         }
     }
 }

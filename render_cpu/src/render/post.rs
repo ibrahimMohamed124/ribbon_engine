@@ -1,7 +1,7 @@
 //! Screen-space vignette, grain, and ordered dithering.
 
-use crate::render::style::{LevelLut, RenderStyle, LEVEL_COUNT};
 use engine_core::math::hash4;
+use engine_scene::style::{LevelLut, RenderStyle, LEVEL_COUNT};
 
 pub const LEVELS: f32 = LEVEL_COUNT as f32;
 pub const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
@@ -65,7 +65,7 @@ pub(crate) fn finish_pixel_styled_with_lut(
 #[cfg(test)]
 mod tests {
     use super::{finish_pixel, finish_pixel_styled};
-    use crate::render::style::RenderStyle;
+    use engine_scene::style::RenderStyle;
 
     #[test]
     fn classic_wrapper_matches_styled_classic() {

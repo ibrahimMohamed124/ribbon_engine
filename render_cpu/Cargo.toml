@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 engine_core = { path = "../engine_core" }
+engine_scene = { path = "../engine_scene" }
 rayon = "1.10"

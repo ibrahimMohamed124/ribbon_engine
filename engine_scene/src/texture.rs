@@ -1,6 +1,6 @@
 //! Small deterministic grayscale textures for software-rendered materials.
 
-use crate::math::hash4;
+use engine_core::math::hash4;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Texture {

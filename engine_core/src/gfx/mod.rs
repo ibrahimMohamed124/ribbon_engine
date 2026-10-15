@@ -2,7 +2,6 @@
 
 pub mod font;
 pub mod post;
-pub mod texture;
 
 pub struct Framebuffer {
     pub width: usize,
