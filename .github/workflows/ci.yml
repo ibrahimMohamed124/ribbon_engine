@@ -65,6 +65,21 @@ jobs:
             fi
           done
 
+      - name: Engine game-content boundary
+        shell: bash
+        run: |
+          if grep -riE 'studs|warden|page|enemy|monster|crawl|flashlight|maze|jumpscare' \
+            engine_core engine_scene render_cpu render_gpu platform; then
+            echo "Engine crates contain game-specific vocabulary"
+            exit 1
+          fi
+          for crate in engine_core engine_scene render_cpu render_gpu platform; do
+            if cargo tree -p "$crate" -e normal | grep -i 'studs'; then
+              echo "$crate must not depend on the studs game"
+              exit 1
+            fi
+          done
+
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: Validate processed assets and manifest
@@ -73,6 +88,8 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build examples
         run: cargo build --locked --workspace --examples
+      - name: Engine-only minimal app
+        run: cargo run --locked -p platform --example minimal_app -- --headless
       - name: Level probe
         if: runner.os == 'Linux'
         run: cargo run --release --locked -p render_cpu --example level_probe
