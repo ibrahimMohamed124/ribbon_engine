@@ -8,6 +8,28 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub const LEVEL_COUNT: usize = 14;
 const LEVEL_LUT_SIZE: usize = 1024;
 
+/// Bounded screen-ray warp for proximity effects; stable across both renderers.
+pub fn proximity_distortion(
+    u: f32,
+    v: f32,
+    phase: f32,
+    intensity: f32,
+    reduce_flashing: bool,
+) -> [f32; 2] {
+    if !u.is_finite() || !v.is_finite() || !phase.is_finite() || !intensity.is_finite() {
+        return [0.0; 2];
+    }
+    let amount = if reduce_flashing {
+        0.0
+    } else {
+        intensity.clamp(0.0, 1.0) * 0.003
+    };
+    [
+        (v * 48.0 + phase).sin() * amount,
+        (u * 32.0 - phase * 0.7).sin() * amount,
+    ]
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tonemap {
     None,
@@ -333,6 +355,24 @@ mod tests {
     #[test]
     fn classic_is_the_default_style() {
         assert_eq!(RenderStyle::default(), RenderStyle::classic());
+    }
+
+    #[test]
+    fn proximity_distortion_is_bounded_finite_and_accessibility_aware() {
+        for intensity in [-5.0, 0.0, 0.25, 1.0, 5.0] {
+            let offset = super::proximity_distortion(1.0, -1.0, 100.0, intensity, false);
+            assert!(offset
+                .iter()
+                .all(|value| value.is_finite() && value.abs() <= 0.003));
+            assert_eq!(
+                super::proximity_distortion(1.0, -1.0, 100.0, intensity, true),
+                [0.0; 2]
+            );
+        }
+        assert_eq!(
+            super::proximity_distortion(f32::NAN, 0.0, 0.0, 1.0, false),
+            [0.0; 2]
+        );
     }
 
     #[test]

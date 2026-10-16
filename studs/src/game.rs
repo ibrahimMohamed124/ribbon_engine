@@ -4,7 +4,7 @@
 //! into a [`Framebuffer`].
 
 use crate::audio::{AudioEvent, SpatialAudioEvent};
-use crate::enemy::{animation_state, Enemy};
+use crate::enemy::{animation_state, flashlight_pulse_factor, proximity_intensity, Enemy};
 use crate::input::{Controls, InputFrame};
 use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
@@ -19,7 +19,6 @@ const PAGE_PICKUP_RADIUS: f32 = 0.9;
 /// Seconds the game-over / win screen must be visible before R restarts.
 const RESTART_DELAY: f32 = 1.0;
 /// Distance (tiles) at which the enemy starts to affect the picture.
-const PROXIMITY_RANGE: f32 = 10.0;
 const PAGE_MIN_SEPARATION: f32 = 4.5;
 const ENEMY_FOOTSTEP_DISTANCE: f32 = 1.35;
 
@@ -200,11 +199,7 @@ impl Game {
 
     /// 0..1, how threatening the enemy's closeness is (0 while it sleeps).
     pub fn proximity(&self) -> f32 {
-        if self.enemy_awake() {
-            ((PROXIMITY_RANGE - self.enemy_distance()) / PROXIMITY_RANGE).clamp(0.0, 1.0)
-        } else {
-            0.0
-        }
+        proximity_intensity(self.enemy_distance(), self.enemy_awake())
     }
 
     pub fn update(&mut self, input: &InputFrame, dt: f32) {
@@ -324,18 +319,9 @@ impl Game {
                     phi: self.player.view.phi + (self.time * 37.0).sin() * shake,
                 };
 
-                let flick = if style.reduce_flashing {
-                    // Keep a continuous, low-amplitude proximity response;
-                    // never introduce random drops or dark pulses.
-                    1.0 - prox * 0.12
-                } else {
-                    let n = hash4((self.time * 14.0) as i32, 3, 5, 9);
-                    if n > 0.93 - prox * 0.6 {
-                        0.12
-                    } else {
-                        1.0
-                    }
-                };
+                let n = hash4((self.time * 14.0) as i32, 3, 5, 9);
+                let pulse = n > 0.93 - prox * 0.6;
+                let flick = flashlight_pulse_factor(prox, pulse, style.reduce_flashing);
                 let flash = if self.flashlight_on { flick } else { 0.0 };
 
                 let eye = self.player.pos;
@@ -387,7 +373,11 @@ impl Game {
                     camera: engine_scene::Camera { eye, view, hfov },
                     lighting: engine_scene::LightingParams {
                         illumination: flash,
-                        intensity: prox,
+                        intensity: if style.realistic_assets {
+                            (prox * if enemy_seen { 1.15 } else { 1.0 }).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        },
                         frame: frame_no,
                         style,
                     },

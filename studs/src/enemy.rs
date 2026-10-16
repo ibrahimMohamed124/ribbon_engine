@@ -11,7 +11,30 @@ pub const ENEMY_SPEED_PER_PAGE: f32 = 0.55;
 pub const SEEN_SPEED_FACTOR: f32 = 0.10;
 pub const CATCH_DIST: f32 = 0.85;
 pub const ENEMY_SIGHT_RANGE: f32 = 12.0;
+pub const PROXIMITY_RANGE: f32 = 10.0;
 const SEARCH_DURATION: f32 = 7.0;
+
+pub fn proximity_intensity(distance: f32, awake: bool) -> f32 {
+    if !awake || !distance.is_finite() {
+        return 0.0;
+    }
+    ((PROXIMITY_RANGE - distance.max(0.0)) / PROXIMITY_RANGE).clamp(0.0, 1.0)
+}
+
+pub fn flashlight_pulse_factor(intensity: f32, pulse: bool, reduce_flashing: bool) -> f32 {
+    let intensity = if intensity.is_finite() {
+        intensity.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    if reduce_flashing {
+        1.0 - intensity * 0.12
+    } else if pulse {
+        1.0 - intensity * 0.55
+    } else {
+        1.0
+    }
+}
 
 /// Minimum dot(view direction, direction to enemy) for the player to "see" it.
 const VIEW_CONE_DOT: f32 = 0.82;

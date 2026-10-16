@@ -1065,7 +1065,7 @@ fn update_world(
             c.hfov,
             s.lighting.intensity,
             RENDER_DIST,
-            f32::from(sty.flashlight_shadows),
+            f32::from(sty.flashlight_shadows) + 2.0 * f32::from(sty.reduce_flashing),
         ],
         lighting: [
             s.lighting.illumination,

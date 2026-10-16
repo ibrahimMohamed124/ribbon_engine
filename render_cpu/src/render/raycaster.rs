@@ -174,8 +174,17 @@ pub fn render_with_materials<S: SurfaceShader + Sync>(
             let v = 1.0 - ((y as f32 + 0.5) / height as f32) * 2.0;
             for (x, pixel) in row.iter_mut().enumerate() {
                 let u = ((x as f32 + 0.5) / width as f32) * 2.0 - 1.0;
-                let direction =
-                    (forward + right.scale(u * tan_h) + up.scale(v * tan_v)).normalize();
+                let warp = engine_scene::style::proximity_distortion(
+                    u,
+                    v,
+                    frame.lighting.frame as f32 * 0.016,
+                    frame.lighting.intensity,
+                    frame.lighting.style.reduce_flashing,
+                );
+                let direction = (forward
+                    + right.scale((u + warp[0]) * tan_h)
+                    + up.scale((v + warp[1]) * tan_v))
+                .normalize();
                 let gray = shade_pixel(
                     frame, &entities, &sprites, shader, materials, forward, direction,
                 );

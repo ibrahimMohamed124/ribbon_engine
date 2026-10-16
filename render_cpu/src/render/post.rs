@@ -53,9 +53,13 @@ pub(crate) fn finish_pixel_styled_with_lut(
     let mapped = lut.tone(style, g);
     let r2 = sample.u * sample.u + sample.v * sample.v;
     let vig = 1.0 - r2 * (0.45 + 0.5 * sample.intensity);
-    let grain = hash4(sample.x as i32, sample.y as i32, sample.frame as i32, 5)
-        * 0.025
-        * (1.0 + 3.0 * sample.intensity);
+    let grain = if style.reduce_flashing {
+        0.0
+    } else {
+        hash4(sample.x as i32, sample.y as i32, sample.frame as i32, 5)
+            * 0.025
+            * (1.0 + 3.0 * sample.intensity)
+    };
     let gv = (mapped * vig + grain).clamp(0.0, 1.0);
     let b = (BAYER[sample.y & 3][sample.x & 3] as f32 + 0.5) / 16.0;
     let level = (lut.level(gv) + b).floor().clamp(0.0, LEVELS - 1.0) as usize;
