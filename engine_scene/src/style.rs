@@ -112,6 +112,20 @@ impl RenderStyle {
         }
     }
 
+    /// Color-graded preset for the new PBR path. Legacy styles remain byte-identical.
+    pub fn realistic() -> Self {
+        Self {
+            tonemap: Tonemap::Exp { exposure: 1.45 },
+            gamma: 1.0,
+            palette: Palette::ramp(0x02_0b_0b, 0xb9_c1_b8),
+            texture_strength: 0.0,
+            ao_strength: 0.72,
+            ambient: 0.006,
+            lamp: 0.16,
+            fog_distance: RENDER_DIST * 0.82,
+        }
+    }
+
     /// Continuous palette level after tone mapping and display gamma.
     /// Vignette, grain, and dithering are deliberately excluded.
     pub fn level_for(&self, gray: f32) -> f32 {

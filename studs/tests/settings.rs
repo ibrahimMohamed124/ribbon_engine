@@ -159,6 +159,12 @@ fn visual_style_round_trips_and_invalid_values_use_the_default() {
 
     let moody = Settings::parse("visual_style = MOODY\n");
     assert_eq!(moody.visual_style, VisualStyle::Moody);
+    let realistic = Settings::parse("visual_style = REALISTIC\n");
+    assert_eq!(realistic.visual_style, VisualStyle::Realistic);
+    assert_eq!(
+        Settings::parse(&realistic.to_text()).visual_style,
+        VisualStyle::Realistic
+    );
     assert_eq!(
         Settings::parse("visual_style = film-noir\n").visual_style,
         Settings::default().visual_style

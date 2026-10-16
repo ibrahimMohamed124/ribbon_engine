@@ -136,6 +136,11 @@ fn visual_style_can_be_changed_from_the_settings_screen() {
     assert!(changed.settings_changed);
     assert_eq!(
         raycast_blocks::ui::settings::value(&settings, 12),
+        "REALISTIC"
+    );
+    ui.update(&press(Key::Right), &mut settings);
+    assert_eq!(
+        raycast_blocks::ui::settings::value(&settings, 12),
         "CLASSIC"
     );
 }

@@ -25,6 +25,7 @@ pub enum VisualStyle {
     Classic,
     #[default]
     Moody,
+    Realistic,
 }
 
 impl VisualStyle {
@@ -32,6 +33,7 @@ impl VisualStyle {
         match value.trim().to_ascii_lowercase().as_str() {
             "classic" => Some(Self::Classic),
             "moody" => Some(Self::Moody),
+            "realistic" => Some(Self::Realistic),
             _ => None,
         }
     }
@@ -40,6 +42,7 @@ impl VisualStyle {
         match self {
             Self::Classic => "classic",
             Self::Moody => "moody",
+            Self::Realistic => "realistic",
         }
     }
 
@@ -47,13 +50,15 @@ impl VisualStyle {
         match self {
             Self::Classic => engine_scene::RenderStyle::classic(),
             Self::Moody => engine_scene::RenderStyle::moody(),
+            Self::Realistic => engine_scene::RenderStyle::realistic(),
         }
     }
 
     pub fn toggle(&mut self) {
         *self = match self {
             Self::Classic => Self::Moody,
-            Self::Moody => Self::Classic,
+            Self::Moody => Self::Realistic,
+            Self::Realistic => Self::Classic,
         };
     }
 }
