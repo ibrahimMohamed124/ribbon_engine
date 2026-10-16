@@ -8,3 +8,6 @@ voxelworks-core = { path = "../core" }
 voxelworks-scene = { path = "../scene" }
 voxelworks-api = { path = "../api" }
 rayon = "1.10"
+
+[dev-dependencies]
+voxelworks-testkit = { path = "../testkit" }

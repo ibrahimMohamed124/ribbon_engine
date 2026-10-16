@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["gpu", "audio"]
-gpu = ["voxelworks-platform/gpu"]
+gpu = ["voxelworks-platform/gpu", "dep:voxelworks-render-gpu"]
 audio = ["voxelworks-platform/audio"]
 
 [dependencies]
@@ -14,3 +14,4 @@ voxelworks-scene = { path = "../../crates/scene" }
 voxelworks-api = { path = "../../crates/api" }
 voxelworks-platform = { path = "../../crates/platform", default-features = false }
 voxelworks-render-cpu = { path = "../../crates/render-cpu" }
+voxelworks-render-gpu = { path = "../../crates/render-gpu", optional = true }

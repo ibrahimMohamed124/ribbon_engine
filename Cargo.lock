@@ -2457,6 +2457,7 @@ dependencies = [
  "voxelworks-core",
  "voxelworks-platform",
  "voxelworks-render-cpu",
+ "voxelworks-render-gpu",
  "voxelworks-scene",
 ]
 
@@ -2482,6 +2483,7 @@ dependencies = [
  "voxelworks-api",
  "voxelworks-core",
  "voxelworks-scene",
+ "voxelworks-testkit",
 ]
 
 [[package]]
@@ -2493,7 +2495,9 @@ dependencies = [
  "raw-window-handle",
  "voxelworks-api",
  "voxelworks-core",
+ "voxelworks-render-cpu",
  "voxelworks-scene",
+ "voxelworks-testkit",
  "wgpu",
  "winit",
 ]
@@ -2503,6 +2507,15 @@ name = "voxelworks-scene"
 version = "0.1.0"
 dependencies = [
  "voxelworks-core",
+]
+
+[[package]]
+name = "voxelworks-testkit"
+version = "0.1.0"
+dependencies = [
+ "voxelworks-api",
+ "voxelworks-core",
+ "voxelworks-scene",
 ]
 
 [[package]]

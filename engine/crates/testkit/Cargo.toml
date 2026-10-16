@@ -1,0 +1,9 @@
+[package]
+name = "voxelworks-testkit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+voxelworks-core = { path = "../core" }
+voxelworks-scene = { path = "../scene" }
+voxelworks-api = { path = "../api" }

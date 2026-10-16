@@ -10,26 +10,43 @@ use voxelworks_render_cpu::renderer::CpuRenderer;
 use voxelworks_scene::entities::{
     EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
 };
+use voxelworks_scene::material::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
 use voxelworks_scene::{Camera, LightingParams, RenderStyle, Scene};
 
 const EMPTY: u8 = 0;
 const FLOOR: u8 = 1;
 const WALL: u8 = 2;
 
+static MATERIALS: [Material; 2] = [
+    Material {
+        block_id: FLOOR,
+        base_rule: BaseAlbedoRule::Constant,
+        constant_albedo: 0.52,
+        texture: TextureKind::None,
+        pbr_texture: None,
+        uv_scale: [1.0, 1.0],
+        cell_variation: false,
+    },
+    Material {
+        block_id: WALL,
+        base_rule: BaseAlbedoRule::Constant,
+        constant_albedo: 0.36,
+        texture: TextureKind::None,
+        pbr_texture: None,
+        uv_scale: [1.0, 1.0],
+        cell_variation: false,
+    },
+];
+static MATERIAL_TABLE: MaterialTable = MaterialTable::new(&MATERIALS);
+
 struct RoomSurface;
 
 impl SurfaceShader for RoomSurface {
-    fn albedo(&self, block: u8, hit: &Hit, _direction: Vect, _style: &RenderStyle) -> f32 {
-        if hit.normal[2] != 0 {
-            if block == FLOOR {
-                0.52
-            } else {
-                0.36
-            }
-        } else if hit.cell.2 % 2 == 0 {
-            0.58
-        } else {
-            0.44
+    fn albedo(&self, block: u8, _hit: &Hit, _direction: Vect, _style: &RenderStyle) -> f32 {
+        match block {
+            FLOOR => 0.52,
+            WALL => 0.36,
+            _ => 0.0,
         }
     }
 }
@@ -173,15 +190,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }],
             entity_registry: &WALKABOUT_REGISTRY,
         };
+        let plan = FramePlan {
+            scene: Some(scene),
+            world_layer: DrawList::new(160, 90),
+            brightness: 1.0,
+            ui_layer: DrawList::new(160, 90),
+        };
         let mut framebuffer = voxelworks_api::Framebuffer::new(160, 90);
-        voxelworks_render_cpu::render::raycaster::render_with_materials_checked(
-            &mut framebuffer,
-            &scene,
-            &RoomSurface,
-            &voxelworks_scene::EMPTY_MATERIAL_TABLE,
-        )?;
+        match selected.as_str() {
+            "cpu" => {
+                let mut renderer = CpuRenderer::new(160, 90, RoomSurface);
+                voxelworks_api::Renderer::render_frame(&mut renderer, &plan, &MATERIAL_TABLE);
+                voxelworks_api::Renderer::present(&mut renderer, &mut framebuffer);
+            }
+            "gpu" => {
+                #[cfg(feature = "gpu")]
+                {
+                    let mut renderer = voxelworks_render_gpu::GpuRenderer::new(160, 90)?;
+                    voxelworks_api::Renderer::render_frame(&mut renderer, &plan, &MATERIAL_TABLE);
+                    if let Some(error) = renderer.take_error() {
+                        return Err(error.into());
+                    }
+                    voxelworks_api::Renderer::present(&mut renderer, &mut framebuffer);
+                }
+                #[cfg(not(feature = "gpu"))]
+                return Err(
+                    "GPU headless rendering requires the minimal app's `gpu` feature".into(),
+                );
+            }
+            other => return Err(format!("expected --renderer cpu or gpu; got {other}").into()),
+        }
         assert!(framebuffer.pixels.iter().any(|pixel| *pixel != 0));
-        println!("Minimal engine app rendered one headless CPU frame.");
+        let checksum = framebuffer
+            .pixels
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325u64, |hash, pixel| {
+                (hash ^ u64::from(*pixel)).wrapping_mul(0x100_0000_01b3)
+            });
+        println!("Minimal engine app rendered headless {selected} frame: {checksum:016x}");
         return Ok(());
     }
     let mode = match selected.as_str() {
