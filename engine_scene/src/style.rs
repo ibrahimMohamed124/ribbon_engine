@@ -83,6 +83,8 @@ pub struct RenderStyle {
     pub lamp: f32,
     /// Distance where fog has faded lighting to black.
     pub fog_distance: f32,
+    /// Enables sampling material PBR maps where a material supplies a set ID.
+    pub pbr_enabled: bool,
 }
 
 impl RenderStyle {
@@ -96,6 +98,7 @@ impl RenderStyle {
             ambient: 0.035,
             lamp: 0.12,
             fog_distance: RENDER_DIST,
+            pbr_enabled: false,
         }
     }
 
@@ -109,6 +112,7 @@ impl RenderStyle {
             ambient: 0.010,
             lamp: 0.12,
             fog_distance: RENDER_DIST,
+            pbr_enabled: false,
         }
     }
 
@@ -123,6 +127,7 @@ impl RenderStyle {
             ambient: 0.006,
             lamp: 0.16,
             fog_distance: RENDER_DIST * 0.82,
+            pbr_enabled: true,
         }
     }
 

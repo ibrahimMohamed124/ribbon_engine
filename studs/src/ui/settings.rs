@@ -2,7 +2,7 @@ use crate::settings::Settings;
 
 pub const TITLE: &str = "SETTINGS / AUDIO / GAME / DISPLAY";
 pub const HINT: &str = "CLICK SELECT   L/R CHANGE   ESC BACK";
-pub const ITEM_COUNT: usize = 14;
+pub const ITEM_COUNT: usize = 16;
 
 pub fn label(index: usize) -> &'static str {
     match index {
@@ -19,6 +19,8 @@ pub fn label(index: usize) -> &'static str {
         10 => "RENDER RESOLUTION",
         11 => "BRIGHTNESS",
         12 => "VISUAL STYLE",
+        13 => "QUALITY PRESET",
+        14 => "REDUCE FLASHING",
         _ => "BACK",
     }
 }
@@ -59,6 +61,13 @@ pub fn value(settings: &Settings, index: usize) -> String {
         10 => format!("{}X{}", settings.render_width, settings.render_height),
         11 => format!("{:.0}%", settings.brightness * 100.0),
         12 => settings.visual_style.as_str().to_ascii_uppercase(),
+        13 => settings.quality_preset.as_str().to_ascii_uppercase(),
+        14 => if settings.reduce_flashing {
+            "ON"
+        } else {
+            "OFF"
+        }
+        .to_owned(),
         _ => String::new(),
     }
 }
@@ -114,6 +123,8 @@ pub fn adjust(settings: &mut Settings, index: usize, direction: i32) -> (bool, b
         }
         11 => settings.brightness = (settings.brightness + direction as f32 * 0.1).clamp(0.5, 1.5),
         12 => settings.visual_style.toggle(),
+        13 => settings.quality_preset.toggle(direction),
+        14 => settings.reduce_flashing = !settings.reduce_flashing,
         _ => return (false, false),
     }
     let window_changed = settings.window_scale != old_scale

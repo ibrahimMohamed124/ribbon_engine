@@ -6,7 +6,7 @@ use engine_scene::app::{App, FramePlan};
 use engine_scene::material::MaterialTable;
 use engine_scene::style::RenderStyle;
 use raycast_blocks::game::Game;
-use raycast_blocks::surfaces::{StudsSurface, STUDS_MATERIAL_TABLE};
+use raycast_blocks::surfaces::{studs_material_table, StudsSurface};
 use render_cpu::renderer::CpuRenderer;
 
 struct Preview(Game);
@@ -19,7 +19,9 @@ impl App for Preview {
     fn frame_plan(&self, ctx: &Ctx<'_>) -> FramePlan<'_> {
         let (width, height) = (320, 180);
         FramePlan {
-            scene: self.0.scene_styled(ctx.frame, 1.1, RenderStyle::moody()),
+            scene: self
+                .0
+                .scene_styled(ctx.frame, 1.1, RenderStyle::realistic()),
             world_layer: DrawList::new(width, height),
             brightness: 1.0,
             ui_layer: DrawList::new(width, height),
@@ -27,7 +29,7 @@ impl App for Preview {
     }
 
     fn materials(&self) -> &'static MaterialTable {
-        &STUDS_MATERIAL_TABLE
+        studs_material_table()
     }
 }
 

@@ -6,7 +6,9 @@ use engine_core::math::{hash4, Vect};
 use engine_core::voxel::{face_uv, Hit};
 pub use engine_scene::entities::ENEMY_BOUNDS;
 use engine_scene::entities::{EntityInstance, EntityKind, PAGE, WARDEN};
-use engine_scene::texture::Texture;
+use engine_scene::texture::{
+    PbrTextureSet, RgbaMipChain, RgbaMipLevel, Texture, TextureColorSpace, TextureId,
+};
 use engine_scene::RenderStyle;
 use engine_scene::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
 use render_cpu::render::entities::EntitySurface;
@@ -22,7 +24,7 @@ const STUDS_MATERIALS: [Material; 3] = [
         base_rule: BaseAlbedoRule::StudsClassic,
         constant_albedo: 0.0,
         texture: TextureKind::Noise { seed: 41 },
-        pbr_texture: None,
+        pbr_texture: Some(TextureId(3)),
         uv_scale: [1.0, 1.0],
         cell_variation: false,
     },
@@ -31,26 +33,113 @@ const STUDS_MATERIALS: [Material; 3] = [
         base_rule: BaseAlbedoRule::StudsClassic,
         constant_albedo: 0.0,
         texture: TextureKind::Bricks { seed: 17 },
-        pbr_texture: None,
+        pbr_texture: Some(TextureId(1)),
         uv_scale: [1.0, 1.0],
-        cell_variation: false,
+        cell_variation: true,
     },
     Material {
         block_id: CEIL,
         base_rule: BaseAlbedoRule::StudsClassic,
         constant_albedo: 0.0,
         texture: TextureKind::Noise { seed: 41 },
-        pbr_texture: None,
+        pbr_texture: Some(TextureId(4)),
         uv_scale: [1.0, 1.0],
         cell_variation: false,
     },
 ];
 
-pub const STUDS_MATERIAL_TABLE: MaterialTable = MaterialTable::new(&STUDS_MATERIALS);
+pub fn studs_material_table() -> &'static MaterialTable {
+    static TABLE: OnceLock<MaterialTable> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let loaded = [
+            (1, "concrete_wall_004"),
+            (2, "t_concrete_wall_002"),
+            (3, "concrete_floor_worn_001"),
+            (4, "ceiling_interior"),
+        ]
+        .into_iter()
+        .filter_map(|(id, name)| load_pbr_set(id, name))
+        .collect::<Vec<_>>();
+        let textures: &'static [PbrTextureSet] = Box::leak(loaded.into_boxed_slice());
+        MaterialTable::with_pbr_textures(&STUDS_MATERIALS, textures)
+    })
+}
+
+fn load_pbr_set(id: u32, name: &str) -> Option<PbrTextureSet> {
+    const SIZE: usize = 256;
+    const BYTES: usize = SIZE * SIZE * 4;
+    let directory = asset_directories()
+        .into_iter()
+        .map(|root| root.join(name))
+        .find(|path| path.join("albedo.rgba").is_file());
+    let Some(directory) = directory else {
+        eprintln!("warning: PBR texture set '{name}' is missing; using the procedural material");
+        return None;
+    };
+    let read_map = |filename: &str| -> Option<Vec<[u8; 4]>> {
+        let bytes = std::fs::read(directory.join(filename)).ok()?;
+        if bytes.len() != BYTES {
+            eprintln!(
+                "warning: invalid map size for '{}'; using the procedural material",
+                directory.join(filename).display()
+            );
+            return None;
+        }
+        Some(
+            bytes
+                .chunks(4)
+                .map(|chunk| [chunk[0], chunk[1], chunk[2], chunk[3]])
+                .collect(),
+        )
+    };
+    let chain = |filename: &str, color_space| {
+        Some(RgbaMipChain::new(
+            RgbaMipLevel::new(SIZE, SIZE, read_map(filename)?),
+            color_space,
+        ))
+    };
+    let Some(albedo) = chain("albedo.rgba", TextureColorSpace::Srgb) else {
+        eprintln!("warning: failed to load albedo for '{name}'; using the procedural material");
+        return None;
+    };
+    let Some(normal) = chain("normal.rgba", TextureColorSpace::Linear) else {
+        eprintln!("warning: failed to load normal for '{name}'; using the procedural material");
+        return None;
+    };
+    let Some(roughness) = chain("roughness.rgba", TextureColorSpace::Linear) else {
+        eprintln!("warning: failed to load roughness for '{name}'; using the procedural material");
+        return None;
+    };
+    let Some(ambient_occlusion) = chain("ao.rgba", TextureColorSpace::Linear) else {
+        eprintln!("warning: failed to load AO for '{name}'; using the procedural material");
+        return None;
+    };
+    Some(PbrTextureSet {
+        id: TextureId(id),
+        albedo,
+        normal,
+        roughness,
+        ambient_occlusion,
+    })
+}
+
+fn asset_directories() -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            paths.push(parent.join("assets/materials"));
+        }
+    }
+    if let Ok(current) = std::env::current_dir() {
+        paths.push(current.join("assets/materials"));
+        paths.push(current.join("studs/assets/materials"));
+    }
+    paths
+}
 
 impl StudsSurface {
     pub fn materials(&self) -> &'static MaterialTable {
-        &STUDS_MATERIAL_TABLE
+        studs_material_table()
     }
 }
 
@@ -93,6 +182,22 @@ impl SurfaceShader for StudsSurface {
         let Some(material) = materials.get(block) else {
             return self.albedo(block, hit, direction, style);
         };
+        if style.pbr_enabled {
+            if let Some(set_id) = material.pbr_texture {
+                if let Some(set) = materials.get_pbr_texture(set_id) {
+                    let (u, v) = face_uv(hit);
+                    let color = set.albedo.sample(
+                        u * material.uv_scale[0],
+                        v * material.uv_scale[1],
+                        hit.dist.max(1.0).log2(),
+                    );
+                    let texture_luminance =
+                        0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2];
+                    return classic_albedo(block, hit)
+                        * (0.35 + texture_luminance * 1.3).clamp(0.35, 1.3);
+                }
+            }
+        }
         match material.base_rule {
             BaseAlbedoRule::Constant => material.constant_albedo,
             BaseAlbedoRule::StudsClassic if material.texture == TextureKind::None => {
@@ -118,6 +223,20 @@ impl SurfaceShader for StudsSurface {
                 emissive: false,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod pbr_asset_tests {
+    use super::studs_material_table;
+
+    #[test]
+    fn material_asset_loading_is_repeatable_and_pbr_sets_are_optional() {
+        let first = studs_material_table();
+        let second = studs_material_table();
+        assert!(std::ptr::eq(first, second));
+        // Every loaded set is still referenced only through stable scene data.
+        assert!(first.pbr_textures.len() <= 4);
     }
 }
 

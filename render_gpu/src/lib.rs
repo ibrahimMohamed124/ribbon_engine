@@ -80,6 +80,7 @@ struct GpuWorldResources {
     tone: wgpu::Buffer,
     gamma: wgpu::Buffer,
     palette: wgpu::Buffer,
+    pbr_texels: wgpu::Buffer,
     _brick_texture: wgpu::Texture,
     brick_view: wgpu::TextureView,
     _noise_texture: wgpu::Texture,
@@ -89,6 +90,7 @@ struct GpuWorldResources {
     world_key: Option<(usize, usize)>,
     packed: Vec<u32>,
     cached_blocks: Vec<u8>,
+    pbr_key: Option<(usize, usize)>,
 }
 
 struct RenderTarget {
@@ -702,6 +704,14 @@ fn create_world_resources(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuWorl
     }
     layout_entries.push(texture_entry(8));
     layout_entries.push(texture_entry(9));
+    layout_entries.push(entry(
+        10,
+        wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+    ));
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("world bindings"),
         entries: &layout_entries,
@@ -729,11 +739,28 @@ fn create_world_resources(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuWorl
         LEVEL_COUNT as u64 * 4,
         wgpu::BufferUsages::STORAGE,
     );
+    let pbr_texels = make_buffer(
+        device,
+        "PBR texture mip data",
+        4 * 4 * 87_381 * 4,
+        wgpu::BufferUsages::STORAGE,
+    );
     let (bt, bv) = make_texture(device, queue, "bricks", &Texture::bricks(64, 32, 17));
     let (nt, nv) = make_texture(device, queue, "noise", &Texture::noise(64, 64, 41));
     let bind_group = world_bind(
-        device, &layout, &uniform, &voxels, &materials, &entities, &boxes, &tone, &gamma, &palette,
-        &bv, &nv,
+        device,
+        &layout,
+        &uniform,
+        &voxels,
+        &materials,
+        &entities,
+        &boxes,
+        &tone,
+        &gamma,
+        &palette,
+        &bv,
+        &nv,
+        &pbr_texels,
     );
     GpuWorldResources {
         uniform,
@@ -744,6 +771,7 @@ fn create_world_resources(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuWorl
         tone,
         gamma,
         palette,
+        pbr_texels,
         _brick_texture: bt,
         brick_view: bv,
         _noise_texture: nt,
@@ -753,6 +781,7 @@ fn create_world_resources(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuWorl
         world_key: None,
         packed: Vec::new(),
         cached_blocks: Vec::new(),
+        pbr_key: None,
     }
 }
 fn make_buffer(
@@ -794,6 +823,7 @@ fn world_bind(
     p: &wgpu::Buffer,
     bt: &wgpu::TextureView,
     nt: &wgpu::TextureView,
+    pbr: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     let bs = [u, v, m, e, b, t, g, p];
     let mut entries: Vec<_> = bs
@@ -811,6 +841,10 @@ fn world_bind(
     entries.push(wgpu::BindGroupEntry {
         binding: 9,
         resource: wgpu::BindingResource::TextureView(nt),
+    });
+    entries.push(wgpu::BindGroupEntry {
+        binding: 10,
+        resource: pbr.as_entire_binding(),
     });
     d.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("world resource group"),
@@ -939,12 +973,23 @@ fn update_world(
                 u32::from(m.base_rule == BaseAlbedoRule::StudsClassic),
                 tex,
                 seed,
-                0,
+                m.pbr_texture.map_or(0, |id| id.0),
             ],
-            params: [m.constant_albedo, 0., 0., 0.],
+            params: [
+                m.constant_albedo,
+                m.uv_scale[0],
+                m.uv_scale[1],
+                f32::from(m.cell_variation),
+            ],
         };
     }
     q.write_buffer(&g.materials, 0, bytemuck::cast_slice(&mats));
+    let pbr_key = (mt.pbr_textures.as_ptr() as usize, mt.pbr_textures.len());
+    if g.pbr_key != Some(pbr_key) {
+        let packed = pack_pbr_textures(mt);
+        q.write_buffer(&g.pbr_texels, 0, bytemuck::cast_slice(&packed));
+        g.pbr_key = Some(pbr_key);
+    }
     let sty = s.lighting.style;
     let lut = sty.level_lut();
     let tones: Vec<f32> = (0..1024)
@@ -968,6 +1013,7 @@ fn update_world(
             &g.palette,
             &g.brick_view,
             &g.noise_view,
+            &g.pbr_texels,
         );
     }
     let c = s.camera;
@@ -991,7 +1037,12 @@ fn update_world(
             sty.lamp,
             sty.fog_distance,
         ],
-        style: [sty.ao_strength, sty.texture_strength, 0., 0.],
+        style: [
+            sty.ao_strength,
+            sty.texture_strength,
+            f32::from(sty.pbr_enabled),
+            0.,
+        ],
         frame: [
             s.lighting.frame,
             es.len() as u32,
@@ -1007,6 +1058,42 @@ fn pack_voxels(blocks: &[u8]) -> Vec<u32> {
     let mut packed = vec![0; blocks.len().div_ceil(4).max(1)];
     for (i, &voxel) in blocks.iter().enumerate() {
         packed[i / 4] |= u32::from(voxel) << ((i % 4) * 8);
+    }
+    packed
+}
+
+fn pack_pbr_textures(materials: &MaterialTable) -> Vec<u32> {
+    const MIP_TEXELS: usize = 87_381;
+    const MIP_LEVELS: [usize; 9] = [65_536, 16_384, 4_096, 1_024, 256, 64, 16, 4, 1];
+    let mut packed = vec![0u32; 4 * 4 * MIP_TEXELS];
+    for set in materials.pbr_textures {
+        if !(1..=4).contains(&set.id.0) {
+            continue;
+        }
+        let set_index = set.id.0 as usize - 1;
+        for (map_index, chain) in [
+            &set.albedo,
+            &set.normal,
+            &set.roughness,
+            &set.ambient_occlusion,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut mip_offset = 0;
+            for (level_index, level) in chain.levels.iter().take(9).enumerate() {
+                let map_base = (set_index * 4 + map_index) * MIP_TEXELS + mip_offset;
+                for (texel_index, texel) in level
+                    .texels
+                    .iter()
+                    .take(MIP_LEVELS[level_index])
+                    .enumerate()
+                {
+                    packed[map_base + texel_index] = u32::from_le_bytes(*texel);
+                }
+                mip_offset += MIP_LEVELS[level_index];
+            }
+        }
     }
     packed
 }

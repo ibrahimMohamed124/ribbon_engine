@@ -47,8 +47,9 @@ graph TD
 - `App::materials()` supplies the data table separately from `Scene`, matching `Renderer::render_world(scene, materials)`. Its default is an empty static table for apps without custom materials.
 - The desktop runner selects GPU presentation by default, with `--renderer cpu` as a reference fallback and `--renderer gpu` as a required-GPU mode. The GPU world pass consumes `FramePlan` directly, so it does not read a CPU framebuffer back during ordinary presentation.
 - Framebuffers are opaque 24-bit pixels with no alpha channel. To retain existing UI output, the runner copies the rendered world into the overlay framebuffer before the app draws over it. The CPU renderer then stores that flattened image byte-for-byte.
-- The Classic and Moody golden tests stayed unchanged and passed at every phase; no golden values were re-blessed.
-- The CPU `SurfaceShader` remains renderer-side. `MaterialTable` records the block albedo rule and texture kind/seed, while exact procedural material math stays in the existing CPU shader until it can be expressed and ported without changing pixels.
+- The Classic and Moody golden pixel values remain pinned. Realistic material sets are plain RGBA mip-chain data in `engine_scene`; `studs` loads the processed raw maps and assigns stable material/texture IDs.
+- The CPU and GPU renderers both sample Realistic albedo, normal, roughness, and AO maps. The CPU uses wrapped bilinear/trilinear sampling, while the GPU packs the same mip levels into a storage buffer and samples them in WGSL. These paths have deterministic CPU golden coverage and a manually launchable GPU preview; exact CPU/GPU parity and integrated-GPU 1080p performance are not yet measured.
+- `studs` owns image conversion and runtime asset loading. Missing or malformed material data falls back to the procedural shader and logs a warning; the scene crate contains no file, image-decoder, or GPU APIs.
 
 ## Phase 2: desktop and GPU presentation
 
@@ -68,3 +69,9 @@ graph TD
 - The frame order is GPU world, ordered HUD/effects, brightness, UI, then nearest presentation. Rectangles are instanced; text uses pixels from the shared 5x7 glyph table.
 - GPU mode skips CPU world rendering. `render_cpu` remains the reference and fallback. `studs/examples/gpu_preview.rs` starts a deterministic Game::new(42) world directly for manual GPU/CPU comparison.
 - The GPU shader is exercised by launching the deterministic preview on the local adapter. Headless CPU/GPU readback parity thresholds and GPU timings have not yet been established; the CPU render benchmark does not measure the GPU path.
+
+## Realistic materials
+
+- Four CC0 Poly Haven sets (two walls, floor, ceiling) are processed to 256×256 RGBA8 map sidecars plus reproducible ZIP archives. `tools/fetch_assets.py --check` verifies manifest fields, allowed licenses, archive digests/content, sidecars, and the 40 MiB shipped-assets cap; CI runs this check.
+- Realistic shading is enabled by the Realistic visual style and High/Realistic quality presets. Low and Medium skip PBR texture sampling. The saved reduce-flashing setting is present in the UI, but proximity-driven flashing effects are not implemented yet.
+- The built-in monster is still box geometry. No candidate model has yet met the realistic humanoid, animation, redistribution-license, and glTF requirements, so no sprite baking or animated monster rendering is claimed.

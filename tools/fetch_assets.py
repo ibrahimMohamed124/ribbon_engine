@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "assets" / "manifest.toml"
 SOURCES = ROOT / "assets" / "source"  # intentionally ignored by git
 MAX_BYTES = 40 * 1024 * 1024
+ALLOWED_LICENSES = {"CC0-1.0", "CC-BY-3.0", "CC-BY-4.0"}
 
 
 def urls(asset_id: str) -> dict[str, list[str]]:
@@ -33,6 +34,8 @@ def urls(asset_id: str) -> dict[str, list[str]]:
 
 
 def fetch(url_candidates: list[str], destination: Path) -> bytes:
+    if destination.is_file():
+        return destination.read_bytes()
     last_error: Exception | None = None
     for url in url_candidates:
         try:
@@ -68,12 +71,27 @@ def process_set(asset_id: str, output: Path) -> str:
     # runtime can sample R/G; B remains metallic for future use.
     packed = Image.merge("RGB", (arm.getchannel("G"), arm.getchannel("R"), arm.getchannel("B")))
 
+    # Raw RGBA sidecars are the runtime format. They need no image decoder in
+    # engine_core/engine_scene and can be read on Windows with std::fs.
+    runtime_dir = output.with_suffix("")
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    rgba_images = {
+        "albedo.rgba": albedo.convert("RGBA"),
+        "normal.rgba": normal.convert("RGBA"),
+        "roughness.rgba": Image.merge("RGB", (arm.getchannel("G"),) * 3).convert("RGBA"),
+        "ao.rgba": Image.merge("RGB", (arm.getchannel("R"),) * 3).convert("RGBA"),
+    }
+    for filename, image in rgba_images.items():
+        (runtime_dir / filename).write_bytes(image.tobytes())
+
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, image in (("albedo.png", albedo), ("normal.png", normal), ("roughness_ao_metallic.png", packed)):
             buffer = io.BytesIO()
             image.save(buffer, format="PNG", optimize=True)
             archive.writestr(name, buffer.getvalue())
+        for filename, image in rgba_images.items():
+            archive.writestr(f"runtime/{filename}", image.tobytes())
     return hashlib.sha256(output.read_bytes()).hexdigest()
 
 
@@ -89,7 +107,7 @@ def update_hashes(rows: list[dict[str, str]], hashes: dict[str, str]) -> None:
 
 
 def write_credits(rows: list[dict[str, str]]) -> None:
-    lines = ["# Asset credits", "", "All listed assets are CC0-1.0. Source downloads are not bundled; processed files are created by `python tools/fetch_assets.py`.", ""]
+    lines = ["# Asset credits", "", "All listed assets are CC0-1.0. Original source downloads are excluded; compact processed texture sets are included in the game assets.", ""]
     for row in rows:
         lines.extend([
             f"## {row['name']}",
@@ -99,6 +117,7 @@ def write_credits(rows: list[dict[str, str]]) -> None:
             f"- License: {row['license']}",
             f"- Use: {row['usage']}",
             f"- Processed file: `{row['local_path']}`",
+            f"- Runtime maps: `{row['runtime_path']}/` (256x256 raw RGBA8)",
             f"- SHA-256: `{row['sha256']}`",
             "",
         ])
@@ -110,15 +129,59 @@ def check(rows: list[dict[str, str]]) -> bool:
     for row in rows:
         path = ROOT / row["local_path"]
         expected = row["sha256"]
-        if expected == "pending-download" or not path.is_file():
-            print(f"missing processed asset/hash: {row['asset_id']} ({path})")
+        runtime_dir = ROOT / row["runtime_path"]
+        maps_exist = all((runtime_dir / filename).is_file() for filename in ("albedo.rgba", "normal.rgba", "roughness.rgba", "ao.rgba"))
+        if expected == "pending-download" or not path.is_file() or not maps_exist:
+            print(f"missing processed asset/hash/runtime maps: {row['asset_id']} ({path})")
             good = False
             continue
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual != expected:
             print(f"hash mismatch: {row['asset_id']} expected {expected}, got {actual}")
             good = False
+        try:
+            with zipfile.ZipFile(path) as archive:
+                names = set(archive.namelist())
+            required = {"albedo.png", "normal.png", "roughness_ao_metallic.png"} | {
+                f"runtime/{filename}"
+                for filename in ("albedo.rgba", "normal.rgba", "roughness.rgba", "ao.rgba")
+            }
+            if not required <= names:
+                print(f"processed archive is incomplete: {row['asset_id']}")
+                good = False
+        except zipfile.BadZipFile:
+            print(f"invalid processed archive: {row['asset_id']}")
+            good = False
+    total_size = sum(
+        (ROOT / row["local_path"]).stat().st_size
+        for row in rows
+        if (ROOT / row["local_path"]).is_file()
+    )
+    total_size += sum(
+        (ROOT / row["runtime_path"] / filename).stat().st_size
+        for row in rows
+        for filename in ("albedo.rgba", "normal.rgba", "roughness.rgba", "ao.rgba")
+        if (ROOT / row["runtime_path"] / filename).is_file()
+    )
+    if total_size > MAX_BYTES:
+        print(f"processed assets exceed the 40 MiB shipping limit: {total_size} bytes")
+        good = False
     return good
+
+
+def validate_manifest(rows: list[dict[str, str]], require_hashes: bool) -> None:
+    required = {
+        "name", "asset_id", "source_url", "author", "license", "sha256",
+        "local_path", "runtime_path", "usage",
+    }
+    for row in rows:
+        missing = required - row.keys()
+        if missing:
+            raise RuntimeError(f"manifest entry {row.get('asset_id', '<unnamed>')} is missing: {', '.join(sorted(missing))}")
+        if row["license"] not in ALLOWED_LICENSES:
+            raise RuntimeError(f"license is not approved for redistribution: {row['asset_id']} ({row['license']})")
+        if require_hashes and not re.fullmatch(r"[0-9a-f]{64}", row["sha256"]):
+            raise RuntimeError(f"manifest SHA-256 is missing or invalid for {row['asset_id']}")
 
 
 def main() -> int:
@@ -127,6 +190,7 @@ def main() -> int:
     args = parser.parse_args()
     rows = tomllib.loads(MANIFEST.read_text(encoding="utf-8"))["assets"]
     write_credits(rows)
+    validate_manifest(rows, require_hashes=args.check)
     if args.check:
         return 0 if check(rows) else 1
 

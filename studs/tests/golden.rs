@@ -80,7 +80,11 @@ fn golden_render_world_simulation_and_settings() {
     let legacy_settings = |text: String| {
         let mut lines: Vec<_> = text
             .lines()
-            .filter(|line| !line.starts_with("visual_style ="))
+            .filter(|line| {
+                !line.starts_with("visual_style =")
+                    && !line.starts_with("quality_preset =")
+                    && !line.starts_with("reduce_flashing =")
+            })
             .collect();
         lines.push("");
         lines.join("\n")
@@ -127,4 +131,21 @@ fn moody_render_is_deterministic_and_matches_its_golden() {
     );
     // Re-bless intentionally with `cargo test -p studs --test golden -- --nocapture`.
     assert_eq!(first_hash, 0xf4892832fa68b8c2);
+}
+
+#[test]
+fn realistic_render_is_deterministic_and_matches_its_golden() {
+    let game = Game::new(42);
+    let mut first = Framebuffer::new(160, 90);
+    let mut second = Framebuffer::new(160, 90);
+    game.draw_styled(&mut first, 137, DEFAULT_HFOV, RenderStyle::realistic());
+    game.draw_styled(&mut second, 137, DEFAULT_HFOV, RenderStyle::realistic());
+    let first_hash = pixels_hash(&first.pixels);
+    let second_hash = pixels_hash(&second.pixels);
+    println!("realistic_framebuffer_hash={first_hash:#018x}");
+    assert_eq!(
+        first_hash, second_hash,
+        "realistic rendering must be deterministic"
+    );
+    assert_eq!(first_hash, 0x39c8dc756d52afc6);
 }

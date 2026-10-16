@@ -176,6 +176,19 @@ fn visual_style_round_trips_and_invalid_values_use_the_default() {
 }
 
 #[test]
+fn quality_and_flash_accessibility_settings_round_trip() {
+    let settings = Settings::parse("quality_preset = realistic\nreduce_flashing = true\n");
+    assert_eq!(
+        settings.quality_preset,
+        raycast_blocks::settings::QualityPreset::Realistic
+    );
+    assert!(settings.reduce_flashing);
+    let round_trip = Settings::parse(&settings.to_text());
+    assert_eq!(round_trip.quality_preset, settings.quality_preset);
+    assert_eq!(round_trip.reduce_flashing, settings.reduce_flashing);
+}
+
+#[test]
 fn version_two_settings_keep_custom_movement_but_reset_escape_quit() {
     let settings = Settings::parse("settings_version = 2\nkey.forward = I\nkey.quit = Escape,Q\n");
     assert!(matches!(settings.bindings.keys(Action::Forward)[0], Key::I));

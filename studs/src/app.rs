@@ -15,7 +15,7 @@ use crate::audio::{Audio, AudioAmbience};
 use crate::game::{Game, State, PAGES_TOTAL};
 use crate::input::{Input, InputFrame};
 use crate::settings::Settings;
-use crate::surfaces::STUDS_MATERIAL_TABLE;
+use crate::surfaces::studs_material_table;
 use crate::ui::{Screen, Ui, UiInput};
 
 struct FrameMouse((f32, f32));
@@ -245,7 +245,9 @@ impl App for StudsApp {
             self.game.scene_styled(
                 self.render_frame,
                 self.settings.hfov_radians(),
-                self.settings.visual_style.render_style(),
+                self.settings
+                    .visual_style
+                    .render_style(self.settings.quality_preset),
             )
         } else {
             None
@@ -284,7 +286,7 @@ impl App for StudsApp {
     }
 
     fn materials(&self) -> &'static MaterialTable {
-        &STUDS_MATERIAL_TABLE
+        studs_material_table()
     }
 }
 

@@ -23,8 +23,8 @@ use crate::renderer::{DEFAULT_HEIGHT, DEFAULT_HFOV, DEFAULT_WIDTH};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum VisualStyle {
     Classic,
-    #[default]
     Moody,
+    #[default]
     Realistic,
 }
 
@@ -46,12 +46,24 @@ impl VisualStyle {
         }
     }
 
-    pub fn render_style(self) -> engine_scene::RenderStyle {
-        match self {
+    pub fn render_style(self, quality: QualityPreset) -> engine_scene::RenderStyle {
+        let mut style = match self {
             Self::Classic => engine_scene::RenderStyle::classic(),
             Self::Moody => engine_scene::RenderStyle::moody(),
             Self::Realistic => engine_scene::RenderStyle::realistic(),
+        };
+        match quality {
+            QualityPreset::Low => {
+                style.pbr_enabled = false;
+                style.ao_strength *= 0.35;
+            }
+            QualityPreset::Medium => {
+                style.pbr_enabled = false;
+                style.ao_strength *= 0.7;
+            }
+            QualityPreset::High | QualityPreset::Realistic => {}
         }
+        style
     }
 
     pub fn toggle(&mut self) {
@@ -60,6 +72,47 @@ impl VisualStyle {
             Self::Moody => Self::Realistic,
             Self::Realistic => Self::Classic,
         };
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum QualityPreset {
+    Low,
+    Medium,
+    High,
+    #[default]
+    Realistic,
+}
+
+impl QualityPreset {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "realistic" => Some(Self::Realistic),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Realistic => "realistic",
+        }
+    }
+
+    pub fn toggle(&mut self, direction: i32) {
+        const VALUES: [QualityPreset; 4] = [
+            QualityPreset::Low,
+            QualityPreset::Medium,
+            QualityPreset::High,
+            QualityPreset::Realistic,
+        ];
+        let i = VALUES.iter().position(|value| value == self).unwrap_or(1) as i32;
+        *self = VALUES[(i + direction).rem_euclid(VALUES.len() as i32) as usize];
     }
 }
 
@@ -80,6 +133,8 @@ pub struct Settings {
     /// Linear display brightness: 0.5 is dim, 1.0 is unchanged, 1.5 is bright.
     pub brightness: f32,
     pub visual_style: VisualStyle,
+    pub quality_preset: QualityPreset,
+    pub reduce_flashing: bool,
     /// Best completion time in seconds, indexed by Easy / Normal / Hard.
     pub best_times: [f32; 3],
     pub flashlight_on_start: bool,
@@ -103,6 +158,8 @@ impl Default for Settings {
             window_scale: 4,
             brightness: 1.0,
             visual_style: VisualStyle::default(),
+            quality_preset: QualityPreset::default(),
+            reduce_flashing: false,
             best_times: [0.0; 3],
             flashlight_on_start: true,
             mouse_look_on_start: true,
@@ -258,6 +315,16 @@ impl Settings {
                         s.visual_style = style;
                     }
                 }
+                "quality_preset" => {
+                    if let Some(preset) = QualityPreset::parse(value) {
+                        s.quality_preset = preset;
+                    }
+                }
+                "reduce_flashing" => {
+                    if let Ok(value) = value.parse::<bool>() {
+                        s.reduce_flashing = value;
+                    }
+                }
                 "best_time_easy" | "best_time_normal" | "best_time_hard" => {
                     if let Some(v) = parse_finite(value) {
                         let index = match key {
@@ -338,6 +405,11 @@ impl Settings {
         out.push_str(&format!("window_scale = {}\n", self.window_scale));
         out.push_str(&format!("brightness = {}\n", self.brightness));
         out.push_str(&format!("visual_style = {}\n", self.visual_style.as_str()));
+        out.push_str(&format!(
+            "quality_preset = {}\n",
+            self.quality_preset.as_str()
+        ));
+        out.push_str(&format!("reduce_flashing = {}\n", self.reduce_flashing));
         out.push_str(&format!("best_time_easy = {}\n", self.best_times[0]));
         out.push_str(&format!("best_time_normal = {}\n", self.best_times[1]));
         out.push_str(&format!("best_time_hard = {}\n", self.best_times[2]));

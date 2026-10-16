@@ -647,7 +647,7 @@ impl Ui {
             PANEL_EDGE,
         );
         for index in 0..settings_page::ITEM_COUNT {
-            let y = panel.y + 27 + index as i32 * 10;
+            let y = panel.y + 27 + index as i32 * 9;
             if index == 4 || index == 9 {
                 fill_rect(fb, panel.x + 16, y - 4, panel.width - 32, 1, PANEL_EDGE);
             }

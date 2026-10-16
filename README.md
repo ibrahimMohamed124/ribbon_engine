@@ -11,7 +11,7 @@ A monochrome first-person horror game built with a software raycaster. Explore a
 - Sprint stamina, flashlight, configurable controls, and saved settings
 - Directional enemy footsteps, proximity-scaled ambience, and gameplay sound effects
 - Rust unit and integration tests, with cross-platform CI builds
-- Classic grayscale and Moody cold-tinted rendering styles with procedural surfaces
+- Classic grayscale and Moody cold-tinted rendering styles, plus a photo-textured Realistic option
 
 ## Requirements
 
@@ -50,7 +50,7 @@ Bindings are configurable and saved in `settings.cfg` (`%APPDATA%\raycast_blocks
 
 The game opens on a main menu. Hover over an item and click to select it; the keyboard remains available. In settings, click the value area to change a value, and use the mouse wheel to move through long control lists. Press `Esc` during a run to pause it; simulation and gameplay timers stay frozen until you resume. Settings and controls are available from both menus and are saved when changed. The settings screen exposes the currently supported audio buses, mouse options, FOV, brightness, window scale, and render resolution. Window scale choices adjust to the render resolution and keep the initial window at or below 1280x720. Mouse sensitivity is shown as an easy-to-read 0-10 level.
 
-The **Visual Style** setting includes **Moody** (the default, with a cold green-gray palette, tone mapping, subtle procedural surface texture, and voxel ambient occlusion), **Classic** (the original grayscale look), and an initial **Realistic** color-grade preset. HUD and menu layers remain unchanged. GPU presentation is the default; select the CPU reference with `--renderer cpu` or `STUDS_RENDERER=cpu`. `--renderer gpu` requires GPU initialization to succeed. For a deterministic live GPU scene, run `cargo run --locked -p studs --example gpu_preview -- gpu` (use `cpu` to compare the reference). CPU sample captures remain available with `cargo run --locked -p render_cpu --example screenshot`; PNGs are written under `target/shots/`. Compare CPU reference cost with `cargo run --release --locked -p render_cpu --example render_bench -- 30`.
+The **Visual Style** setting defaults to **Realistic** (photo-textured PBR surfaces with a horror color grade), with **Moody** (cold green-gray palette, tone mapping, subtle procedural texture, and voxel ambient occlusion) and **Classic** (the original grayscale look) also available. Quality presets are Low, Medium, High, and Realistic; Low and Medium skip PBR map sampling. The reduce-flashing option is saved in settings; the current renderer does not yet have proximity-driven flashing effects for it to suppress. GPU presentation is the default; select the CPU reference with `--renderer cpu` or `STUDS_RENDERER=cpu`. For a deterministic live GPU scene, run `cargo run --locked -p studs --example gpu_preview -- gpu` (use `cpu` to compare the reference). CPU sample captures remain available with `cargo run --locked -p render_cpu --example screenshot`; PNGs are written under `target/shots/`. Compare the CPU reference with `cargo run --release --locked -p studs --example realistic_bench`.
 
 Selecting **New Game** opens a difficulty screen. **Easy** gives more time before the enemy wakes and reduces its chase speed; **Normal** preserves the original balance; **Hard** wakes the enemy sooner and increases its speed. Looking at the enemy still slows it on every difficulty. New runs randomize the player and enemy's starting cells and place pages apart. The HUD teaches the objective and the enemy's sight rule, while a won run records the best time for its difficulty in `settings.cfg`.
 
@@ -113,7 +113,7 @@ cargo run --release
 cargo test --locked
 ```
 
-يضيف خيار **Visual Style** نمط **Moody** الافتراضي بلوحة باردة وخامات خفيفة وـ ambient occlusion، مع إمكانية الرجوع إلى **Classic** الرمادي الأصلي. القوائم وواجهة اللعب تظل كما هي. لإنشاء صور مقارنة ثابتة شغّل `cargo run --locked -p render_cpu --example screenshot`؛ تحفظ الصور في `target/shots/`.
+يبدأ خيار **Visual Style** بنمط **Realistic** ذي الخامات المصورة، مع إمكانية اختيار **Moody** أو الرجوع إلى **Classic** الرمادي الأصلي. لإنشاء صور مقارنة ثابتة شغّل `cargo run --locked -p render_cpu --example screenshot`؛ تحفظ الصور في `target/shots/`.
 
 ### أزرار التحكم الافتراضية
 

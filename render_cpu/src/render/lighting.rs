@@ -1,7 +1,7 @@
 //! Distance falloff and surface shading interface.
 
 use engine_core::math::Vect;
-use engine_core::voxel::{face_ao, Hit, VoxelWorld};
+use engine_core::voxel::{face_ao, face_uv, Hit, VoxelWorld};
 use engine_scene::entities::EntityKind;
 use engine_scene::material::MaterialTable;
 use engine_scene::style::RenderStyle;
@@ -115,7 +115,51 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
     } else {
         2
     };
-    let ndotl = direction.axis(axis).abs();
+    let mut ndotl = direction.axis(axis).abs();
+    let pbr = if style.pbr_enabled {
+        materials
+            .get(block)
+            .and_then(|material| {
+                material
+                    .pbr_texture
+                    .and_then(|id| materials.get_pbr_texture(id).map(|set| (material, set)))
+            })
+            .map(|(material, set)| {
+                let (mut u, mut v) = face_uv(hit);
+                u *= material.uv_scale[0];
+                v *= material.uv_scale[1];
+                let lod = hit.dist.max(1.0).log2();
+                let normal = set.normal.sample(u, v, lod);
+                let tangent_normal = Vect::new(
+                    normal[0] * 2.0 - 1.0,
+                    normal[1] * 2.0 - 1.0,
+                    normal[2] * 2.0 - 1.0,
+                );
+                let face_normal = Vect::new(
+                    hit.normal[0] as f32,
+                    hit.normal[1] as f32,
+                    hit.normal[2] as f32,
+                );
+                let (tangent, bitangent) = match axis {
+                    0 => (
+                        Vect::new(0.0, hit.normal[0] as f32, 0.0),
+                        Vect::new(0.0, 0.0, 1.0),
+                    ),
+                    1 => (Vect::new(1.0, 0.0, 0.0), Vect::new(0.0, 0.0, 1.0)),
+                    _ => (Vect::new(1.0, 0.0, 0.0), Vect::new(0.0, 1.0, 0.0)),
+                };
+                let mapped = (tangent.scale(tangent_normal.x)
+                    + bitangent.scale(tangent_normal.y)
+                    + face_normal.scale(tangent_normal.z))
+                .normalize();
+                ndotl = mapped.dot(direction.scale(-1.0)).clamp(0.0, 1.0);
+                let roughness = set.roughness.sample(u, v, lod)[0].clamp(0.04, 1.0);
+                let ao = set.ambient_occlusion.sample(u, v, lod)[0].clamp(0.0, 1.0);
+                (roughness, ao)
+            })
+    } else {
+        None
+    };
     let ao_strength = if style.ao_strength.is_finite() {
         style.ao_strength.clamp(0.0, 1.0)
     } else {
@@ -129,8 +173,17 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
     } else {
         face_ao(world, hit, empty_voxel)
     };
-    let occlusion = 1.0 + (ao - 1.0) * ao_strength;
+    let mut occlusion = 1.0 + (ao - 1.0) * ao_strength;
+    if let Some((_, material_ao)) = pbr {
+        occlusion *= material_ao;
+    }
+    let diffuse = light_with_style(illumination, hit.dist, ndotl, cone, style);
+    let specular = pbr.map_or(0.0, |(roughness, _)| {
+        let fog = (1.0 - hit.dist / style.fog_distance.max(0.001)).clamp(0.0, 1.0);
+        let falloff = illumination * cone / (1.0 + 0.06 * hit.dist * hit.dist);
+        falloff * (1.0 - roughness) * 0.22 * ndotl.powf(2.0 + 32.0 * (1.0 - roughness)) * fog
+    });
     shader.albedo_with_materials(block, hit, direction, style, materials)
-        * light_with_style(illumination, hit.dist, ndotl, cone, style)
+        * (diffuse + specular)
         * occlusion
 }

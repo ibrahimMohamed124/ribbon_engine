@@ -131,18 +131,18 @@ fn visual_style_can_be_changed_from_the_settings_screen() {
     for _ in 0..12 {
         ui.update(&press(Key::Down), &mut settings);
     }
-    assert_eq!(raycast_blocks::ui::settings::value(&settings, 12), "MOODY");
-    let changed = ui.update(&press(Key::Right), &mut settings);
-    assert!(changed.settings_changed);
     assert_eq!(
         raycast_blocks::ui::settings::value(&settings, 12),
         "REALISTIC"
     );
-    ui.update(&press(Key::Right), &mut settings);
+    let changed = ui.update(&press(Key::Right), &mut settings);
+    assert!(changed.settings_changed);
     assert_eq!(
         raycast_blocks::ui::settings::value(&settings, 12),
         "CLASSIC"
     );
+    ui.update(&press(Key::Right), &mut settings);
+    assert_eq!(raycast_blocks::ui::settings::value(&settings, 12), "MOODY");
 }
 
 #[test]
