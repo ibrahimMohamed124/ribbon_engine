@@ -26,7 +26,7 @@ fn enemy_animation_tracks_sleeping_walking_running_freezing_and_attack_states() 
 
 #[test]
 fn monster_proximity_effects_are_monotonic_clamped_and_finite() {
-    use raycast_blocks::enemy::{flashlight_pulse_factor, proximity_intensity};
+    use raycast_blocks::enemy::{flashlight_pulse_factor, footstep_crossings, proximity_intensity};
 
     let levels: Vec<_> = (0..=20)
         .map(|step| proximity_intensity(step as f32, true))
@@ -43,4 +43,8 @@ fn monster_proximity_effects_are_monotonic_clamped_and_finite() {
     assert!(pulse_levels.windows(2).all(|pair| pair[0] >= pair[1]));
     assert!(pulse_levels.iter().all(|value| *value >= 0.45));
     assert!(flashlight_pulse_factor(1.0, true, true) >= 0.88);
+    assert_eq!(footstep_crossings(0.2, 2.0), 0);
+    assert_eq!(footstep_crossings(0.2, 3.3), 1);
+    assert_eq!(footstep_crossings(0.2, 7.0), 2);
+    assert_eq!(footstep_crossings(f32::NAN, 7.0), 0);
 }

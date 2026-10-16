@@ -36,6 +36,15 @@ pub fn flashlight_pulse_factor(intensity: f32, pulse: bool, reduce_flashing: boo
     }
 }
 
+pub fn footstep_crossings(previous_phase: f32, current_phase: f32) -> u32 {
+    if !previous_phase.is_finite() || !current_phase.is_finite() || current_phase <= previous_phase
+    {
+        return 0;
+    }
+    let period = std::f32::consts::PI;
+    ((current_phase / period).floor() - (previous_phase / period).floor()) as u32
+}
+
 /// Minimum dot(view direction, direction to enemy) for the player to "see" it.
 const VIEW_CONE_DOT: f32 = 0.82;
 

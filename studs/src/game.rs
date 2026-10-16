@@ -4,7 +4,9 @@
 //! into a [`Framebuffer`].
 
 use crate::audio::{AudioEvent, SpatialAudioEvent};
-use crate::enemy::{animation_state, flashlight_pulse_factor, proximity_intensity, Enemy};
+use crate::enemy::{
+    animation_state, flashlight_pulse_factor, footstep_crossings, proximity_intensity, Enemy,
+};
 use crate::input::{Controls, InputFrame};
 use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
@@ -20,7 +22,6 @@ const PAGE_PICKUP_RADIUS: f32 = 0.9;
 const RESTART_DELAY: f32 = 1.0;
 /// Distance (tiles) at which the enemy starts to affect the picture.
 const PAGE_MIN_SEPARATION: f32 = 4.5;
-const ENEMY_FOOTSTEP_DISTANCE: f32 = 1.35;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum State {
@@ -88,7 +89,6 @@ pub struct Game {
     pub events: Vec<AudioEvent>,
     pub spatial_events: Vec<SpatialAudioEvent>,
     pub enemy_awake_since: Option<f32>,
-    enemy_footstep_distance: f32,
 }
 
 impl Game {
@@ -167,7 +167,6 @@ impl Game {
             events: Vec::new(),
             spatial_events: Vec::new(),
             enemy_awake_since: None,
-            enemy_footstep_distance: 0.0,
         }
     }
 
@@ -261,12 +260,11 @@ impl Game {
                 self.difficulty.seen_speed_factor(),
             );
             let pp = self.player.pos;
-            let moved = self
-                .enemy
+            let previous_phase = self.enemy.phase;
+            self.enemy
                 .update_hunt(&self.world, pp, player_visible, speed, dt);
-            self.enemy_footstep_distance += moved;
-            if self.enemy_footstep_distance >= ENEMY_FOOTSTEP_DISTANCE {
-                self.enemy_footstep_distance %= ENEMY_FOOTSTEP_DISTANCE;
+            let footsteps = footstep_crossings(previous_phase, self.enemy.phase);
+            if footsteps > 0 {
                 let forward = forward_vec(self.player.view);
                 let to_enemy = Vect::new(
                     self.enemy.pos.x - self.player.pos.x,
@@ -275,14 +273,12 @@ impl Game {
                 )
                 .normalize();
                 let right = Vect::new(-forward.y, forward.x, 0.0);
-                self.spatial_events.push(SpatialAudioEvent {
-                    event: AudioEvent::EnemyFootstep,
-                    pan: to_enemy.dot(right),
-                });
-            }
-            // A zero movement can happen after the enemy has finished searching.
-            if moved == 0.0 {
-                self.enemy_footstep_distance = 0.0;
+                for _ in 0..footsteps {
+                    self.spatial_events.push(SpatialAudioEvent {
+                        event: AudioEvent::EnemyFootstep,
+                        pan: to_enemy.dot(right),
+                    });
+                }
             }
         }
 
