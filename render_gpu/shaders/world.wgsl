@@ -1,4 +1,4 @@
-struct WorldUniform { dims: vec4<u32>, eye: vec4<f32>, forward: vec4<f32>, right: vec4<f32>, up: vec4<f32>, projection: vec4<f32>, lighting: vec4<f32>, style: vec4<f32>, frame: vec4<u32>, sprite: vec4<u32> }
+struct WorldUniform { dims: vec4<u32>, eye: vec4<f32>, forward: vec4<f32>, right: vec4<f32>, up: vec4<f32>, projection: vec4<f32>, lighting: vec4<f32>, style: vec4<f32>, frame: vec4<u32>, sprite: vec4<u32>, sprite_meta: vec4<u32> }
 struct Material { info: vec4<u32>, params: vec4<f32> }
 struct Entity { pos_yaw: vec4<f32>, params: vec4<f32>, bounds_min: vec4<f32>, bounds_max: vec4<f32>, range: vec4<u32>, animation: vec4<f32>, render: vec4<f32>, shadow: vec4<f32> }
 struct Box { min_part: vec4<f32>, max_sway: vec4<f32> }
@@ -34,20 +34,21 @@ fn cast_sprites(o:vec3<f32>,d:vec3<f32>,max_t:f32)->SpriteHit{
   let toward=rel/dist; let denom=dot(d.xy,toward); if(denom>=-1e-6){continue;}
   let t=-dist/denom; if(t<=0.||t>=best.t){continue;}
   let p=o+d*t; let right=vec2<f32>(-toward.y,toward.x); let local=p.xy-tr.xy;
-  let su=.5+dot(local,right)/.92; let sv=(p.z-tr.z)/max(e.render.w,0.001);
+  let su=.5+dot(local,right)/max(e.render.z,0.001); let sv=(p.z-tr.z)/max(e.render.w,0.001);
   if(su<0.||su>=1.||sv<0.||sv>=1.){continue;}
   let angle=(atan2(rel.y,rel.x)-tr.w+6.28318530718)%6.28318530718;
-  let view=min(u32(floor(angle/6.28318530718*16.)),15u);
-  let state=min(u32(max(round(e.params.y),0.)),4u);
-  let frame=u32(floor(abs(e.params.x)/6.28318530718*8.))%8u;
+  let views=max(u.sprite.x/u.sprite.z,1u);let view=min(u32(floor(angle/6.28318530718*f32(views))),views-1u);
+  let states=max(u.sprite_meta.x,1u);let frames=max(u.sprite_meta.y,1u);
+  let state=min(u32(max(round(e.params.y),0.)),states-1u);
+  let frame=u32(floor(abs(e.params.x)/6.28318530718*f32(frames)))%frames;
   best=SpriteHit(true,t,su,sv,view,state,frame);
  }
  return best;
 }
 fn sprite_fetch(map:u32,hit:SpriteHit)->vec4<f32>{
  let x=min(u32(hit.u*f32(u.sprite.z)),u.sprite.z-1u); let y=min(u32((1.-hit.v)*f32(u.sprite.w)),u.sprite.w-1u);
- let row=hit.state*8u+hit.frame; let idx=(row*u.sprite.w+y)*u.sprite.x+hit.view*u.sprite.z+x;
- let count=u.sprite.x*u.sprite.y; let word=pbr_texels[1398096u+map*count+idx];
+ let row=hit.state*u.sprite_meta.y+hit.frame; let idx=(row*u.sprite.w+y)*u.sprite.x+hit.view*u.sprite.z+x;
+ let word=pbr_texels[u.sprite_meta.z+map*u.sprite_meta.w+idx];
  return vec4<f32>(f32(word&255u),f32((word>>8u)&255u),f32((word>>16u)&255u),f32((word>>24u)&255u))/255.;
 }
 fn hash4(a:i32,b:i32,c:i32,d:i32)->f32{var h=bitcast<u32>(a)*73856093u^bitcast<u32>(b)*19349663u^bitcast<u32>(c)*83492791u^bitcast<u32>(d)*2654435761u;h^=h>>13u;h*=0x5bd1e995u;h^=h>>15u;return f32(h&65535u)/32767.5-1.;}

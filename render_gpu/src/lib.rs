@@ -50,6 +50,7 @@ struct WorldUniform {
     style: [f32; 4],
     frame: [u32; 4],
     sprite: [u32; 4],
+    sprite_meta: [u32; 4],
 }
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -1118,6 +1119,17 @@ fn update_world(
                     atlas.cell_height as u32,
                 ]
             }),
+        sprite_meta: mt.sprite_atlas.filter(|atlas| atlas.is_valid()).map_or(
+            [0, 0, PBR_WORD_CAPACITY as u32, 0],
+            |atlas| {
+                [
+                    atlas.states as u32,
+                    atlas.frames_per_state as u32,
+                    PBR_WORD_CAPACITY as u32,
+                    (atlas.width * atlas.height) as u32,
+                ]
+            },
+        ),
     };
     q.write_buffer(&g.uniform, 0, bytemuck::bytes_of(&un));
     Ok(())

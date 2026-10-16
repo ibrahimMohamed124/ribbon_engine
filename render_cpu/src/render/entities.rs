@@ -308,6 +308,30 @@ mod sprite_tests {
     }
 
     #[test]
+    fn sprite_atlas_metadata_allows_non_default_dimensions() {
+        let mut atlas = atlas();
+        atlas.width = 8;
+        atlas.height = 6;
+        atlas.views = 8;
+        atlas.states = 2;
+        atlas.frames_per_state = 3;
+        atlas.albedo = vec![[255; 4]; 48];
+        atlas.normal = vec![[128, 128, 255, 255]; 48];
+        atlas.emissive = vec![0; 48];
+        assert!(atlas.is_valid());
+        let instance = EntityInstance {
+            kind: KIND,
+            pos: Vect::new(4.5, 0.5, 0.0),
+            yaw: 0.0,
+            params: [std::f32::consts::TAU * 0.70, 1.0, 0.0, 0.0],
+        };
+        let hit = SpriteView::new(instance, &DEFINITION, Vect::new(0.5, 0.5, 1.0))
+            .hit(Vect::new(1.0, 0.0, 0.0), &atlas)
+            .unwrap();
+        assert_eq!((hit.view, hit.state, hit.frame), (4, 1, 2));
+    }
+
+    #[test]
     fn wall_dda_hit_occludes_sprite_behind_it() {
         let mut blocks = vec![0; 6 * 2 * 3];
         let idx = 14;
