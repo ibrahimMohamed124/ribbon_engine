@@ -144,12 +144,24 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
         materials
             .get(block)
             .and_then(|material| {
-                material
-                    .pbr_texture
-                    .and_then(|id| materials.get_pbr_texture(id).map(|set| (material, set)))
+                material.pbr_texture.and_then(|id| {
+                    let (_, _, _, alternate) =
+                        engine_scene::material::cell_uv(hit.cell, (0.0, 0.0));
+                    let id = if material.cell_variation && alternate && id.0 == 1 {
+                        engine_scene::texture::TextureId(2)
+                    } else {
+                        id
+                    };
+                    materials.get_pbr_texture(id).map(|set| (material, set))
+                })
             })
             .map(|(material, set)| {
                 let (mut u, mut v) = face_uv(hit);
+                if material.cell_variation {
+                    let transformed = engine_scene::material::cell_uv(hit.cell, (u, v));
+                    u = transformed.0;
+                    v = transformed.1;
+                }
                 u *= material.uv_scale[0];
                 v *= material.uv_scale[1];
                 let lod = hit.dist.max(1.0).log2();

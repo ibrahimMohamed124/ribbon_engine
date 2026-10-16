@@ -239,8 +239,19 @@ impl SurfaceShader for StudsSurface {
         };
         if style.pbr_enabled {
             if let Some(set_id) = material.pbr_texture {
-                if let Some(set) = materials.get_pbr_texture(set_id) {
-                    let (u, v) = face_uv(hit);
+                let (_, _, tint, alternate) = engine_scene::material::cell_uv(hit.cell, (0.0, 0.0));
+                let selected_id = if material.cell_variation && alternate && set_id.0 == 1 {
+                    TextureId(2)
+                } else {
+                    set_id
+                };
+                if let Some(set) = materials.get_pbr_texture(selected_id) {
+                    let (mut u, mut v) = face_uv(hit);
+                    if material.cell_variation {
+                        let transformed = engine_scene::material::cell_uv(hit.cell, (u, v));
+                        u = transformed.0;
+                        v = transformed.1;
+                    }
                     let color = set.albedo.sample(
                         u * material.uv_scale[0],
                         v * material.uv_scale[1],
@@ -249,7 +260,8 @@ impl SurfaceShader for StudsSurface {
                     let texture_luminance =
                         0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2];
                     return classic_albedo(block, hit)
-                        * (0.35 + texture_luminance * 1.3).clamp(0.35, 1.3);
+                        * (0.35 + texture_luminance * 1.3).clamp(0.35, 1.3)
+                        * if material.cell_variation { tint } else { 1.0 };
                 }
             }
         }

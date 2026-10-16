@@ -151,7 +151,7 @@ fn realistic_render_is_deterministic_and_matches_its_golden() {
         first_hash, second_hash,
         "realistic rendering must be deterministic"
     );
-    assert_eq!(first_hash, 0x5e666badd78f6dc5);
+    assert_eq!(first_hash, 0x88e9a5e92a1ae692);
 }
 
 #[test]
@@ -215,5 +215,5 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
         .count();
     assert!(changed > 0, "monster must contribute visible pixels");
     println!("realistic_monster_framebuffer_hash={hash:#018x}");
-    assert_eq!(hash, 0x99f2b567fd1244eb);
+    assert_eq!(hash, 0x88c1a303d3527d1e);
 }

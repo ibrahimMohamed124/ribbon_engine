@@ -1,4 +1,22 @@
 use crate::texture::{PbrTextureSet, SpriteAtlas, Texture, TextureId};
+use engine_core::math::hash4;
+
+/// Stable per-voxel UV transform and tint shared by both render backends.
+pub fn cell_uv(cell: (i32, i32, i32), uv: (f32, f32)) -> (f32, f32, f32, bool) {
+    let choice = ((hash4(cell.0, cell.1, cell.2, 97) + 1.0) * 8.0) as u32;
+    let (mut u, mut v) = (uv.0, uv.1);
+    if choice & 4 != 0 {
+        u = 1.0 - u;
+    }
+    if choice & 8 != 0 {
+        v = 1.0 - v;
+    }
+    for _ in 0..(choice & 3) {
+        (u, v) = (v, 1.0 - u);
+    }
+    let tint = 0.92 + hash4(cell.0, cell.1, cell.2, 103) * 0.08;
+    (u, v, tint, choice & 3 == 0)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BaseAlbedoRule {
@@ -74,6 +92,21 @@ impl MaterialTable {
 
     pub fn get_pbr_texture(&self, id: TextureId) -> Option<&PbrTextureSet> {
         self.pbr_textures.iter().find(|set| set.id == id)
+    }
+}
+
+#[cfg(test)]
+mod cell_variation_tests {
+    use super::cell_uv;
+
+    #[test]
+    fn cell_transform_and_tint_are_repeatable_and_cell_specific() {
+        let first = cell_uv((12, 3, 8), (0.2, 0.7));
+        assert_eq!(first, cell_uv((12, 3, 8), (0.2, 0.7)));
+        let neighbor = cell_uv((13, 3, 8), (0.2, 0.7));
+        assert_ne!(first, neighbor);
+        assert!((0.84..=1.0).contains(&first.2));
+        assert!(first.0.is_finite() && first.1.is_finite());
     }
 }
 
