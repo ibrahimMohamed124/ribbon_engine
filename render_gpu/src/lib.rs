@@ -1061,7 +1061,12 @@ fn update_world(
         forward: [f.x, f.y, f.z, 0.],
         right: [r.x, r.y, r.z, 0.],
         up: [up.x, up.y, up.z, 0.],
-        projection: [c.hfov, s.lighting.intensity, RENDER_DIST, 0.],
+        projection: [
+            c.hfov,
+            s.lighting.intensity,
+            RENDER_DIST,
+            f32::from(sty.flashlight_shadows),
+        ],
         lighting: [
             s.lighting.illumination,
             sty.ambient,

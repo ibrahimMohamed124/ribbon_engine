@@ -89,6 +89,8 @@ pub struct RenderStyle {
     pub realistic_assets: bool,
     /// Replaces abrupt visual pulses with a small steady illumination change.
     pub reduce_flashing: bool,
+    /// Cast a voxel DDA ray from lit surfaces back toward the flashlight.
+    pub flashlight_shadows: bool,
 }
 
 impl RenderStyle {
@@ -105,6 +107,7 @@ impl RenderStyle {
             pbr_enabled: false,
             realistic_assets: false,
             reduce_flashing: false,
+            flashlight_shadows: false,
         }
     }
 
@@ -121,6 +124,7 @@ impl RenderStyle {
             pbr_enabled: false,
             realistic_assets: false,
             reduce_flashing: false,
+            flashlight_shadows: false,
         }
     }
 
@@ -138,6 +142,7 @@ impl RenderStyle {
             pbr_enabled: true,
             realistic_assets: true,
             reduce_flashing: false,
+            flashlight_shadows: true,
         }
     }
 

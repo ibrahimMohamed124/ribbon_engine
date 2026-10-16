@@ -1,4 +1,8 @@
-use raycast_blocks::{game::Game, renderer::RenderStyle};
+use raycast_blocks::{
+    game::Game,
+    renderer::RenderStyle,
+    settings::{QualityPreset, VisualStyle},
+};
 
 #[test]
 fn reduce_flashing_uses_steady_proximity_dimming_without_random_drops() {
@@ -21,4 +25,28 @@ fn reduce_flashing_uses_steady_proximity_dimming_without_random_drops() {
         .illumination;
     assert_eq!(first, next);
     assert!((0.88..=1.0).contains(&first));
+}
+
+#[test]
+fn expensive_flashlight_shadows_are_gated_by_quality() {
+    assert!(
+        !VisualStyle::Realistic
+            .render_style(QualityPreset::Low)
+            .flashlight_shadows
+    );
+    assert!(
+        !VisualStyle::Realistic
+            .render_style(QualityPreset::Medium)
+            .flashlight_shadows
+    );
+    assert!(
+        VisualStyle::Realistic
+            .render_style(QualityPreset::High)
+            .flashlight_shadows
+    );
+    assert!(
+        !VisualStyle::Classic
+            .render_style(QualityPreset::Realistic)
+            .flashlight_shadows
+    );
 }

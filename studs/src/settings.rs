@@ -56,12 +56,17 @@ impl VisualStyle {
             QualityPreset::Low => {
                 style.pbr_enabled = false;
                 style.ao_strength *= 0.35;
+                style.flashlight_shadows = false;
             }
             QualityPreset::Medium => {
                 style.pbr_enabled = false;
                 style.ao_strength *= 0.7;
+                style.flashlight_shadows = false;
             }
             QualityPreset::High | QualityPreset::Realistic => {}
+        }
+        if self != Self::Realistic {
+            style.flashlight_shadows = false;
         }
         style
     }

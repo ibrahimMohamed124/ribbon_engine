@@ -150,7 +150,7 @@ fn realistic_render_is_deterministic_and_matches_its_golden() {
         first_hash, second_hash,
         "realistic rendering must be deterministic"
     );
-    assert_eq!(first_hash, 0x39c8dc756d52afc6);
+    assert_eq!(first_hash, 0x5e666badd78f6dc5);
 }
 
 #[test]
