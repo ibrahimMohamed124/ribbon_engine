@@ -17,11 +17,19 @@ Baseline on this Windows machine, release build, corridor scene, 320x180, 30 fra
 
 ## Asset choices and licensing
 
-- Concrete wall: Poly Haven, “Concrete Wall 004”, `https://polyhaven.com/a/concrete_wall_004`, author Rob Tuytel, CC0. Its page advertises diffuse, normal, roughness and AO maps and a 1K download tier. Use as the primary damaged wall set.
-- Concrete brick/plaster variant: Poly Haven, “Concrete Wall 002”, `https://polyhaven.com/a/t_concrete_wall_002`, author Dimitrios Savva, CC0. Use for deterministic secondary wall cells.
-- Floor: Poly Haven, “Concrete Floor Worn 001”, `https://polyhaven.com/a/concrete_floor_worn_001`, author Dimitrios Savva, CC0. Use for the cracked/worn floor.
-- Ceiling: Poly Haven, “Ceiling Interior”, `https://polyhaven.com/a/ceiling_interior`, author Dimitrios Savva, CC0. Use only if its available maps meet the same PBR requirements; otherwise retain the procedural fallback and record the omission.
-- Monster: no qualifying realistic, emaciated humanoid with clean redistribution terms was verified in this audit. Do not substitute an unrelated cartoon monster or protected character. Continue the box fallback until a suitable CC0/CC-BY asset is verified. Quaternius Universal Animation Library is CC0 and may provide compatible animation clips, but is not itself the requested monster model.
+- Concrete wall: Poly Haven, “Concrete Wall 004”, `https://polyhaven.com/a/concrete_wall_004`, photography by Charlotte Baglioni and processing by Dario Barresi, CC0. Its page advertises diffuse, normal, roughness and AO maps and a 1K download tier. Use as the primary damaged wall set.
+- Concrete brick/plaster variant: Poly Haven, “Concrete Wall 002”, `https://polyhaven.com/a/t_concrete_wall_002`, photography by Dimitrios Savva and processing by Rico Cilliers, CC0. Use for deterministic secondary wall cells.
+- Floor: Poly Haven, “Concrete Floor Worn 001”, `https://polyhaven.com/a/concrete_floor_worn_001`, photography by Dimitrios Savva and processing by Rico Cilliers, CC0. Use for the worn floor.
+- Ceiling: Poly Haven, “Ceiling Interior”, `https://polyhaven.com/a/ceiling_interior`, CC0. The page advertises diffuse, normal, roughness and AO maps; the credits generator records the listed creators.
+- Monster candidates: Quaternius “Ultimate Monsters” is CC0, glTF-capable, and includes 50 animated creatures, but the available pack is stylized rather than the requested realistic, emaciated humanoid. OpenGameArt “Nightmare Monsters” by Teh_Bucket is CC0 and has four rigged, textured characters, but is FBX-only and does not list animation clips; the asset page credits textures to João Paulo via 3dtextures.me and says the Sonask concept artist approved public-domain release. Neither candidate was downloaded or visually validated in this environment. Do not substitute a protected character; keep the legacy box fallback until a model is verified and converted.
+
+## Work completed and remaining
+
+- Phase 0: audit, baseline, design, and risks documented.
+- Phase 1: manifest, credits generator, and fetch/resize/package script added. Downloads were attempted, but no source maps were acquired because the configured network rejected the requests. Hashes and local files are consequently pending.
+- Phase 2: plain RGBA8 mip-chain, sRGB-aware filtering, PBR texture-set IDs, and material references added to `engine_scene`. The CPU/GPU render paths do not yet sample these sets; legacy rendering remains active.
+- Phase 3: a separate Realistic color-grade preset is selectable. Full colored PBR lighting, shadow rays, fog/post effects, accessibility controls, and quality presets remain to be integrated.
+- Phases 4–6: monster atlas baking and compositing, audio/game integration, asset-load fallback wiring, new Realistic golden/parity tests, CI manifest enforcement, and final engine documentation updates remain unfinished.
 
 Asset page references reviewed: Poly Haven pages list the named map channels and 1K tiers; Poly Haven assets are CC0. Quaternius lists its Universal Animation Library as CC0.
 
