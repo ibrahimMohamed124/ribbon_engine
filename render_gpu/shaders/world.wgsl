@@ -88,6 +88,8 @@ fn finish(g:f32,p:vec2<i32>,uv:vec2<f32>)->vec4<f32>{let tp=clamp(g,0.,2.)*511.5
   else{g=.10*light(eh.t,eh.ndotl,c);}
  }else if(wh.ok){
   let shadow_c=shadow_cone(wh,c);
+  var contact_shadow=1.;
+  if(wh.normal.z>0&&u.sprite.x>0u){for(var i=0u;i<min(u.frame.y,16u);i++){let e=entities[i];if(e.range.w==1u){let delta=(wh.point.xy-e.pos_yaw.xy)/vec2<f32>(.62,.34);let edge=clamp(1.-length(delta),0.,1.);contact_shadow*=1.-.38*edge*edge*(3.-2.*edge);}}}
   let axis=select(select(2u,1u,wh.normal.y!=0),0u,wh.normal.x!=0);
   let strength=clamp(u.style.x,0.,1.)*clamp(1.-wh.t/4.,0.,1.);
   let ao=mix(1.,face_ao(wh),strength);
@@ -103,6 +105,7 @@ fn finish(g:f32,p:vec2<i32>,uv:vec2<f32>)->vec4<f32>{let tp=clamp(g,0.,2.)*511.5
    let diffuse=light(wh.t,ndotl,shadow_c)*ao*mat_ao;let spec=u.lighting.x*shadow_c/(1.+.06*wh.t*wh.t)*(1.-rough)*.22*pow(ndotl,2.+32.*(1.-rough))*clamp(1.-wh.t/max(u.lighting.w,.001),0.,1.);
    g=albedo(wh)*(diffuse+spec);
   }else{g=albedo(wh)*light(wh.t,abs(d[axis]),shadow_c)*ao;}
+  g*=contact_shadow;
  }
  return finish(g,p,uv);
 }

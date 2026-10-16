@@ -144,6 +144,16 @@ impl SpriteView {
             frame,
         })
     }
+
+    pub fn floor_shadow_strength(&self, point: [f32; 3]) -> f32 {
+        if (point[2] - self.instance.pos.z).abs() > 0.08 {
+            return 0.0;
+        }
+        let dx = (point[0] - self.instance.pos.x) / 0.62;
+        let dy = (point[1] - self.instance.pos.y) / 0.34;
+        let edge = (1.0 - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
+        0.38 * edge * edge * (3.0 - 2.0 * edge)
+    }
 }
 
 impl<'a> EntView<'a> {
@@ -284,5 +294,22 @@ mod sprite_tests {
             wall.dist,
             sprite.t
         );
+    }
+
+    #[test]
+    fn floor_contact_shadow_is_soft_and_local() {
+        let instance = EntityInstance {
+            kind: WARDEN,
+            pos: Vect::new(4.5, 0.5, 0.0),
+            yaw: 0.0,
+            params: [0.0; 4],
+        };
+        let view = SpriteView::new(instance, Vect::new(0.5, 0.5, 1.0));
+        let center = view.floor_shadow_strength([4.5, 0.5, 0.0]);
+        let edge = view.floor_shadow_strength([4.9, 0.5, 0.0]);
+        let far = view.floor_shadow_strength([6.0, 0.5, 0.0]);
+        assert!(center > edge && edge > far);
+        assert!(center <= 0.38 && far == 0.0);
+        assert_eq!(view.floor_shadow_strength([4.5, 0.5, 0.2]), 0.0);
     }
 }

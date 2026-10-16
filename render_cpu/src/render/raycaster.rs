@@ -106,19 +106,32 @@ fn shade_pixel<S: SurfaceShader + Sync>(
             );
     }
     match world_hit {
-        Some(hit) => shade_surface(
-            shader,
-            f.world,
-            SurfaceContext {
-                illumination: f.lighting.illumination,
-                hit: &hit,
-                direction: dir,
-                cone,
-                empty_voxel: f.empty_voxel,
-                style: &f.lighting.style,
-                materials,
-            },
-        ),
+        Some(hit) => {
+            let shaded = shade_surface(
+                shader,
+                f.world,
+                SurfaceContext {
+                    illumination: f.lighting.illumination,
+                    hit: &hit,
+                    direction: dir,
+                    cone,
+                    empty_voxel: f.empty_voxel,
+                    style: &f.lighting.style,
+                    materials,
+                },
+            );
+            if hit.normal[2] > 0 {
+                let shadow = sprites
+                    .iter()
+                    .map(|sprite| {
+                        sprite.floor_shadow_strength([hit.point.x, hit.point.y, hit.point.z])
+                    })
+                    .fold(0.0_f32, f32::max);
+                shaded * (1.0 - shadow)
+            } else {
+                shaded
+            }
+        }
         None => 0.0,
     }
 }
