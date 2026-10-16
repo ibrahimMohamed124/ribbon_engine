@@ -87,7 +87,7 @@ impl Presenter {
         mode: RendererMode,
     ) -> Result<Self, Box<dyn Error>> {
         if mode == RendererMode::Cpu {
-            println!("STUDS CPU reference renderer enabled");
+            println!("CPU reference renderer enabled");
             return Ok(Self::Cpu(SoftwarePresenter::new(window)?));
         }
         match render_gpu::GpuPresenter::new(
@@ -95,7 +95,7 @@ impl Presenter {
             (config.width as u32, config.height as u32),
         ) {
             Ok(gpu) => {
-                println!("STUDS GPU presentation enabled");
+                println!("GPU presentation enabled");
                 Ok(Self::Gpu(Box::new(gpu)))
             }
             Err(error) => {

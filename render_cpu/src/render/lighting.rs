@@ -45,7 +45,7 @@ pub struct EntitySurface {
 }
 
 pub struct SurfaceContext<'a> {
-    pub illumination: f32,
+    pub light_level: f32,
     pub hit: &'a Hit,
     pub direction: Vect,
     pub cone: f32,
@@ -59,17 +59,17 @@ pub fn cone_factor(cosang: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-pub fn light(illumination: f32, distance: f32, ndotl: f32, cone: f32) -> f32 {
+pub fn light(light_level: f32, distance: f32, ndotl: f32, cone: f32) -> f32 {
     let fog = (1.0 - distance / engine_scene::RENDER_DIST).clamp(0.0, 1.0);
     let ambient = 0.035;
     let lamp = 0.12 / (1.0 + 0.7 * distance * distance);
     let beam =
-        illumination * cone * (0.3 + 0.7 * ndotl) * (1.7 / (1.0 + 0.06 * distance * distance));
+        light_level * cone * (0.3 + 0.7 * ndotl) * (1.7 / (1.0 + 0.06 * distance * distance));
     (ambient + lamp + beam) * fog
 }
 
 pub fn light_with_style(
-    illumination: f32,
+    light_level: f32,
     distance: f32,
     ndotl: f32,
     cone: f32,
@@ -82,14 +82,14 @@ pub fn light_with_style(
     };
     let fog = (1.0 - distance / fog_distance).clamp(0.0, 1.0);
     let ambient = style.ambient;
-    let lamp = style.lamp / (1.0 + 0.7 * distance * distance);
+    let lamp = style.ambient_fill / (1.0 + 0.7 * distance * distance);
     let beam =
-        illumination * cone * (0.3 + 0.7 * ndotl) * (1.7 / (1.0 + 0.06 * distance * distance));
+        light_level * cone * (0.3 + 0.7 * ndotl) * (1.7 / (1.0 + 0.06 * distance * distance));
     (ambient + lamp + beam) * fog
 }
 
-/// Returns zero when a solid voxel blocks the segment back to the flashlight.
-pub fn flashlight_visibility(
+/// Returns zero when a solid voxel blocks the segment back to the directed source.
+pub fn spot_light_visibility(
     world: &VoxelWorld,
     point: Vect,
     normal: [i32; 3],
@@ -118,7 +118,7 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
     context: SurfaceContext<'_>,
 ) -> f32 {
     let SurfaceContext {
-        illumination,
+        light_level,
         hit,
         direction,
         cone,
@@ -213,8 +213,8 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
     if let Some((_, material_ao)) = pbr {
         occlusion *= material_ao;
     }
-    let shadowed_cone = if style.flashlight_shadows && illumination > 0.0 && cone > 0.0 {
-        cone * flashlight_visibility(
+    let shadowed_cone = if style.spot_light_shadows && light_level > 0.0 && cone > 0.0 {
+        cone * spot_light_visibility(
             world,
             hit.point,
             hit.normal,
@@ -225,10 +225,10 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
     } else {
         cone
     };
-    let diffuse = light_with_style(illumination, hit.dist, ndotl, shadowed_cone, style);
+    let diffuse = light_with_style(light_level, hit.dist, ndotl, shadowed_cone, style);
     let specular = pbr.map_or(0.0, |(roughness, _)| {
         let fog = (1.0 - hit.dist / style.fog_distance.max(0.001)).clamp(0.0, 1.0);
-        let falloff = illumination * shadowed_cone / (1.0 + 0.06 * hit.dist * hit.dist);
+        let falloff = light_level * shadowed_cone / (1.0 + 0.06 * hit.dist * hit.dist);
         falloff * (1.0 - roughness) * 0.22 * ndotl.powf(2.0 + 32.0 * (1.0 - roughness)) * fog
     });
     shader.albedo_with_materials(block, hit, direction, style, materials)
@@ -238,11 +238,11 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
 
 #[cfg(test)]
 mod shadow_tests {
-    use super::{flashlight_visibility, light_with_style};
+    use super::{light_with_style, spot_light_visibility};
     use engine_core::{math::Vect, voxel::VoxelWorld};
 
     #[test]
-    fn voxel_between_flashlight_and_surface_blocks_the_beam() {
+    fn voxel_between_source_and_surface_blocks_the_beam() {
         let mut clear = vec![0; 5 * 3 * 3];
         let eye = Vect::new(0.5, 1.5, 1.5);
         let surface = Vect::new(3.0, 1.5, 1.5);
@@ -250,13 +250,13 @@ mod shadow_tests {
         let to_light = Vect::new(-1.0, 0.0, 0.0);
         let open = VoxelWorld::new(5, 3, 3, clear.clone());
         assert_eq!(
-            flashlight_visibility(&open, surface, normal, to_light, 2.5, 0),
+            spot_light_visibility(&open, surface, normal, to_light, 2.5, 0),
             1.0
         );
         clear[21] = 1;
         let blocked = VoxelWorld::new(5, 3, 3, clear);
         assert_eq!(
-            flashlight_visibility(&blocked, surface, normal, to_light, 2.5, 0),
+            spot_light_visibility(&blocked, surface, normal, to_light, 2.5, 0),
             0.0
         );
         assert!(eye.x < surface.x);
@@ -264,7 +264,7 @@ mod shadow_tests {
 
     #[test]
     fn realistic_light_falloff_is_finite_and_monotonic() {
-        let style = engine_scene::RenderStyle::realistic();
+        let style = engine_scene::RenderStyle::default();
         let values: Vec<_> = (1..=12)
             .map(|distance| light_with_style(1.0, distance as f32, 1.0, 1.0, &style))
             .collect();

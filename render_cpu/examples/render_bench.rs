@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use engine_core::gfx::Framebuffer;
 use render_cpu::render::{render, RenderStyle};
-use shared::{Scene, SceneShader, HEIGHT, WIDTH};
+use shared::{graded_style, Scene, SceneShader, HEIGHT, WIDTH};
 
 fn main() {
     let frames = std::env::args()
@@ -17,19 +17,19 @@ fn main() {
     let shader = SceneShader::default();
     let viewpoint = scene.viewpoints()[0];
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
-    let classic = measure(
+    let baseline = measure(
         &scene,
         &shader,
         &viewpoint,
-        RenderStyle::classic(),
+        RenderStyle::default(),
         frames,
         &mut framebuffer,
     );
-    let moody = measure(
+    let graded = measure(
         &scene,
         &shader,
         &viewpoint,
-        RenderStyle::moody(),
+        graded_style(),
         frames,
         &mut framebuffer,
     );
@@ -37,9 +37,9 @@ fn main() {
         "scene: {}; resolution: {WIDTH}x{HEIGHT}; frames per style: {frames}",
         viewpoint.name
     );
-    println!("classic: {classic:.3} ms/frame");
-    println!("moody:   {moody:.3} ms/frame");
-    println!("overhead: {:+.1}%", (moody / classic - 1.0) * 100.0);
+    println!("baseline: {baseline:.3} ms/frame");
+    println!("graded:   {graded:.3} ms/frame");
+    println!("overhead: {:+.1}%", (graded / baseline - 1.0) * 100.0);
 }
 
 fn measure(

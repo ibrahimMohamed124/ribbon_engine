@@ -5,10 +5,23 @@ use engine_scene::entities::{
     EntityRenderMode, EntityShadow,
 };
 use engine_scene::texture::Texture;
+use engine_scene::{Palette, Tonemap};
 use render_cpu::render::entities::EntitySurface;
 use render_cpu::render::lighting::SurfaceShader;
 use render_cpu::render::RenderStyle;
 use render_cpu::render::Scene as RenderScene;
+
+pub fn graded_style() -> RenderStyle {
+    RenderStyle {
+        tonemap: Tonemap::Exp { exposure: 2.0 },
+        gamma: 1.6,
+        palette: Palette::ramp(0x05_08_06, 0xcf_e3_d4),
+        texture_strength: 0.6,
+        ao_strength: 0.45,
+        ambient: 0.010,
+        ..RenderStyle::default()
+    }
+}
 
 pub const WIDTH: usize = 320;
 pub const HEIGHT: usize = 180;
@@ -69,8 +82,8 @@ pub struct Viewpoint {
     pub name: &'static str,
     pub eye: Vect,
     pub angles: Angles,
-    pub illumination: f32,
-    pub enemy: bool,
+    pub light_level: f32,
+    pub actor: bool,
 }
 
 impl Scene {
@@ -141,8 +154,8 @@ impl Scene {
                 name: "corridor",
                 eye: Vect::new(3.5, 3.5, 1.55),
                 angles: Angles { psi: 0.0, phi: 0.0 },
-                illumination: 0.0,
-                enemy: false,
+                light_level: 0.0,
+                actor: false,
             },
             Viewpoint {
                 name: "corner",
@@ -151,8 +164,8 @@ impl Scene {
                     psi: 0.0,
                     phi: std::f32::consts::FRAC_PI_2,
                 },
-                illumination: 0.0,
-                enemy: false,
+                light_level: 0.0,
+                actor: false,
             },
             Viewpoint {
                 name: "open-room",
@@ -161,38 +174,38 @@ impl Scene {
                     psi: 0.0,
                     phi: std::f32::consts::PI,
                 },
-                illumination: 0.0,
-                enemy: false,
+                light_level: 0.0,
+                actor: false,
             },
             Viewpoint {
-                name: "flashlight",
+                name: "directed-source",
                 eye: Vect::new(26.0, 11.5, 1.55),
                 angles: Angles {
                     psi: 0.0,
                     phi: std::f32::consts::PI,
                 },
-                illumination: 1.0,
-                enemy: false,
+                light_level: 1.0,
+                actor: false,
             },
             Viewpoint {
-                name: "enemy-beam",
+                name: "actor-beam",
                 eye: Vect::new(26.0, 11.5, 1.55),
                 angles: Angles {
                     psi: 0.0,
                     phi: std::f32::consts::PI,
                 },
-                illumination: 1.0,
-                enemy: true,
+                light_level: 1.0,
+                actor: true,
             },
             Viewpoint {
-                name: "enemy-dark",
+                name: "actor-dark",
                 eye: Vect::new(26.0, 11.5, 1.55),
                 angles: Angles {
                     psi: 0.0,
                     phi: std::f32::consts::PI,
                 },
-                illumination: 0.0,
-                enemy: true,
+                light_level: 0.0,
+                actor: true,
             },
         ]
     }
@@ -203,7 +216,7 @@ impl Scene {
         style: RenderStyle,
         frame: u32,
     ) -> RenderScene<'a> {
-        let ents = if view.enemy {
+        let ents = if view.actor {
             let forward = forward_vec(view.angles);
             let pos = Vect::new(
                 view.eye.x + forward.x * 3.0,
@@ -228,7 +241,7 @@ impl Scene {
                 hfov: 1.35,
             },
             lighting: engine_scene::LightingParams {
-                illumination: view.illumination,
+                light_level: view.light_level,
                 intensity: 0.0,
                 frame,
                 style,
@@ -250,7 +263,7 @@ impl Default for SceneShader {
 
 impl SurfaceShader for SceneShader {
     fn albedo(&self, block: u8, hit: &Hit, _direction: Vect, style: &RenderStyle) -> f32 {
-        let base = classic_albedo(block, hit);
+        let base = procedural_albedo(block, hit);
         let strength = style.texture_strength.clamp(0.0, 1.0);
         if strength == 0.0 {
             return base;
@@ -297,11 +310,11 @@ impl SurfaceShader for SceneShader {
         _sign: f32,
         part: u8,
     ) -> EntitySurface {
-        preview_enemy_surface(part)
+        preview_actor_surface(part)
     }
 }
 
-fn classic_albedo(block: u8, hit: &Hit) -> f32 {
+fn procedural_albedo(block: u8, hit: &Hit) -> f32 {
     let axis = if hit.normal[0] != 0 {
         0
     } else if hit.normal[1] != 0 {
@@ -337,7 +350,7 @@ fn classic_albedo(block: u8, hit: &Hit) -> f32 {
     }
 }
 
-fn preview_enemy_surface(part: u8) -> EntitySurface {
+fn preview_actor_surface(part: u8) -> EntitySurface {
     if part == 1 {
         EntitySurface {
             gray: 1.0,

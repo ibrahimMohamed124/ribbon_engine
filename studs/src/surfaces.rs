@@ -22,7 +22,7 @@ pub struct StudsSurface;
 const STUDS_MATERIALS: [Material; 3] = [
     Material {
         block_id: FLOOR,
-        base_rule: BaseAlbedoRule::StudsClassic,
+        base_rule: BaseAlbedoRule::Procedural(1),
         constant_albedo: 0.0,
         texture: TextureKind::Noise { seed: 41 },
         pbr_texture: Some(TextureId(3)),
@@ -31,7 +31,7 @@ const STUDS_MATERIALS: [Material; 3] = [
     },
     Material {
         block_id: WALL,
-        base_rule: BaseAlbedoRule::StudsClassic,
+        base_rule: BaseAlbedoRule::Procedural(2),
         constant_albedo: 0.0,
         texture: TextureKind::Bricks { seed: 17 },
         pbr_texture: Some(TextureId(1)),
@@ -40,7 +40,7 @@ const STUDS_MATERIALS: [Material; 3] = [
     },
     Material {
         block_id: CEIL,
-        base_rule: BaseAlbedoRule::StudsClassic,
+        base_rule: BaseAlbedoRule::Procedural(3),
         constant_albedo: 0.0,
         texture: TextureKind::Noise { seed: 41 },
         pbr_texture: Some(TextureId(4)),
@@ -268,10 +268,10 @@ impl SurfaceShader for StudsSurface {
         }
         match material.base_rule {
             BaseAlbedoRule::Constant => material.constant_albedo,
-            BaseAlbedoRule::StudsClassic if material.texture == TextureKind::None => {
+            BaseAlbedoRule::Procedural(_) if material.texture == TextureKind::None => {
                 classic_albedo(block, hit)
             }
-            BaseAlbedoRule::StudsClassic => self.albedo(block, hit, direction, style),
+            BaseAlbedoRule::Procedural(_) => self.albedo(block, hit, direction, style),
         }
     }
 

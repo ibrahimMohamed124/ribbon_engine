@@ -245,7 +245,7 @@ impl Texture {
 
     pub fn bricks(w: usize, h: usize, seed: i32) -> Self {
         Self::generate(w, h, |x, y, _, _| {
-            // This texture represents the interior of one classic brick. The
+            // This texture represents the interior of one representative brick. The
             // game maps it to 1 unit horizontally by 0.5 units vertically,
             // while mortar and half-offset rows remain in the material shader.
             let grain = hash4(x as i32, y as i32, seed, 1);

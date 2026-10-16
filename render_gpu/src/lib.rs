@@ -150,7 +150,7 @@ impl GpuPresenter {
             .map_err(|error| format!("no compatible wgpu adapter: {error}"))?;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                label: Some("STUDS GPU presenter device"),
+                label: Some("Voxel renderer device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 memory_hints: wgpu::MemoryHints::Performance,
@@ -748,7 +748,7 @@ fn create_world_resources(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuWorl
     );
     let pbr_texels = make_buffer(
         device,
-        "PBR mip data and baked monster sprites",
+        "PBR mip data and entity atlases",
         (PBR_WORD_CAPACITY + (768 * 3840 * 3) as u64) * 4,
         wgpu::BufferUsages::STORAGE,
     );
@@ -923,7 +923,7 @@ fn update_world(
         if g.pbr_texels.size() < PBR_WORD_CAPACITY * 4 + required {
             g.pbr_texels = make_buffer(
                 d,
-                "PBR mip data and baked monster sprites",
+                "PBR mip data and entity atlases",
                 PBR_WORD_CAPACITY * 4 + required,
                 wgpu::BufferUsages::STORAGE,
             );
@@ -1009,7 +1009,10 @@ fn update_world(
         };
         mats[m.block_id as usize] = GpuMaterial {
             info: [
-                u32::from(m.base_rule == BaseAlbedoRule::StudsClassic),
+                match m.base_rule {
+                    BaseAlbedoRule::Constant => 0,
+                    BaseAlbedoRule::Procedural(id) => id,
+                },
                 tex,
                 seed,
                 m.pbr_texture.map_or(0, |id| id.0),
@@ -1088,19 +1091,19 @@ fn update_world(
             c.hfov,
             s.lighting.intensity,
             RENDER_DIST,
-            f32::from(sty.flashlight_shadows) + 2.0 * f32::from(sty.reduce_flashing),
+            f32::from(sty.spot_light_shadows) + 2.0 * f32::from(sty.limit_flicker),
         ],
         lighting: [
-            s.lighting.illumination,
+            s.lighting.light_level,
             sty.ambient,
-            sty.lamp,
+            sty.ambient_fill,
             sty.fog_distance,
         ],
         style: [
             sty.ao_strength,
             sty.texture_strength,
             f32::from(sty.pbr_enabled),
-            f32::from(sty.realistic_assets),
+            f32::from(sty.billboards_enabled),
         ],
         frame: [
             s.lighting.frame,

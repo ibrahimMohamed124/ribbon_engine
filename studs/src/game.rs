@@ -295,7 +295,7 @@ impl Game {
 
     /// Draw the current state into `fb`.
     pub fn draw(&self, fb: &mut Framebuffer, frame_no: u32, hfov: f32) {
-        self.draw_styled(fb, frame_no, hfov, RenderStyle::classic());
+        self.draw_styled(fb, frame_no, hfov, crate::styles::classic());
     }
 
     pub fn draw_styled(&self, fb: &mut Framebuffer, frame_no: u32, hfov: f32, style: RenderStyle) {
@@ -322,7 +322,7 @@ impl Game {
 
                 let n = hash4((self.time * 14.0) as i32, 3, 5, 9);
                 let pulse = n > 0.93 - prox * 0.6;
-                let flick = flashlight_pulse_factor(prox, pulse, style.reduce_flashing);
+                let flick = flashlight_pulse_factor(prox, pulse, style.limit_flicker);
                 let flash = if self.flashlight_on { flick } else { 0.0 };
 
                 let eye = self.player.pos;
@@ -377,8 +377,8 @@ impl Game {
                         hfov: hfov * (1.0 - jumpscare * 0.12),
                     },
                     lighting: engine_scene::LightingParams {
-                        illumination: flash,
-                        intensity: if style.realistic_assets {
+                        light_level: flash,
+                        intensity: if style.billboards_enabled {
                             (prox * if enemy_seen { 1.15 } else { 1.0 }).clamp(0.0, 1.0)
                         } else {
                             0.0

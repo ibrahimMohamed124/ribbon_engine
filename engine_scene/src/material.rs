@@ -21,7 +21,7 @@ pub fn cell_uv(cell: (i32, i32, i32), uv: (f32, f32)) -> (f32, f32, f32, bool) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BaseAlbedoRule {
     Constant,
-    StudsClassic,
+    Procedural(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,7 +41,7 @@ pub struct Material {
     pub pbr_texture: Option<TextureId>,
     /// Per-face repeat scale applied before sampling the referenced set.
     pub uv_scale: [f32; 2],
-    /// Enables deterministic cell-level rotation/flip/tint in realistic rendering.
+    /// Enables deterministic cell-level rotation/flip/tint in PBR shading.
     pub cell_variation: bool,
 }
 

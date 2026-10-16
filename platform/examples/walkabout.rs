@@ -114,10 +114,10 @@ impl App for Walkabout {
                 hfov: 1.25,
             },
             lighting: LightingParams {
-                illumination: 0.75,
+                light_level: 0.75,
                 intensity: 0.0,
                 frame: 0,
-                style: RenderStyle::classic(),
+                style: RenderStyle::default(),
             },
             entities: vec![EntityInstance {
                 kind: WALKABOUT_KIND,

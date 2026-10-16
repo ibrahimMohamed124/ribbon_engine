@@ -2,28 +2,19 @@
 
 use crate::RENDER_DIST;
 use engine_core::math::pack_gray;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub const LEVEL_COUNT: usize = 14;
 const LEVEL_LUT_SIZE: usize = 1024;
 
-/// Bounded screen-ray warp for proximity effects; stable across both renderers.
-pub fn proximity_distortion(
-    u: f32,
-    v: f32,
-    phase: f32,
-    intensity: f32,
-    reduce_flashing: bool,
-) -> [f32; 2] {
+/// Bounded screen-ray warp controlled by a normalized effect strength.
+pub fn screen_warp(u: f32, v: f32, phase: f32, intensity: f32) -> [f32; 2] {
     if !u.is_finite() || !v.is_finite() || !phase.is_finite() || !intensity.is_finite() {
         return [0.0; 2];
     }
-    let amount = if reduce_flashing {
-        0.0
-    } else {
-        intensity.clamp(0.0, 1.0) * 0.003
-    };
+    let amount = intensity.clamp(0.0, 1.0) * 0.003;
     [
         (v * 48.0 + phase).sin() * amount,
         (u * 32.0 - phase * 0.7).sin() * amount,
@@ -99,75 +90,23 @@ pub struct RenderStyle {
     pub texture_strength: f32,
     /// Blend voxel face occlusion into world surfaces.
     pub ao_strength: f32,
-    /// Constant world illumination with the flashlight off.
+    /// Constant light when no directed source contributes.
     pub ambient: f32,
-    /// Secondary point-like illumination around the player.
-    pub lamp: f32,
+    /// Secondary point-like light_level around the player.
+    pub ambient_fill: f32,
     /// Distance where fog has faded lighting to black.
     pub fog_distance: f32,
     /// Enables sampling material PBR maps where a material supplies a set ID.
     pub pbr_enabled: bool,
-    /// Enables realistic-only assets and effects independently of quality.
-    pub realistic_assets: bool,
-    /// Replaces abrupt visual pulses with a small steady illumination change.
-    pub reduce_flashing: bool,
-    /// Cast a voxel DDA ray from lit surfaces back toward the flashlight.
-    pub flashlight_shadows: bool,
+    /// Enables optional render assets and effects independently of quality.
+    pub billboards_enabled: bool,
+    /// Replaces abrupt visual pulses with a small steady light_level change.
+    pub limit_flicker: bool,
+    /// Cast a voxel DDA ray from lit surfaces back toward the directed source.
+    pub spot_light_shadows: bool,
 }
 
 impl RenderStyle {
-    pub fn classic() -> Self {
-        Self {
-            tonemap: Tonemap::None,
-            gamma: 1.0,
-            palette: Palette::gray(),
-            texture_strength: 0.0,
-            ao_strength: 0.0,
-            ambient: 0.035,
-            lamp: 0.12,
-            fog_distance: RENDER_DIST,
-            pbr_enabled: false,
-            realistic_assets: false,
-            reduce_flashing: false,
-            flashlight_shadows: false,
-        }
-    }
-
-    pub fn moody() -> Self {
-        Self {
-            tonemap: Tonemap::Exp { exposure: 2.0 },
-            gamma: 1.6,
-            palette: Palette::ramp(0x05_08_06, 0xcf_e3_d4),
-            texture_strength: 0.6,
-            ao_strength: 0.45,
-            ambient: 0.010,
-            lamp: 0.12,
-            fog_distance: RENDER_DIST,
-            pbr_enabled: false,
-            realistic_assets: false,
-            reduce_flashing: false,
-            flashlight_shadows: false,
-        }
-    }
-
-    /// Color-graded preset for the new PBR path. Legacy styles remain byte-identical.
-    pub fn realistic() -> Self {
-        Self {
-            tonemap: Tonemap::Exp { exposure: 1.45 },
-            gamma: 1.0,
-            palette: Palette::ramp(0x02_0b_0b, 0xb9_c1_b8),
-            texture_strength: 0.0,
-            ao_strength: 0.72,
-            ambient: 0.006,
-            lamp: 0.16,
-            fog_distance: RENDER_DIST * 0.82,
-            pbr_enabled: true,
-            realistic_assets: true,
-            reduce_flashing: false,
-            flashlight_shadows: true,
-        }
-    }
-
     /// Continuous palette level after tone mapping and display gamma.
     /// Vignette, grain, and dithering are deliberately excluded.
     pub fn level_for(&self, gray: f32) -> f32 {
@@ -308,7 +247,20 @@ impl LevelLut {
 
 impl Default for RenderStyle {
     fn default() -> Self {
-        Self::classic()
+        Self {
+            tonemap: Tonemap::None,
+            gamma: 1.0,
+            palette: Palette::gray(),
+            texture_strength: 0.0,
+            ao_strength: 0.0,
+            ambient: 0.035,
+            ambient_fill: 0.12,
+            fog_distance: RENDER_DIST,
+            pbr_enabled: false,
+            billboards_enabled: false,
+            limit_flicker: false,
+            spot_light_shadows: false,
+        }
     }
 }
 
@@ -316,6 +268,18 @@ impl Default for RenderStyle {
 mod tests {
     use super::{Palette, RenderStyle, Tonemap, LEVEL_COUNT};
     use engine_core::math::pack_gray;
+
+    fn nonlinear_style() -> RenderStyle {
+        RenderStyle {
+            tonemap: Tonemap::Exp { exposure: 2.0 },
+            gamma: 1.6,
+            palette: Palette::ramp(0x05_08_06, 0xcf_e3_d4),
+            texture_strength: 0.6,
+            ao_strength: 0.45,
+            ambient: 0.010,
+            ..RenderStyle::default()
+        }
+    }
     use std::sync::Arc;
 
     #[test]
@@ -353,31 +317,25 @@ mod tests {
     }
 
     #[test]
-    fn classic_is_the_default_style() {
-        assert_eq!(RenderStyle::default(), RenderStyle::classic());
+    fn default_style_is_well_formed() {
+        assert_eq!(RenderStyle::default().gamma, 1.0);
     }
 
     #[test]
-    fn proximity_distortion_is_bounded_finite_and_accessibility_aware() {
+    fn screen_warp_is_bounded_finite_and_accessibility_aware() {
         for intensity in [-5.0, 0.0, 0.25, 1.0, 5.0] {
-            let offset = super::proximity_distortion(1.0, -1.0, 100.0, intensity, false);
+            let offset = super::screen_warp(1.0, -1.0, 100.0, intensity);
             assert!(offset
                 .iter()
                 .all(|value| value.is_finite() && value.abs() <= 0.003));
-            assert_eq!(
-                super::proximity_distortion(1.0, -1.0, 100.0, intensity, true),
-                [0.0; 2]
-            );
+            assert_eq!(super::screen_warp(1.0, -1.0, 100.0, 0.0), [0.0; 2]);
         }
-        assert_eq!(
-            super::proximity_distortion(f32::NAN, 0.0, 0.0, 1.0, false),
-            [0.0; 2]
-        );
+        assert_eq!(super::screen_warp(f32::NAN, 0.0, 0.0, 1.0), [0.0; 2]);
     }
 
     #[test]
-    fn level_lut_tracks_exact_levels_and_classic_bypasses_it() {
-        let style = RenderStyle::moody();
+    fn level_lut_tracks_exact_levels_and_default_bypasses_it() {
+        let style = nonlinear_style();
         let lut = style.level_lut();
         for i in 0..=1000 {
             let gray = i as f32 * 1.9 / 1000.0;
@@ -385,19 +343,19 @@ mod tests {
             let sampled = lut.level(lut.tone(&style, gray));
             assert!((sampled - exact).abs() < 0.02);
         }
-        assert!(RenderStyle::classic().level_lut().bypass);
+        assert!(RenderStyle::default().level_lut().bypass);
     }
 
     #[test]
     fn equal_styles_share_tables_but_gamma_changes_do_not() {
-        let first = RenderStyle::moody().level_lut();
-        let second = RenderStyle::moody().level_lut();
+        let first = nonlinear_style().level_lut();
+        let second = nonlinear_style().level_lut();
         assert!(Arc::ptr_eq(
             first.tables.as_ref().unwrap(),
             second.tables.as_ref().unwrap()
         ));
 
-        let mut changed_gamma = RenderStyle::moody();
+        let mut changed_gamma = nonlinear_style();
         changed_gamma.gamma += 0.1;
         let changed = changed_gamma.level_lut();
         assert!(!Arc::ptr_eq(
@@ -407,17 +365,17 @@ mod tests {
     }
 
     #[test]
-    fn level_for_is_monotonic_safe_and_identity_for_classic() {
-        let classic = RenderStyle::classic();
+    fn level_for_is_monotonic_safe_and_identity_for_default() {
+        let default_style = RenderStyle::default();
         for gray in [0.0, 0.1, 0.55, 1.0, 1.7] {
-            assert!((classic.level_for(gray) / 13.0 - gray.clamp(0.0, 1.0)).abs() < 1e-6);
+            assert!((default_style.level_for(gray) / 13.0 - gray.clamp(0.0, 1.0)).abs() < 1e-6);
         }
-        let moody = RenderStyle::moody();
+        let nonlinear = nonlinear_style();
         let levels: Vec<_> = (0..=1000)
-            .map(|i| moody.level_for(i as f32 / 500.0))
+            .map(|i| nonlinear.level_for(i as f32 / 500.0))
             .collect();
         assert!(levels.windows(2).all(|pair| pair[0] <= pair[1]));
-        assert_eq!(moody.level_for(f32::NAN), 0.0);
-        assert_eq!(moody.level_for(f32::INFINITY), 0.0);
+        assert_eq!(nonlinear.level_for(f32::NAN), 0.0);
+        assert_eq!(nonlinear.level_for(f32::INFINITY), 0.0);
     }
 }

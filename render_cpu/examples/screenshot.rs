@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use engine_core::gfx::Framebuffer;
 use render_cpu::render::{render, RenderStyle};
-use shared::{Scene, SceneShader, HEIGHT, WIDTH};
+use shared::{graded_style, Scene, SceneShader, HEIGHT, WIDTH};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = PathBuf::from("target").join("shots");
@@ -15,10 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shader = SceneShader::default();
 
     for viewpoint in scene.viewpoints() {
-        for (label, style) in [
-            ("classic", RenderStyle::classic()),
-            ("moody", RenderStyle::moody()),
-        ] {
+        for (label, style) in [("base", RenderStyle::default()), ("graded", graded_style())] {
             let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
             let frame = scene.frame(&viewpoint, style, 1);
             render(&mut framebuffer, &frame, &shader);

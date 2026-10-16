@@ -48,25 +48,25 @@ impl VisualStyle {
 
     pub fn render_style(self, quality: QualityPreset) -> engine_scene::RenderStyle {
         let mut style = match self {
-            Self::Classic => engine_scene::RenderStyle::classic(),
-            Self::Moody => engine_scene::RenderStyle::moody(),
-            Self::Realistic => engine_scene::RenderStyle::realistic(),
+            Self::Classic => crate::styles::classic(),
+            Self::Moody => crate::styles::moody(),
+            Self::Realistic => crate::styles::realistic(),
         };
         match quality {
             QualityPreset::Low => {
                 style.pbr_enabled = false;
                 style.ao_strength *= 0.35;
-                style.flashlight_shadows = false;
+                style.spot_light_shadows = false;
             }
             QualityPreset::Medium => {
                 style.pbr_enabled = false;
                 style.ao_strength *= 0.7;
-                style.flashlight_shadows = false;
+                style.spot_light_shadows = false;
             }
             QualityPreset::High | QualityPreset::Realistic => {}
         }
         if self != Self::Realistic {
-            style.flashlight_shadows = false;
+            style.spot_light_shadows = false;
         }
         style
     }

@@ -2,7 +2,7 @@ use raycast_blocks::entities::WARDEN;
 use raycast_blocks::game::{Game, State};
 use raycast_blocks::input::{Controls, InputFrame};
 use raycast_blocks::math::Rng;
-use raycast_blocks::renderer::{Framebuffer, RenderStyle, DEFAULT_HFOV};
+use raycast_blocks::renderer::{Framebuffer, DEFAULT_HFOV};
 use raycast_blocks::settings::Settings;
 use raycast_blocks::surfaces::studs_material_table;
 use raycast_blocks::world::World;
@@ -49,7 +49,12 @@ fn golden_render_world_simulation_and_settings() {
     let game = Game::new(42);
     let mut framebuffer = Framebuffer::new(160, 90);
     // Golden output is intentionally pinned to the legacy renderer path.
-    game.draw_styled(&mut framebuffer, 137, DEFAULT_HFOV, RenderStyle::classic());
+    game.draw_styled(
+        &mut framebuffer,
+        137,
+        DEFAULT_HFOV,
+        raycast_blocks::styles::classic(),
+    );
     let framebuffer_hash = pixels_hash(&framebuffer.pixels);
 
     let world_hashes: Vec<_> = [1, 42, 0xdead_beef]
@@ -123,8 +128,18 @@ fn moody_render_is_deterministic_and_matches_its_golden() {
     let game = Game::new(42);
     let mut first = Framebuffer::new(160, 90);
     let mut second = Framebuffer::new(160, 90);
-    game.draw_styled(&mut first, 137, DEFAULT_HFOV, RenderStyle::moody());
-    game.draw_styled(&mut second, 137, DEFAULT_HFOV, RenderStyle::moody());
+    game.draw_styled(
+        &mut first,
+        137,
+        DEFAULT_HFOV,
+        raycast_blocks::styles::moody(),
+    );
+    game.draw_styled(
+        &mut second,
+        137,
+        DEFAULT_HFOV,
+        raycast_blocks::styles::moody(),
+    );
 
     let first_hash = pixels_hash(&first.pixels);
     let second_hash = pixels_hash(&second.pixels);
@@ -142,8 +157,18 @@ fn realistic_render_is_deterministic_and_matches_its_golden() {
     let game = Game::new(42);
     let mut first = Framebuffer::new(160, 90);
     let mut second = Framebuffer::new(160, 90);
-    game.draw_styled(&mut first, 137, DEFAULT_HFOV, RenderStyle::realistic());
-    game.draw_styled(&mut second, 137, DEFAULT_HFOV, RenderStyle::realistic());
+    game.draw_styled(
+        &mut first,
+        137,
+        DEFAULT_HFOV,
+        raycast_blocks::styles::realistic(),
+    );
+    game.draw_styled(
+        &mut second,
+        137,
+        DEFAULT_HFOV,
+        raycast_blocks::styles::realistic(),
+    );
     let first_hash = pixels_hash(&first.pixels);
     let second_hash = pixels_hash(&second.pixels);
     println!("realistic_framebuffer_hash={first_hash:#018x}");
@@ -175,7 +200,7 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
         "baked monster atlas must load"
     );
     let mut scene = game
-        .scene_styled(137, DEFAULT_HFOV, RenderStyle::realistic())
+        .scene_styled(137, DEFAULT_HFOV, raycast_blocks::styles::realistic())
         .unwrap();
     let center_ray = raycast_blocks::math::forward_vec(scene.camera.view);
     let warden = scene

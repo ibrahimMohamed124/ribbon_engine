@@ -27,6 +27,7 @@ pub mod math;
 pub mod player;
 pub mod renderer;
 pub mod settings;
+pub mod styles;
 pub mod surfaces;
 pub mod ui;
 pub mod world;

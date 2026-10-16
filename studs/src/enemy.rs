@@ -21,13 +21,13 @@ pub fn proximity_intensity(distance: f32, awake: bool) -> f32 {
     ((PROXIMITY_RANGE - distance.max(0.0)) / PROXIMITY_RANGE).clamp(0.0, 1.0)
 }
 
-pub fn flashlight_pulse_factor(intensity: f32, pulse: bool, reduce_flashing: bool) -> f32 {
+pub fn flashlight_pulse_factor(intensity: f32, pulse: bool, limit_flicker: bool) -> f32 {
     let intensity = if intensity.is_finite() {
         intensity.clamp(0.0, 1.0)
     } else {
         0.0
     };
-    if reduce_flashing {
+    if limit_flicker {
         1.0 - intensity * 0.12
     } else if pulse {
         1.0 - intensity * 0.55

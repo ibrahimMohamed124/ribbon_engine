@@ -255,7 +255,7 @@ impl App for StudsApp {
                 .settings
                 .visual_style
                 .render_style(self.settings.quality_preset);
-            style.reduce_flashing = self.settings.reduce_flashing;
+            style.limit_flicker = self.settings.reduce_flashing;
             self.game
                 .scene_styled(self.render_frame, self.settings.hfov_radians(), style)
         } else {

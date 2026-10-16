@@ -29,7 +29,7 @@ fn shade_pixel<S: SurfaceShader + Sync>(
     let world_hit = f.world.cast(f.camera.eye, dir, RENDER_DIST, f.empty_voxel);
     let world_distance = world_hit.map_or(f32::INFINITY, |hit| hit.dist);
 
-    if f.lighting.style.realistic_assets {
+    if f.lighting.style.billboards_enabled {
         if let Some(atlas) = materials.sprite_atlas.filter(|atlas| atlas.is_valid()) {
             let mut sprite_hit = None;
             for sprite in sprites {
@@ -70,7 +70,7 @@ fn shade_pixel<S: SurfaceShader + Sync>(
                         let cone = cone_factor(dir.dot(fwd));
                         let lit = base
                             * light_with_style(
-                                f.lighting.illumination,
+                                f.lighting.light_level,
                                 hit.t,
                                 ndotl,
                                 cone,
@@ -99,7 +99,7 @@ fn shade_pixel<S: SurfaceShader + Sync>(
         }
         return appearance.gray
             * light_with_style(
-                f.lighting.illumination,
+                f.lighting.light_level,
                 hit.t,
                 hit.ndotl,
                 cone,
@@ -112,7 +112,7 @@ fn shade_pixel<S: SurfaceShader + Sync>(
                 shader,
                 f.world,
                 SurfaceContext {
-                    illumination: f.lighting.illumination,
+                    light_level: f.lighting.light_level,
                     hit: &hit,
                     direction: dir,
                     cone,
@@ -152,7 +152,7 @@ pub fn render_with_materials<S: SurfaceShader + Sync>(
         .entities
         .iter()
         .filter(|entity| {
-            !(frame.lighting.style.realistic_assets
+            !(frame.lighting.style.billboards_enabled
                 && materials.sprite_atlas.is_some()
                 && frame
                     .entity_registry
@@ -164,7 +164,7 @@ pub fn render_with_materials<S: SurfaceShader + Sync>(
         .filter_map(|entity| EntView::new(*entity, frame.camera.eye, frame.entity_registry))
         .collect();
     let sprites: Vec<_> =
-        if frame.lighting.style.realistic_assets && materials.sprite_atlas.is_some() {
+        if frame.lighting.style.billboards_enabled && materials.sprite_atlas.is_some() {
             frame
                 .entities
                 .iter()
@@ -196,12 +196,15 @@ pub fn render_with_materials<S: SurfaceShader + Sync>(
             let v = 1.0 - ((y as f32 + 0.5) / height as f32) * 2.0;
             for (x, pixel) in row.iter_mut().enumerate() {
                 let u = ((x as f32 + 0.5) / width as f32) * 2.0 - 1.0;
-                let warp = engine_scene::style::proximity_distortion(
+                let warp = engine_scene::style::screen_warp(
                     u,
                     v,
                     frame.lighting.frame as f32 * 0.016,
-                    frame.lighting.intensity,
-                    frame.lighting.style.reduce_flashing,
+                    if frame.lighting.style.limit_flicker {
+                        0.0
+                    } else {
+                        frame.lighting.intensity
+                    },
                 );
                 let direction = (forward
                     + right.scale((u + warp[0]) * tan_h)

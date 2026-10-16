@@ -3,7 +3,6 @@ use raycast_blocks::{
     enemy::EnemyAnimation,
     game::{Game, State},
     math::Vect,
-    renderer::RenderStyle,
 };
 
 #[test]
@@ -13,14 +12,14 @@ fn catch_scene_looks_up_zooms_and_uses_attack_pose() {
     game.enemy.pos = Vect::new(game.player.pos.x, game.player.pos.y, game.player.pos.z);
     let (before_psi, before_hfov) = {
         let before = game
-            .scene_styled(1, DEFAULT_HFOV, RenderStyle::realistic())
+            .scene_styled(1, DEFAULT_HFOV, raycast_blocks::styles::realistic())
             .unwrap();
         (before.camera.view.psi, before.camera.hfov)
     };
     game.state = State::Caught;
     game.state_t = 0.45;
     let caught = game
-        .scene_styled(2, DEFAULT_HFOV, RenderStyle::realistic())
+        .scene_styled(2, DEFAULT_HFOV, raycast_blocks::styles::realistic())
         .unwrap();
     assert!(caught.camera.view.psi > before_psi + 0.5);
     assert!(caught.camera.hfov < before_hfov);

@@ -12,7 +12,7 @@ pub struct Camera {
 
 #[derive(Clone, Copy, Debug)]
 pub struct LightingParams {
-    pub illumination: f32,
+    pub light_level: f32,
     pub intensity: f32,
     pub frame: u32,
     pub style: RenderStyle,

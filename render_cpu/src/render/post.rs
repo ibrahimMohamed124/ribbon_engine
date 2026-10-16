@@ -27,7 +27,7 @@ pub fn finish_pixel(g: f32, u: f32, v: f32, x: usize, y: usize, frame: u32, inte
             frame,
             intensity,
         },
-        &RenderStyle::classic(),
+        &RenderStyle::default(),
     )
 }
 
@@ -53,7 +53,7 @@ pub(crate) fn finish_pixel_styled_with_lut(
     let mapped = lut.tone(style, g);
     let r2 = sample.u * sample.u + sample.v * sample.v;
     let vig = 1.0 - r2 * (0.45 + 0.5 * sample.intensity);
-    let grain = if style.reduce_flashing {
+    let grain = if style.limit_flicker {
         0.0
     } else {
         hash4(sample.x as i32, sample.y as i32, sample.frame as i32, 5)
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn classic_wrapper_matches_styled_classic() {
-        let style = RenderStyle::classic();
+        let style = RenderStyle::default();
         for gray in [0.0, 0.01, 0.1, 0.5, 0.99, 1.0, 1.4] {
             for (x, y) in [(0, 0), (7, 3), (31, 15)] {
                 assert_eq!(
@@ -97,8 +97,10 @@ mod tests {
 
     #[test]
     fn gamma_one_is_a_noop_and_non_finite_input_is_black() {
-        let mut style = RenderStyle::classic();
-        style.gamma = 1.0;
+        let style = RenderStyle {
+            gamma: 1.0,
+            ..RenderStyle::default()
+        };
         for gray in [0.0, 0.25, 0.75, 1.2] {
             assert_eq!(
                 finish_pixel_styled(
