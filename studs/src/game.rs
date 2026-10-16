@@ -311,11 +311,16 @@ impl Game {
 
     pub fn scene_styled(&self, frame_no: u32, hfov: f32, style: RenderStyle) -> Option<Scene<'_>> {
         match self.state {
-            State::Playing => {
+            State::Playing | State::Caught => {
                 let prox = self.proximity();
                 let shake = prox * prox * 0.02;
+                let jumpscare = if self.state == State::Caught {
+                    (self.state_t / 0.45).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
                 let view = Angles {
-                    psi: self.player.view.psi + (self.time * 53.0).cos() * shake,
+                    psi: self.player.view.psi + (self.time * 53.0).cos() * shake + jumpscare * 0.55,
                     phi: self.player.view.phi + (self.time * 37.0).sin() * shake,
                 };
 
@@ -370,7 +375,11 @@ impl Game {
                 Some(Scene {
                     world: &self.world,
                     empty_voxel: AIR,
-                    camera: engine_scene::Camera { eye, view, hfov },
+                    camera: engine_scene::Camera {
+                        eye,
+                        view,
+                        hfov: hfov * (1.0 - jumpscare * 0.12),
+                    },
                     lighting: engine_scene::LightingParams {
                         illumination: flash,
                         intensity: if style.realistic_assets {
@@ -385,7 +394,7 @@ impl Game {
                     entity_registry: &engine_scene::entities::BUILTIN_ENTITY_REGISTRY,
                 })
             }
-            State::Caught | State::Won => None,
+            State::Won => None,
         }
     }
 

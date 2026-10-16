@@ -244,6 +244,7 @@ impl App for StudsApp {
         let has_game_scene = matches!(
             self.ui.screen(),
             Screen::Playing
+                | Screen::Result
                 | Screen::Pause
                 | Screen::Settings
                 | Screen::Controls
