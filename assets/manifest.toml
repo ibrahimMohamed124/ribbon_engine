@@ -1,0 +1,42 @@
+# Run `python tools/fetch_assets.py` to download the CC0 maps, produce the
+# processed 256px sets, and replace each pending digest with the output SHA-256.
+
+[[assets]]
+name = "Damaged concrete wall"
+asset_id = "concrete_wall_004"
+source_url = "https://polyhaven.com/a/concrete_wall_004"
+author = "Photography: Charlotte Baglioni; processing: Dario Barresi"
+license = "CC0-1.0"
+sha256 = "pending-download"
+local_path = "studs/assets/materials/concrete_wall_004.zip"
+usage = "Primary wall material: sRGB albedo, tangent normal, roughness, and AO."
+
+[[assets]]
+name = "Weathered concrete brick wall"
+asset_id = "t_concrete_wall_002"
+source_url = "https://polyhaven.com/a/t_concrete_wall_002"
+author = "Photography: Dimitrios Savva; processing: Rico Cilliers"
+license = "CC0-1.0"
+sha256 = "pending-download"
+local_path = "studs/assets/materials/t_concrete_wall_002.zip"
+usage = "Secondary wall variation: sRGB albedo, tangent normal, roughness, and AO."
+
+[[assets]]
+name = "Worn concrete floor"
+asset_id = "concrete_floor_worn_001"
+source_url = "https://polyhaven.com/a/concrete_floor_worn_001"
+author = "Photography: Dimitrios Savva; processing: Rico Cilliers"
+license = "CC0-1.0"
+sha256 = "pending-download"
+local_path = "studs/assets/materials/concrete_floor_worn_001.zip"
+usage = "Floor material: sRGB albedo, tangent normal, roughness, and AO."
+
+[[assets]]
+name = "Flaking interior ceiling"
+asset_id = "ceiling_interior"
+source_url = "https://polyhaven.com/a/ceiling_interior"
+author = "Dimitrios Savva"
+license = "CC0-1.0"
+sha256 = "pending-download"
+local_path = "studs/assets/materials/ceiling_interior.zip"
+usage = "Ceiling material: sRGB albedo, tangent normal, roughness, and AO."
