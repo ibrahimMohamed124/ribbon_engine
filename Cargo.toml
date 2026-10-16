@@ -1,6 +1,16 @@
 [workspace]
-members = ["engine_core", "engine_scene", "render_cpu", "render_gpu", "platform", "studs", "tools/bake_sprites"]
-default-members = ["studs"]
+members = [
+  "engine/crates/core",
+  "engine/crates/scene",
+  "engine/crates/api",
+  "engine/crates/render-cpu",
+  "engine/crates/render-gpu",
+  "engine/crates/platform",
+  "engine/examples/minimal",
+  "games/studs",
+  "games/studs/tools/bake_sprites",
+]
+default-members = ["games/studs"]
 resolver = "2"
 
 [profile.release]

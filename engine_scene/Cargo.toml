@@ -1,7 +1,0 @@
-[package]
-name = "engine_scene"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-engine_core = { path = "../engine_core" }

@@ -1,0 +1,8 @@
+[package]
+name = "voxelworks-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+voxelworks-core = { path = "../core" }
+voxelworks-scene = { path = "../scene" }

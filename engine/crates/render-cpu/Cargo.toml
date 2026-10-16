@@ -1,0 +1,9 @@
+[package]
+name = "voxelworks-render-cpu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+voxelworks-core = { path = "../core" }
+voxelworks-scene = { path = "../scene" }
+rayon = "1.10"

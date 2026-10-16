@@ -58,7 +58,7 @@ jobs:
       - name: Core and scene dependency boundary
         shell: bash
         run: |
-          for crate in engine_core engine_scene; do
+          for crate in voxelworks-core voxelworks-scene voxelworks-api; do
             if cargo tree -p "$crate" -e normal | grep -E '(rayon|minifb|winit|wgpu|rodio|enigo) v[0-9]'; then
               echo "$crate must not depend on renderer or desktop packages"
               exit 1
@@ -69,11 +69,11 @@ jobs:
         shell: bash
         run: |
           if grep -riE 'studs|warden|page|enemy|monster|crawl|flashlight|maze|jumpscare' \
-            engine_core engine_scene render_cpu render_gpu platform; then
+            engine/crates/core engine/crates/scene engine/crates/api engine/crates/render-cpu engine/crates/render-gpu engine/crates/platform; then
             echo "Engine crates contain game-specific vocabulary"
             exit 1
           fi
-          for crate in engine_core engine_scene render_cpu render_gpu platform; do
+          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-render-cpu voxelworks-render-gpu voxelworks-platform; do
             if cargo tree -p "$crate" -e normal | grep -i 'studs'; then
               echo "$crate must not depend on the studs game"
               exit 1
@@ -83,16 +83,16 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: Validate processed assets and manifest
-        run: python tools/fetch_assets.py --check
+        run: python games/studs/tools/fetch_assets.py --check
       - name: clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build examples
         run: cargo build --locked --workspace --examples
       - name: Engine-only minimal app
-        run: cargo run --locked -p platform --example minimal_app -- --headless
+        run: cargo run --locked -p voxelworks-minimal -- --headless
       - name: Level probe
         if: runner.os == 'Linux'
-        run: cargo run --release --locked -p render_cpu --example level_probe
+        run: cargo run --release --locked -p voxelworks-render-cpu --example level_probe
 
   release-build:
     name: Release binary (${{ matrix.os }})
@@ -121,7 +121,7 @@ jobs:
         shell: bash
         run: |
           mkdir dist
-          cp -r studs/assets dist/assets
+          cp -r games/studs/assets dist/assets
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp target/release/raycast_blocks.exe dist/
           else

@@ -1,0 +1,10 @@
+[package]
+name = "voxelworks-minimal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+voxelworks-core = { path = "../../crates/core" }
+voxelworks-scene = { path = "../../crates/scene" }
+voxelworks-platform = { path = "../../crates/platform" }
+voxelworks-render-cpu = { path = "../../crates/render-cpu" }

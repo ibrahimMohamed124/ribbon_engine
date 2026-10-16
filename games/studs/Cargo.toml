@@ -1,0 +1,19 @@
+[package]
+name = "studs"
+version = "0.3.0"
+edition = "2021"
+
+[lib]
+name = "studs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "studs"
+path = "src/main.rs"
+
+[dependencies]
+voxelworks-core = { path = "../../engine/crates/core" }
+voxelworks-scene = { path = "../../engine/crates/scene" }
+voxelworks-render-cpu = { path = "../../engine/crates/render-cpu" }
+voxelworks-platform = { path = "../../engine/crates/platform" }
+image = { version = "0.25", default-features = false, features = ["png"] }

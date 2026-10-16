@@ -1,0 +1,13 @@
+[package]
+name = "voxelworks-render-gpu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+voxelworks-core = { path = "../core" }
+voxelworks-scene = { path = "../scene" }
+bytemuck = { version = "1.25.2", features = ["derive"] }
+pollster = "0.4.0"
+raw-window-handle = "0.6.2"
+wgpu = "25.0.2"
+winit = "0.30.13"

@@ -133,14 +133,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "bake_sprites"
-version = "0.1.0"
-dependencies = [
- "image",
- "ufbx",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -573,17 +565,6 @@ dependencies = [
  "rustversion",
  "scopeguard",
  "simdutf8",
-]
-
-[[package]]
-name = "engine_core"
-version = "0.1.0"
-
-[[package]]
-name = "engine_scene"
-version = "0.1.0"
-dependencies = [
- "engine_core",
 ]
 
 [[package]]
@@ -1716,19 +1697,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
-name = "platform"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_scene",
- "render_cpu",
- "render_gpu",
- "rodio",
- "softbuffer",
- "winit",
-]
-
-[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1890,28 +1858,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "737970939a87c6fa31e7acad13307bccbb017a073b695b6089a2c484f929e20e"
 dependencies = [
  "bitflags 2.13.2",
-]
-
-[[package]]
-name = "render_cpu"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_scene",
- "rayon",
-]
-
-[[package]]
-name = "render_gpu"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "engine_core",
- "engine_scene",
- "pollster",
- "raw-window-handle",
- "wgpu",
- "winit",
 ]
 
 [[package]]
@@ -2212,11 +2158,19 @@ dependencies = [
 name = "studs"
 version = "0.3.0"
 dependencies = [
- "engine_core",
- "engine_scene",
  "image",
- "platform",
- "render_cpu",
+ "voxelworks-core",
+ "voxelworks-platform",
+ "voxelworks-render-cpu",
+ "voxelworks-scene",
+]
+
+[[package]]
+name = "studs-bake-sprites"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "ufbx",
 ]
 
 [[package]]
@@ -2481,6 +2435,70 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "voxelworks-api"
+version = "0.1.0"
+dependencies = [
+ "voxelworks-core",
+ "voxelworks-scene",
+]
+
+[[package]]
+name = "voxelworks-core"
+version = "0.1.0"
+
+[[package]]
+name = "voxelworks-minimal"
+version = "0.1.0"
+dependencies = [
+ "voxelworks-core",
+ "voxelworks-platform",
+ "voxelworks-render-cpu",
+ "voxelworks-scene",
+]
+
+[[package]]
+name = "voxelworks-platform"
+version = "0.1.0"
+dependencies = [
+ "rodio",
+ "softbuffer",
+ "voxelworks-core",
+ "voxelworks-render-cpu",
+ "voxelworks-render-gpu",
+ "voxelworks-scene",
+ "winit",
+]
+
+[[package]]
+name = "voxelworks-render-cpu"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "voxelworks-core",
+ "voxelworks-scene",
+]
+
+[[package]]
+name = "voxelworks-render-gpu"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "pollster",
+ "raw-window-handle",
+ "voxelworks-core",
+ "voxelworks-scene",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "voxelworks-scene"
+version = "0.1.0"
+dependencies = [
+ "voxelworks-core",
+]
 
 [[package]]
 name = "walkdir"

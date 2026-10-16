@@ -1,0 +1,80 @@
+# Run `python tools/fetch_assets.py` to fetch hash-verified sources on demand
+# and regenerate the compact runtime maps; raw sources stay out of version control.
+
+[[assets]]
+name = "Damaged concrete wall"
+asset_id = "concrete_wall_004"
+source_url = "https://polyhaven.com/a/concrete_wall_004"
+author = "Photography: Charlotte Baglioni; processing: Dario Barresi"
+license = "CC0-1.0"
+source_maps = [
+  { name = "albedo", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/concrete_wall_004/concrete_wall_004_diff_1k.png", sha256 = "7bc6fb17758cfd2f7b297af0d168f308fe36bdfdfc7b2ff1a2a72eabb472a6e1" },
+  { name = "normal", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/concrete_wall_004/concrete_wall_004_nor_gl_1k.png", sha256 = "008cb9cd6b712788645bcfad8c9bb442c86f9c9112a403535ae83520cf5c5585" },
+  { name = "arm", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/concrete_wall_004/concrete_wall_004_arm_1k.png", sha256 = "cb10fc90dd83f7a0f450677db17bca02ca80ba73650e44fcdb8ba11884b053ef" },
+]
+runtime_sha256 = { albedo = "a0272aff9718b2f7957b68d689054b41153a1dfa9b37bc0acd137ebd9da77c41", normal = "e8e33aa34d546c03174663703038cb96e82b4426c04044e3e4f1c6d6527e3f8d", roughness = "e20fe1e89946f55755f508ecb75f7b225fd8a15be8d56556e4392bb3da487802", ao = "c9095f934b6b1e13591ecffa18d53e840ce0faf01dd83892637c5608ab3dd8f8" }
+runtime_path = "assets/materials/concrete_wall_004"
+usage = "Primary wall material: sRGB albedo, tangent normal, roughness, and AO."
+
+[[assets]]
+name = "Weathered concrete brick wall"
+asset_id = "t_concrete_wall_002"
+source_url = "https://polyhaven.com/a/t_concrete_wall_002"
+author = "Photography: Dimitrios Savva; processing: Rico Cilliers"
+license = "CC0-1.0"
+source_maps = [
+  { name = "albedo", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/t_concrete_wall_002/t_concrete_wall_002_diffuse_1k.png", sha256 = "106500f802023c9525bb988ce0b5d55dcbcf5895701770c9c5c1324667a44fd6" },
+  { name = "normal", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/t_concrete_wall_002/t_concrete_wall_002_nor_gl_1k.png", sha256 = "0e568510143aee23229a7e312c1348562644709ba8a7e2cc521b38a96f3dd7be" },
+  { name = "arm", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/t_concrete_wall_002/t_concrete_wall_002_arm_1k.png", sha256 = "60f4fb37242968d9370b99c6c7d1f6da7b2c7944d08d5fe0465e84634a3c9a5b" },
+]
+runtime_sha256 = { albedo = "5ab7677bf5a70721ea32a431b6f7421212c3e7066b47ee35da2c57c2a9c5bf3e", normal = "d7bfc44c07de38c29397894a6b3096ecd4f59b0429f61e4584368255e742b5dc", roughness = "6531972fc614163c256ccff1de53ee26463352f6458c633bca5f7b1df7b8675c", ao = "681412d0f57c181a88ef95d5302c4d85d7a3ceff2b2fe170779805761dd328dc" }
+runtime_path = "assets/materials/t_concrete_wall_002"
+usage = "Secondary wall variation: sRGB albedo, tangent normal, roughness, and AO."
+
+[[assets]]
+name = "Worn concrete floor"
+asset_id = "concrete_floor_worn_001"
+source_url = "https://polyhaven.com/a/concrete_floor_worn_001"
+author = "Photography: Dimitrios Savva; processing: Rico Cilliers"
+license = "CC0-1.0"
+source_maps = [
+  { name = "albedo", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/concrete_floor_worn_001/concrete_floor_worn_001_diff_1k.png", sha256 = "dde1944b011f2536fba8d1d611213bb76ab27e49155763bbe449397967e738fa" },
+  { name = "normal", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/concrete_floor_worn_001/concrete_floor_worn_001_nor_gl_1k.png", sha256 = "156fd005f3e675fc25e8afb73d65252a3534d78485ad4cc9c2377ae1a0ff1fbe" },
+  { name = "arm", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/concrete_floor_worn_001/concrete_floor_worn_001_arm_1k.png", sha256 = "5a6388552e247d193124ecea50ac6700957d7935f3cf62060b694bab726d3b7a" },
+]
+runtime_sha256 = { albedo = "f3d031b53b61ca475e2f4652015e293ae3acb3ce56479d941ad02b7d89f69307", normal = "7d2d26694b9ef60017fbe4ed7f39bce0ae2cd838a2d424f9f090d82062dabe6b", roughness = "86c6720e86553b91d8ddb2f03f9f00fdf09bbf702503ea788661b985c4b3965a", ao = "cd2c91a1ced77c255ff8c6e160609a32bd142839c43c5641679d39542f186fb1" }
+runtime_path = "assets/materials/concrete_floor_worn_001"
+usage = "Floor material: sRGB albedo, tangent normal, roughness, and AO."
+
+[[assets]]
+name = "Flaking interior ceiling"
+asset_id = "ceiling_interior"
+source_url = "https://polyhaven.com/a/ceiling_interior"
+author = "Dimitrios Savva"
+license = "CC0-1.0"
+source_maps = [
+  { name = "albedo", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/ceiling_interior/ceiling_interior_diff_1k.png", sha256 = "c669508b0e11c145c259f8e1af7b55ef7129d0b94565244191d8038cd9a97b7e" },
+  { name = "normal", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/ceiling_interior/ceiling_interior_nor_gl_1k.png", sha256 = "44a5dc67689848a90fa7a3cd7784ec31d2980c5b59db183ceb009d6a1ae17aa7" },
+  { name = "arm", url = "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/ceiling_interior/ceiling_interior_arm_1k.png", sha256 = "d335dcf259a291e750c63d7298a6003a80269b2c27c7fed82dacde9ef0cb27b2" },
+]
+runtime_sha256 = { albedo = "1949c25d30910b894a8e67b5d33cd50624bb6aefe285ade0f656ee25d99f1ea5", normal = "2645b6160a6a866fbc3cb0aafb61bec7d4d9e772636f4653d2584a148946d455", roughness = "3ddc486cf1b2c4a309cf5c3add98d6696f4072e279c96d11b1f9a8acedf7c806", ao = "9ef8f82bed1b17f463ca559a62a0cdea36998386e056baffe5bbe132f8127b5d" }
+runtime_path = "assets/materials/ceiling_interior"
+usage = "Ceiling material: sRGB albedo, tangent normal, roughness, and AO."
+
+[[monsters]]
+name = "Nightmare Monsters - Crawlmaster Deluxe"
+source_url = "https://opengameart.org/content/nightmare-monsters"
+download_url = "https://opengameart.org/sites/default/files/vividcharacters.zip"
+author = "Models: Teh_Bucket; textures: Joao Paulo via 3dtextures.me; Sonask concept art by raymoohawk (public-domain permission noted by uploader)"
+license = "CC0-1.0"
+sha256 = "961c5918c4420382e1dacae3272f2154514540e16b3178ad0abaed42a556f4f1"
+local_path = "assets/monster/source/vividcharacters.zip"
+usage = "Selected humanoid candidate: Crawlmaster Deluxe; raw FBX source for offline procedural sprite baking."
+selected_model = "crawlmaster deluxe.fbx"
+processed_path = "assets/monster"
+albedo_path = "assets/monster/albedo.png"
+albedo_sha256 = "248e2a0e50927c4190e796253725c3b35231b4bb8c3854b10c1b4ff4ce215954"
+normal_path = "assets/monster/normal.png"
+normal_sha256 = "89e18fdba44d737cb2929b1a4e81b89c7fda6dbb95fbe2fb05f6ab0d4d212136"
+emissive_path = "assets/monster/emissive.png"
+emissive_sha256 = "97420595eef94770091a3f75d5f186a44c9b9edaa02e1ae8ae164bf1897b9cca"

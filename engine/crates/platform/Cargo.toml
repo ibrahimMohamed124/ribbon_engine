@@ -1,0 +1,15 @@
+[package]
+name = "voxelworks-platform"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+voxelworks-core = { path = "../core" }
+voxelworks-scene = { path = "../scene" }
+winit = "0.30.13"
+softbuffer = "0.4.6"
+voxelworks-render-gpu = { path = "../render-gpu" }
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }
+
+[dev-dependencies]
+voxelworks-render-cpu = { path = "../render-cpu" }
