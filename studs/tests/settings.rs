@@ -1,6 +1,6 @@
 use raycast_blocks::input::Action;
 use raycast_blocks::input::Key;
-use raycast_blocks::settings::{Settings, VisualStyle};
+use raycast_blocks::settings::{QualityPreset, Settings, VisualStyle};
 
 #[test]
 fn empty_text_gives_defaults() {
@@ -186,6 +186,19 @@ fn quality_and_flash_accessibility_settings_round_trip() {
     let round_trip = Settings::parse(&settings.to_text());
     assert_eq!(round_trip.quality_preset, settings.quality_preset);
     assert_eq!(round_trip.reduce_flashing, settings.reduce_flashing);
+}
+
+#[test]
+fn automatic_cpu_quality_only_changes_an_unselected_preset() {
+    let mut automatic = Settings::default();
+    assert!(automatic.use_cpu_fallback_quality());
+    assert_eq!(automatic.quality_preset, QualityPreset::Medium);
+    assert!(!automatic.quality_preset_explicit);
+
+    let mut chosen = Settings::parse("quality_preset = high\n");
+    assert!(chosen.quality_preset_explicit);
+    assert!(!chosen.use_cpu_fallback_quality());
+    assert_eq!(chosen.quality_preset, QualityPreset::High);
 }
 
 #[test]

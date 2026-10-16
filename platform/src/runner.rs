@@ -300,7 +300,14 @@ impl<A: App, R: Renderer> ApplicationHandler for Runner<A, R> {
                 self.renderer
                     .resize(self.config.width as u32, self.config.height as u32);
                 match Presenter::new(window.clone(), &self.config, self.renderer_mode) {
-                    Ok(presenter) => self.presenter = Some(presenter),
+                    Ok(presenter) => {
+                        if self.renderer_mode == RendererMode::Auto
+                            && matches!(&presenter, Presenter::Cpu(_))
+                        {
+                            self.app.on_cpu_fallback();
+                        }
+                        self.presenter = Some(presenter);
+                    }
                     Err(error) => {
                         self.failure =
                             Some(format!("could not create CPU fallback presenter: {error}"));

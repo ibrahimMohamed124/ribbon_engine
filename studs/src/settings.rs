@@ -139,6 +139,7 @@ pub struct Settings {
     pub brightness: f32,
     pub visual_style: VisualStyle,
     pub quality_preset: QualityPreset,
+    pub quality_preset_explicit: bool,
     pub reduce_flashing: bool,
     /// Best completion time in seconds, indexed by Easy / Normal / Hard.
     pub best_times: [f32; 3],
@@ -164,6 +165,7 @@ impl Default for Settings {
             brightness: 1.0,
             visual_style: VisualStyle::default(),
             quality_preset: QualityPreset::default(),
+            quality_preset_explicit: false,
             reduce_flashing: false,
             best_times: [0.0; 3],
             flashlight_on_start: true,
@@ -237,6 +239,14 @@ impl Settings {
 
     pub fn hfov_radians(&self) -> f32 {
         self.hfov_degrees.to_radians()
+    }
+
+    pub fn use_cpu_fallback_quality(&mut self) -> bool {
+        if self.quality_preset_explicit {
+            return false;
+        }
+        self.quality_preset = QualityPreset::Medium;
+        true
     }
 
     /// Where the settings file lives by default.
@@ -323,6 +333,12 @@ impl Settings {
                 "quality_preset" => {
                     if let Some(preset) = QualityPreset::parse(value) {
                         s.quality_preset = preset;
+                        s.quality_preset_explicit = true;
+                    }
+                }
+                "quality_preset_explicit" => {
+                    if let Ok(explicit) = value.parse::<bool>() {
+                        s.quality_preset_explicit = explicit;
                     }
                 }
                 "reduce_flashing" => {
@@ -413,6 +429,10 @@ impl Settings {
         out.push_str(&format!(
             "quality_preset = {}\n",
             self.quality_preset.as_str()
+        ));
+        out.push_str(&format!(
+            "quality_preset_explicit = {}\n",
+            self.quality_preset_explicit
         ));
         out.push_str(&format!("reduce_flashing = {}\n", self.reduce_flashing));
         out.push_str(&format!("best_time_easy = {}\n", self.best_times[0]));

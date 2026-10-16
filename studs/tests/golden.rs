@@ -86,6 +86,7 @@ fn golden_render_world_simulation_and_settings() {
             .filter(|line| {
                 !line.starts_with("visual_style =")
                     && !line.starts_with("quality_preset =")
+                    && !line.starts_with("quality_preset_explicit =")
                     && !line.starts_with("reduce_flashing =")
             })
             .collect();

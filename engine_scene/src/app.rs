@@ -17,6 +17,9 @@ pub struct FramePlan<'a> {
 pub trait App {
     fn update(&mut self, ctx: &mut Ctx<'_>) -> Flow;
 
+    /// Called when automatic presentation falls back to the CPU renderer.
+    fn on_cpu_fallback(&mut self) {}
+
     fn frame_plan(&self, ctx: &Ctx<'_>) -> FramePlan<'_>;
 
     fn materials(&self) -> &'static MaterialTable {

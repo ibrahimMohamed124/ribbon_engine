@@ -115,6 +115,14 @@ impl StudsApp {
 }
 
 impl App for StudsApp {
+    fn on_cpu_fallback(&mut self) {
+        if self.settings.use_cpu_fallback_quality() {
+            eprintln!(
+                "CPU renderer fallback: selecting Medium quality automatically; choose a quality preset in Settings to override this."
+            );
+        }
+    }
+
     fn update(&mut self, ctx: &mut Ctx<'_>) -> Flow {
         self.render_frame = ctx.frame;
         let ui_input = UiInput::from_keys(ctx.pressed_keys.to_vec()).with_mouse(

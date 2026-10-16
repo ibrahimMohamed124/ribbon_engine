@@ -123,7 +123,10 @@ pub fn adjust(settings: &mut Settings, index: usize, direction: i32) -> (bool, b
         }
         11 => settings.brightness = (settings.brightness + direction as f32 * 0.1).clamp(0.5, 1.5),
         12 => settings.visual_style.toggle(),
-        13 => settings.quality_preset.toggle(direction),
+        13 => {
+            settings.quality_preset.toggle(direction);
+            settings.quality_preset_explicit = true;
+        }
         14 => settings.reduce_flashing = !settings.reduce_flashing,
         _ => return (false, false),
     }
