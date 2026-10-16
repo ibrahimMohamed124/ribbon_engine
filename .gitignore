@@ -1,6 +1,7 @@
-/target
-/dist
+/target/
+/dist/
 /settings.cfg
 /studs/settings.cfg
+*.zip
 /assets/source/
 /assets/monster/source/
