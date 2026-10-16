@@ -1,5 +1,7 @@
 # Workspace architecture
 
+**Voxelworks Engine** is the reusable engine product in `engine_core`, `engine_scene`, `render_cpu`, `render_gpu`, and `platform`. `studs` is a separate test game that demonstrates how an application supplies content and game rules.
+
 ## Crate responsibilities
 
 - `engine_core`: math, voxel storage/casting, physics, input, timing, audio logic, application context, canvas primitives, framebuffer drawing, and ordered draw lists. It has no external dependencies.
@@ -23,7 +25,15 @@ graph TD
   render_gpu --> engine_scene
 ```
 
-`default-members` stays `studs`, so root `cargo run` behavior remains the same.
+`default-members` stays `studs`, so root `cargo run` behavior remains the same. The executable remains `raycast_blocks`; the reusable game library is named `studs`.
+
+## Engine/game boundary
+
+The engine does not define entity kinds, game models, sprite layouts, game style presets, or game-specific labels. A game must supply its own entity registry and bounds, material table, `SurfaceShader`, render styles, and audio bank. All scene and entity descriptors remain plain data.
+
+Backend-shared entity storage is bounded by `engine_scene::entities::MAX_ENTITIES` (16), `MAX_BOXES_PER_ENTITY` (64), and `MAX_ENTITY_BOXES` (1,024). Both renderers validate these limits and report a descriptive error before consuming the scene.
+
+CI scans `engine_core`, `engine_scene`, `render_cpu`, `render_gpu`, and `platform` for game-specific vocabulary, and checks that no engine crate's dependency tree includes `studs`. For a clean proof, build or run `platform/examples/minimal_app.rs`; it owns a small world, registry, materials, and shader and does not depend on the game crate.
 
 ## Dependency rules
 

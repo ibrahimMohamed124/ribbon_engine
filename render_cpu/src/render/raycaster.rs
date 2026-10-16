@@ -147,6 +147,18 @@ pub fn render_with_materials<S: SurfaceShader + Sync>(
     shader: &S,
     materials: &MaterialTable,
 ) {
+    render_with_materials_checked(fb, frame, shader, materials)
+        .expect("CPU renderer received a scene beyond its declared entity limits");
+}
+
+/// Render a scene, returning an error if it exceeds the shared renderer limits.
+pub fn render_with_materials_checked<S: SurfaceShader + Sync>(
+    fb: &mut Framebuffer,
+    frame: &Scene,
+    shader: &S,
+    materials: &MaterialTable,
+) -> Result<(), String> {
+    frame.validate_entity_limits()?;
     let level_lut = frame.lighting.style.level_lut();
     let entities: Vec<_> = frame
         .entities
@@ -228,4 +240,125 @@ pub fn render_with_materials<S: SurfaceShader + Sync>(
                 );
             }
         });
+    Ok(())
+}
+
+#[cfg(test)]
+mod data_driven_entity_tests {
+    use super::render_with_materials_checked;
+    use crate::render::lighting::SurfaceShader;
+    use engine_core::gfx::Framebuffer;
+    use engine_core::math::{Angles, Vect};
+    use engine_core::voxel::{Hit, VoxelWorld};
+    use engine_scene::entities::{
+        EntityAnimation, EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
+        EntityRenderMode, EntityShadow,
+    };
+    use engine_scene::material::MaterialTable;
+    use engine_scene::scene::{Camera, LightingParams, Scene};
+    use engine_scene::style::RenderStyle;
+    use engine_scene::texture::SpriteAtlas;
+    use std::sync::OnceLock;
+
+    const BOX_KIND: EntityKind = EntityKind(71);
+    const BILLBOARD_KIND: EntityKind = EntityKind(72);
+    const BOXES: [EntityBox; 1] = [EntityBox {
+        min: [-0.4, -0.4, 0.0],
+        max: [0.4, 0.4, 1.5],
+        part: 0,
+        phase_sway: 0.0,
+    }];
+    const NO_BOXES: [EntityBox; 0] = [];
+    const DEFINITIONS: [EntityDefinition; 2] = [
+        EntityDefinition {
+            kind: BOX_KIND,
+            bounds: Some(([-0.4, -0.4, 0.0], [0.4, 0.4, 1.5])),
+            boxes: &BOXES,
+            render_mode: EntityRenderMode::Boxes,
+            animation: EntityAnimation::None,
+            shadow: EntityShadow::None,
+        },
+        EntityDefinition {
+            kind: BILLBOARD_KIND,
+            bounds: None,
+            boxes: &NO_BOXES,
+            render_mode: EntityRenderMode::Billboard {
+                atlas_slot: 0,
+                width: 1.4,
+                height: 2.0,
+            },
+            animation: EntityAnimation::None,
+            shadow: EntityShadow::None,
+        },
+    ];
+
+    struct NeutralShader;
+    impl SurfaceShader for NeutralShader {
+        fn albedo(&self, _block: u8, _hit: &Hit, _direction: Vect, _style: &RenderStyle) -> f32 {
+            0.0
+        }
+    }
+
+    fn sprite_materials() -> &'static MaterialTable {
+        static ATLAS: OnceLock<SpriteAtlas> = OnceLock::new();
+        static MATERIALS: OnceLock<MaterialTable> = OnceLock::new();
+        let atlas = ATLAS.get_or_init(|| SpriteAtlas {
+            width: 1,
+            height: 1,
+            cell_width: 1,
+            cell_height: 1,
+            views: 1,
+            states: 1,
+            frames_per_state: 1,
+            albedo: vec![[255, 255, 255, 255]],
+            normal: vec![[128, 128, 255, 255]],
+            emissive: vec![0],
+        });
+        MATERIALS.get_or_init(|| MaterialTable::with_pbr_and_sprite(&[], &[], Some(atlas)))
+    }
+
+    #[test]
+    fn neutral_registry_draws_box_and_billboard_modes() {
+        let registry = EntityRegistry::new(&DEFINITIONS);
+        let world = VoxelWorld::new(8, 5, 3, vec![0; 8 * 5 * 3]);
+        let camera = Camera {
+            eye: Vect::new(1.5, 2.5, 1.0),
+            view: Angles { psi: 0.0, phi: 0.0 },
+            hfov: 1.35,
+        };
+        let lighting = LightingParams {
+            light_level: 1.0,
+            intensity: 0.0,
+            frame: 0,
+            style: RenderStyle {
+                billboards_enabled: true,
+                ..RenderStyle::default()
+            },
+        };
+        let shader = NeutralShader;
+        let render = |kind, pos, materials: &MaterialTable| {
+            let scene = Scene {
+                world: &world,
+                empty_voxel: 0,
+                camera,
+                lighting,
+                entities: vec![EntityInstance {
+                    kind,
+                    pos,
+                    yaw: 0.0,
+                    params: [0.0; 4],
+                }],
+                entity_registry: &registry,
+            };
+            let mut frame = Framebuffer::new(64, 48);
+            render_with_materials_checked(&mut frame, &scene, &shader, materials).unwrap();
+            frame.pixels
+        };
+
+        let box_pixels = render(BOX_KIND, Vect::new(4.5, 2.5, 0.0), &MaterialTable::new(&[]));
+        let billboard_pixels = render(BILLBOARD_KIND, Vect::new(4.5, 2.5, 0.0), sprite_materials());
+        assert!(box_pixels.iter().any(|pixel| *pixel != 0));
+        assert!(billboard_pixels.iter().any(|pixel| *pixel != 0));
+        assert_ne!(box_pixels, billboard_pixels);
+    }
 }

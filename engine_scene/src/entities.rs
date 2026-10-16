@@ -3,6 +3,13 @@ use engine_core::math::Vect;
 pub type Box3 = ([f32; 3], [f32; 3], u8);
 pub type Bounds3 = ([f32; 3], [f32; 3]);
 
+/// Maximum instances accepted by the renderer backends.
+pub const MAX_ENTITIES: usize = 16;
+/// Maximum box primitives in one entity definition.
+pub const MAX_BOXES_PER_ENTITY: usize = 64;
+/// Maximum total box primitives in one rendered scene.
+pub const MAX_ENTITY_BOXES: usize = 1024;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EntityKind(pub u32);
 

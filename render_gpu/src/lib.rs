@@ -6,7 +6,10 @@ use bytemuck::{Pod, Zeroable};
 use engine_core::gfx::{DrawCommand, DrawList, Effect, Framebuffer};
 use engine_core::math::{forward_vec, Vect};
 use engine_scene::app::FramePlan;
-use engine_scene::entities::{EntityAnimation, EntityRenderMode, EntityShadow};
+use engine_scene::entities::{
+    EntityAnimation, EntityRenderMode, EntityShadow, MAX_BOXES_PER_ENTITY, MAX_ENTITIES,
+    MAX_ENTITY_BOXES,
+};
 use engine_scene::material::{BaseAlbedoRule, MaterialTable, TextureKind};
 use engine_scene::scene::Scene;
 use engine_scene::style::LEVEL_COUNT;
@@ -51,6 +54,7 @@ struct WorldUniform {
     frame: [u32; 4],
     sprite: [u32; 4],
     sprite_meta: [u32; 4],
+    entity_limits: [u32; 4],
 }
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -731,11 +735,16 @@ fn create_world_resources(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuWorl
     );
     let voxels = make_buffer(device, "packed voxels", 4, wgpu::BufferUsages::STORAGE);
     let materials = make_buffer(device, "materials", 256 * 32, wgpu::BufferUsages::STORAGE);
-    let entities = make_buffer(device, "entities", 16 * 80, wgpu::BufferUsages::STORAGE);
+    let entities = make_buffer(
+        device,
+        "entities",
+        (MAX_ENTITIES * std::mem::size_of::<GpuEntity>()) as u64,
+        wgpu::BufferUsages::STORAGE,
+    );
     let boxes = make_buffer(
         device,
         "entity boxes",
-        1024 * 32,
+        (MAX_ENTITY_BOXES * std::mem::size_of::<GpuEntityBox>()) as u64,
         wgpu::BufferUsages::STORAGE,
     );
     let tone = make_buffer(device, "tone LUT", 1024 * 4, wgpu::BufferUsages::STORAGE);
@@ -910,6 +919,7 @@ fn update_world(
     mt: &MaterialTable,
     size: (u32, u32),
 ) -> Result<(), String> {
+    s.validate_entity_limits()?;
     let dims = s.world.dimensions();
     let key = (s.world.blocks().as_ptr() as usize, s.world.blocks().len());
     let need = (s.world.blocks().len().div_ceil(4) * 4).max(4) as u64;
@@ -939,16 +949,17 @@ fn update_world(
     }
     let mut es = Vec::<GpuEntity>::new();
     let mut bs = Vec::<GpuEntityBox>::new();
-    for ent in s.entities.iter().take(16) {
+    for ent in &s.entities {
         let def = s
             .entity_registry
             .get(ent.kind)
             .ok_or_else(|| format!("unknown entity kind {}", ent.kind.0))?;
         let start = bs.len();
-        if def.boxes.len() > 64 {
+        if def.boxes.len() > MAX_BOXES_PER_ENTITY {
             return Err(format!(
-                "entity kind {} exceeds the 64-box GPU entity limit",
-                ent.kind.0
+                "entity kind {} has {} boxes; per-entity GPU limit is {MAX_BOXES_PER_ENTITY}",
+                ent.kind.0,
+                def.boxes.len()
             ));
         }
         for bx in def.boxes {
@@ -991,8 +1002,11 @@ fn update_world(
             shadow: [shadow_x, shadow_y, 0.0, 0.0],
         });
     }
-    if s.entities.len() > 16 || bs.len() > 1024 {
-        return Err("GPU supports up to 16 entities and 1024 entity boxes".into());
+    if bs.len() > MAX_ENTITY_BOXES {
+        return Err(format!(
+            "scene has {} entity boxes; GPU limit is {MAX_ENTITY_BOXES}",
+            bs.len()
+        ));
     }
     if !es.is_empty() {
         q.write_buffer(&g.entities, 0, bytemuck::cast_slice(&es));
@@ -1133,6 +1147,12 @@ fn update_world(
                 ]
             },
         ),
+        entity_limits: [
+            MAX_ENTITIES as u32,
+            MAX_BOXES_PER_ENTITY as u32,
+            MAX_ENTITY_BOXES as u32,
+            0,
+        ],
     };
     q.write_buffer(&g.uniform, 0, bytemuck::bytes_of(&un));
     Ok(())
