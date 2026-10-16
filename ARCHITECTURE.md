@@ -30,7 +30,7 @@ graph TD
 1. Keep `engine_core` free of renderer, desktop, and external crates.
 2. Keep `engine_scene` plain data and contracts. Do not put function pointers, closures, trait objects, Rayon, or OS/GPU handles in `Scene` or its entity/material data.
 3. Put pixel loops, intersection algorithms, shading code, and backend-specific caches in renderer crates.
-4. Keep platform code generic over the `Renderer` trait. A platform must not choose a graphics backend.
+4. Keep game and scene data renderer-agnostic. The platform runner owns the GPU presenter and CPU fallback selection.
 5. Game-specific albedo rules that are not yet described by `MaterialTable` remain in the CPU `SurfaceShader` implementation; do not move executable shading callbacks into `Scene`.
 6. Do not add dependencies to `engine_core` or `engine_scene` without updating the CI dependency-boundary check.
 
@@ -45,20 +45,16 @@ graph TD
 - The registry stores phase sway as box data. The CPU resolver applies sway and the page's bob/rotation from `EntityInstance::params`, preserving the former per-frame transforms without callbacks in the scene.
 - `Renderer` lives in `engine_scene`. `platform::run` accepts a renderer generic instead of depending on `render_cpu`; this keeps backend selection with the application.
 - `App::materials()` supplies the data table separately from `Scene`, matching `Renderer::render_world(scene, materials)`. Its default is an empty static table for apps without custom materials.
+- The desktop runner selects GPU presentation by default, with `--renderer cpu` as a reference fallback and `--renderer gpu` as a required-GPU mode. The GPU world pass consumes `FramePlan` directly, so it does not read a CPU framebuffer back during ordinary presentation.
 - Framebuffers are opaque 24-bit pixels with no alpha channel. To retain existing UI output, the runner copies the rendered world into the overlay framebuffer before the app draws over it. The CPU renderer then stores that flattened image byte-for-byte.
 - The Classic and Moody golden tests stayed unchanged and passed at every phase; no golden values were re-blessed.
 - The CPU `SurfaceShader` remains renderer-side. `MaterialTable` records the block albedo rule and texture kind/seed, while exact procedural material math stays in the existing CPU shader until it can be expressed and ported without changing pixels.
 
-## GPU port blockers
-
-The GPU crate is only a skeleton. A real backend still needs equivalents for the CPU voxel DDA and `face_ao`, entity box intersection and phase transforms, flashlight/fog equations, `StudsSurface`'s hit-coordinate and cell-hash albedo formulas, procedural texture filtering/fade, tone mapping and display gamma, palette lookup, vignette, frame grain, and Bayer dithering. Entity point appearance is also currently provided by CPU `SurfaceShader::entity_surface`; it must become data or a renderer-side material rule before entities can be shaded on a GPU.
-
-See [`render_gpu/shaders/README.md`](render_gpu/shaders/README.md) for the rendering-stage checklist.
-
 ## Phase 2: desktop and GPU presentation
 
-- Desktop windows use winit 0.30.13 and wgpu 25.0.2 with raw-window-handle 0.6. The GPU presenter uploads the CPU reference framebuffer into a persistent RGBA texture and uses a nearest-neighbor WGSL upscale pass with the same aspect-fit math as `platform::present::viewport`.
-- Adapter/surface initialization prefers a high-performance adapter. If it fails, the platform logs the reason and uses softbuffer for CPU presentation. Winit owns keyboard, mouse buttons, scroll, focus, resize, and window events; mouse look consumes raw device deltas, preferring Locked cursor grab and falling back to Confined plus recenter.
+- Desktop uses winit 0.30.13 and wgpu 25.0.2. The presenter uses nearest-neighbor WGSL upscale and centered aspect-fit bars.
+- GPU is the default. `--renderer cpu` or `STUDS_RENDERER=cpu` selects the CPU reference; `--renderer gpu` requires an adapter; the default `auto` mode falls back to softbuffer when GPU setup fails.
+- Winit owns keyboard, mouse buttons, scroll, focus, resize, and window events; mouse look consumes raw device deltas, preferring Locked cursor grab and falling back to Confined plus recenter.
 
 ### Manual platform smoke checklist
 
@@ -66,8 +62,9 @@ See [`render_gpu/shaders/README.md`](render_gpu/shaders/README.md) for the rende
 - Walk, look, pause, adjust a setting that requests a new size, and close the window.
 - Confirm a missing GPU adapter reports a fallback message and the software presenter continues running.
 
-## Phase 3: GPU overlays
+## Phases 3–5: GPU rendering and verification
 
-The renderer uploads only the CPU-rendered world image. It then composites the world HUD layer, brightness pass, and UI layer on GPU targets in command order, before nearest-neighbor presentation. Rectangles are instanced; text pixels are expanded from the shared 5x7 glyph data into quad instances. Fog, caught/won noise, dim, solid white, and brightness are full-screen shader passes. Ping-pong RGBA8 targets preserve read/write ordering, and pass uniforms and quad data use persistent buffers.
-
-World casting and shading still run on the CPU. GPU/CPU overlay readback parity thresholds are not established yet; the Phase 4 parity harness remains outstanding.
+- `world.wgsl` performs voxel DDA, entity-box intersections, face AO, built-in STUDS materials and procedural textures, flashlight/fog, tone/gamma/palette mapping, vignette, grain, and Bayer dithering. World voxels and entity instances are packed into storage buffers; textures and targets persist between frames.
+- The frame order is GPU world, ordered HUD/effects, brightness, UI, then nearest presentation. Rectangles are instanced; text uses pixels from the shared 5x7 glyph table.
+- GPU mode skips CPU world rendering. `render_cpu` remains the reference and fallback. `studs/examples/gpu_preview.rs` starts a deterministic Game::new(42) world directly for manual GPU/CPU comparison.
+- The GPU shader is exercised by launching the deterministic preview on the local adapter. Headless CPU/GPU readback parity thresholds and GPU timings have not yet been established; the CPU render benchmark does not measure the GPU path.

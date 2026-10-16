@@ -28,6 +28,13 @@ enum Presenter {
     Cpu(SoftwarePresenter),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RendererMode {
+    Auto,
+    Cpu,
+    Gpu,
+}
+
 struct SoftwarePresenter {
     _context: Context<Arc<Window>>,
     surface: Surface<Arc<Window>, Arc<Window>>,
@@ -74,7 +81,15 @@ impl SoftwarePresenter {
 }
 
 impl Presenter {
-    fn new(window: Arc<Window>, config: &WindowConfig) -> Result<Self, Box<dyn Error>> {
+    fn new(
+        window: Arc<Window>,
+        config: &WindowConfig,
+        mode: RendererMode,
+    ) -> Result<Self, Box<dyn Error>> {
+        if mode == RendererMode::Cpu {
+            println!("STUDS CPU reference renderer enabled");
+            return Ok(Self::Cpu(SoftwarePresenter::new(window)?));
+        }
         match render_gpu::GpuPresenter::new(
             window.clone(),
             (config.width as u32, config.height as u32),
@@ -84,6 +99,12 @@ impl Presenter {
                 Ok(Self::Gpu(Box::new(gpu)))
             }
             Err(error) => {
+                if mode == RendererMode::Gpu {
+                    return Err(std::io::Error::other(format!(
+                        "GPU renderer required but unavailable: {error}"
+                    ))
+                    .into());
+                }
                 eprintln!("GPU unavailable; falling back to CPU presentation: {error}");
                 Ok(Self::Cpu(SoftwarePresenter::new(window)?))
             }
@@ -101,10 +122,15 @@ impl Presenter {
         window: &Window,
         framebuffer: &Framebuffer,
         plan: Option<&engine_scene::app::FramePlan<'_>>,
+        materials: &engine_scene::material::MaterialTable,
     ) -> Result<(), Box<dyn Error>> {
         match self {
             Self::Gpu(gpu) => gpu
-                .present_frame(framebuffer, plan.expect("GPU presents with a frame plan"))
+                .present_frame(
+                    framebuffer,
+                    plan.expect("GPU presents with a frame plan"),
+                    materials,
+                )
                 .map_err(std::io::Error::other)
                 .map_err(Into::into),
             Self::Cpu(cpu) => cpu.present(window, framebuffer),
@@ -116,6 +142,15 @@ pub fn run<A: App, R: Renderer>(
     app: A,
     config: WindowConfig,
     renderer: R,
+) -> Result<(), Box<dyn Error>> {
+    run_with_mode(app, config, renderer, RendererMode::Auto)
+}
+
+pub fn run_with_mode<A: App, R: Renderer>(
+    app: A,
+    config: WindowConfig,
+    renderer: R,
+    renderer_mode: RendererMode,
 ) -> Result<(), Box<dyn Error>> {
     let event_loop = EventLoop::new()?;
     event_loop.listen_device_events(winit::event_loop::DeviceEvents::Always);
@@ -138,6 +173,7 @@ pub fn run<A: App, R: Renderer>(
         cursor_captured: false,
         grab_mode: None,
         failure: None,
+        renderer_mode,
     };
     event_loop.run_app(&mut runner)?;
     if let Some(error) = runner.failure {
@@ -164,6 +200,7 @@ struct Runner<A, R> {
     cursor_captured: bool,
     grab_mode: Option<cursor::GrabMode>,
     failure: Option<String>,
+    renderer_mode: RendererMode,
 }
 
 impl<A: App, R: Renderer> Runner<A, R> {
@@ -216,16 +253,16 @@ impl<A: App, R: Renderer> Runner<A, R> {
         let plan = self.app.frame_plan(&ctx);
         if let Some(presenter) = &mut self.presenter {
             let result = match presenter {
-                Presenter::Gpu(_) => {
-                    self.renderer
-                        .render_scene(plan.scene.as_ref(), self.app.materials());
-                    self.renderer.present(&mut self.framebuffer);
-                    presenter.present(&window, &self.framebuffer, Some(&plan))
-                }
+                Presenter::Gpu(_) => presenter.present(
+                    &window,
+                    &self.framebuffer,
+                    Some(&plan),
+                    self.app.materials(),
+                ),
                 Presenter::Cpu(_) => {
                     self.renderer.render_frame(&plan, self.app.materials());
                     self.renderer.present(&mut self.framebuffer);
-                    presenter.present(&window, &self.framebuffer, None)
+                    presenter.present(&window, &self.framebuffer, None, self.app.materials())
                 }
             };
             if let Err(error) = result {
@@ -262,7 +299,7 @@ impl<A: App, R: Renderer> ApplicationHandler for Runner<A, R> {
                 self.window_active = true;
                 self.renderer
                     .resize(self.config.width as u32, self.config.height as u32);
-                match Presenter::new(window.clone(), &self.config) {
+                match Presenter::new(window.clone(), &self.config, self.renderer_mode) {
                     Ok(presenter) => self.presenter = Some(presenter),
                     Err(error) => {
                         self.failure =

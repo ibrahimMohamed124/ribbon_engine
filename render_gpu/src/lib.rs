@@ -4,11 +4,19 @@ use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use engine_core::gfx::{DrawCommand, DrawList, Effect, Framebuffer};
+use engine_core::math::{forward_vec, Vect};
 use engine_scene::app::FramePlan;
+use engine_scene::entities::PAGE;
+use engine_scene::material::{BaseAlbedoRule, MaterialTable, TextureKind};
+use engine_scene::scene::Scene;
+use engine_scene::style::LEVEL_COUNT;
+use engine_scene::texture::Texture;
+use engine_scene::RENDER_DIST;
 use winit::window::Window;
 
 const PRESENT_SHADER: &str = include_str!("../shaders/present.wgsl");
 const QUAD_SHADER: &str = include_str!("../shaders/ui.wgsl");
+const WORLD_SHADER: &str = include_str!("../shaders/world.wgsl");
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -28,8 +36,63 @@ struct QuadInstance {
     color: [f32; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct WorldUniform {
+    dims: [u32; 4],
+    eye: [f32; 4],
+    forward: [f32; 4],
+    right: [f32; 4],
+    up: [f32; 4],
+    projection: [f32; 4],
+    lighting: [f32; 4],
+    style: [f32; 4],
+    frame: [u32; 4],
+}
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuMaterial {
+    info: [u32; 4],
+    params: [f32; 4],
+}
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuEntity {
+    pos_yaw: [f32; 4],
+    params: [f32; 4],
+    bounds_min: [f32; 4],
+    bounds_max: [f32; 4],
+    range: [u32; 4],
+}
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuEntityBox {
+    min_part: [f32; 4],
+    max_sway: [f32; 4],
+}
+
+struct GpuWorldResources {
+    uniform: wgpu::Buffer,
+    voxels: wgpu::Buffer,
+    materials: wgpu::Buffer,
+    entities: wgpu::Buffer,
+    boxes: wgpu::Buffer,
+    tone: wgpu::Buffer,
+    gamma: wgpu::Buffer,
+    palette: wgpu::Buffer,
+    _brick_texture: wgpu::Texture,
+    brick_view: wgpu::TextureView,
+    _noise_texture: wgpu::Texture,
+    noise_view: wgpu::TextureView,
+    layout: wgpu::BindGroupLayout,
+    bind_group: wgpu::BindGroup,
+    world_key: Option<(usize, usize)>,
+    packed: Vec<u32>,
+    cached_blocks: Vec<u8>,
+}
+
 struct RenderTarget {
-    texture: wgpu::Texture,
+    _texture: wgpu::Texture,
     view: wgpu::TextureView,
 }
 
@@ -43,6 +106,8 @@ pub struct GpuPresenter {
     present_pipeline: wgpu::RenderPipeline,
     internal_pipeline: wgpu::RenderPipeline,
     quad_pipeline: wgpu::RenderPipeline,
+    world_pipeline: wgpu::RenderPipeline,
+    world: GpuWorldResources,
     bind_group_layout: wgpu::BindGroupLayout,
     quad_bind_group: wgpu::BindGroup,
     screen_buffer: wgpu::Buffer,
@@ -53,7 +118,7 @@ pub struct GpuPresenter {
     uniform_cursor: u32,
     quad_cursor: u64,
     internal_size: (u32, u32),
-    upload_bytes: Vec<u8>,
+    frame_index: u32,
 }
 
 impl GpuPresenter {
@@ -151,6 +216,10 @@ impl GpuPresenter {
             label: Some("overlay quad shader"),
             source: wgpu::ShaderSource::Wgsl(QUAD_SHADER.into()),
         });
+        let world_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("GPU world raycaster"),
+            source: wgpu::ShaderSource::Wgsl(WORLD_SHADER.into()),
+        });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("present pipeline layout"),
             bind_group_layouts: &[&bind_group_layout],
@@ -231,6 +300,24 @@ impl GpuPresenter {
                 label: "overlay quad pipeline",
             },
         );
+        let world = create_world_resources(&device, &queue);
+        let world_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("world pipeline layout"),
+            bind_group_layouts: &[&world.layout],
+            push_constant_ranges: &[],
+        });
+        let world_pipeline = create_pipeline(
+            &device,
+            &world_shader,
+            &world_layout,
+            PipelineSpec {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_world",
+                buffers: &[],
+                label: "GPU world raycaster",
+            },
+        );
         let targets = [
             create_render_target(&device, internal_size),
             create_render_target(&device, internal_size),
@@ -265,6 +352,8 @@ impl GpuPresenter {
             present_pipeline,
             internal_pipeline,
             quad_pipeline,
+            world_pipeline,
+            world,
             bind_group_layout,
             quad_bind_group,
             screen_buffer,
@@ -275,7 +364,7 @@ impl GpuPresenter {
             uniform_cursor: 0,
             quad_cursor: 0,
             internal_size,
-            upload_bytes: vec![0; internal_size.0 as usize * internal_size.1 as usize * 4],
+            frame_index: 0,
         })
     }
 
@@ -292,6 +381,7 @@ impl GpuPresenter {
         &mut self,
         framebuffer: &Framebuffer,
         plan: &FramePlan<'_>,
+        materials: &MaterialTable,
     ) -> Result<(), String> {
         if framebuffer.width == 0 || framebuffer.height == 0 {
             return Ok(());
@@ -300,35 +390,16 @@ impl GpuPresenter {
         if size != self.internal_size {
             self.resize_internal(size);
         }
-        for (pixel, rgba) in framebuffer
-            .pixels
-            .iter()
-            .zip(self.upload_bytes.as_chunks_mut::<4>().0)
-        {
-            rgba[0] = (pixel >> 16) as u8;
-            rgba[1] = (pixel >> 8) as u8;
-            rgba[2] = *pixel as u8;
-            rgba[3] = 255;
+        if let Some(scene) = plan.scene.as_ref() {
+            update_world(
+                &self.device,
+                &self.queue,
+                &mut self.world,
+                scene,
+                materials,
+                self.internal_size,
+            )?;
         }
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.targets[0].texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &self.upload_bytes,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(size.0 * 4),
-                rows_per_image: Some(size.1),
-            },
-            wgpu::Extent3d {
-                width: size.0,
-                height: size.1,
-                depth_or_array_layers: 1,
-            },
-        );
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -337,6 +408,27 @@ impl GpuPresenter {
         self.uniform_cursor = 0;
         self.quad_cursor = 0;
         let mut current = 0usize;
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("GPU world pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.targets[0].view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            if plan.scene.is_some() {
+                pass.set_pipeline(&self.world_pipeline);
+                pass.set_bind_group(0, &self.world.bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+        }
         self.apply_draw_list(&mut encoder, &plan.world_layer, &mut current)?;
         self.fullscreen_pass(&mut encoder, 6, 0, 0.0, plan.brightness, &mut current);
         self.apply_draw_list(&mut encoder, &plan.ui_layer, &mut current)?;
@@ -390,6 +482,7 @@ impl GpuPresenter {
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
+        self.frame_index = self.frame_index.wrapping_add(1);
         Ok(())
     }
 
@@ -413,8 +506,6 @@ impl GpuPresenter {
                 &self.screen_buffer,
             ),
         ];
-        self.upload_bytes
-            .resize(size.0 as usize * size.1 as usize * 4, 0);
     }
 
     fn write_uniform(&mut self, uniform: ScreenUniform) -> u32 {
@@ -584,6 +675,342 @@ impl GpuPresenter {
     }
 }
 
+fn create_world_resources(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuWorldResources {
+    let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty,
+        count: None,
+    };
+    let mut layout_entries = vec![entry(
+        0,
+        wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<WorldUniform>() as u64),
+        },
+    )];
+    for binding in 1..=7 {
+        layout_entries.push(entry(
+            binding,
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+        ));
+    }
+    layout_entries.push(texture_entry(8));
+    layout_entries.push(texture_entry(9));
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("world bindings"),
+        entries: &layout_entries,
+    });
+    let uniform = make_buffer(
+        device,
+        "world uniform",
+        std::mem::size_of::<WorldUniform>() as u64,
+        wgpu::BufferUsages::UNIFORM,
+    );
+    let voxels = make_buffer(device, "packed voxels", 4, wgpu::BufferUsages::STORAGE);
+    let materials = make_buffer(device, "materials", 256 * 32, wgpu::BufferUsages::STORAGE);
+    let entities = make_buffer(device, "entities", 16 * 80, wgpu::BufferUsages::STORAGE);
+    let boxes = make_buffer(
+        device,
+        "entity boxes",
+        1024 * 32,
+        wgpu::BufferUsages::STORAGE,
+    );
+    let tone = make_buffer(device, "tone LUT", 1024 * 4, wgpu::BufferUsages::STORAGE);
+    let gamma = make_buffer(device, "gamma LUT", 1024 * 4, wgpu::BufferUsages::STORAGE);
+    let palette = make_buffer(
+        device,
+        "palette",
+        LEVEL_COUNT as u64 * 4,
+        wgpu::BufferUsages::STORAGE,
+    );
+    let (bt, bv) = make_texture(device, queue, "bricks", &Texture::bricks(64, 32, 17));
+    let (nt, nv) = make_texture(device, queue, "noise", &Texture::noise(64, 64, 41));
+    let bind_group = world_bind(
+        device, &layout, &uniform, &voxels, &materials, &entities, &boxes, &tone, &gamma, &palette,
+        &bv, &nv,
+    );
+    GpuWorldResources {
+        uniform,
+        voxels,
+        materials,
+        entities,
+        boxes,
+        tone,
+        gamma,
+        palette,
+        _brick_texture: bt,
+        brick_view: bv,
+        _noise_texture: nt,
+        noise_view: nv,
+        layout,
+        bind_group,
+        world_key: None,
+        packed: Vec::new(),
+        cached_blocks: Vec::new(),
+    }
+}
+fn make_buffer(
+    device: &wgpu::Device,
+    label: &str,
+    size: u64,
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: size.max(4),
+        usage: usage | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+#[allow(clippy::too_many_arguments)]
+fn world_bind(
+    d: &wgpu::Device,
+    l: &wgpu::BindGroupLayout,
+    u: &wgpu::Buffer,
+    v: &wgpu::Buffer,
+    m: &wgpu::Buffer,
+    e: &wgpu::Buffer,
+    b: &wgpu::Buffer,
+    t: &wgpu::Buffer,
+    g: &wgpu::Buffer,
+    p: &wgpu::Buffer,
+    bt: &wgpu::TextureView,
+    nt: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    let bs = [u, v, m, e, b, t, g, p];
+    let mut entries: Vec<_> = bs
+        .iter()
+        .enumerate()
+        .map(|(i, x)| wgpu::BindGroupEntry {
+            binding: i as u32,
+            resource: x.as_entire_binding(),
+        })
+        .collect();
+    entries.push(wgpu::BindGroupEntry {
+        binding: 8,
+        resource: wgpu::BindingResource::TextureView(bt),
+    });
+    entries.push(wgpu::BindGroupEntry {
+        binding: 9,
+        resource: wgpu::BindingResource::TextureView(nt),
+    });
+    d.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("world resource group"),
+        layout: l,
+        entries: &entries,
+    })
+}
+fn make_texture(
+    d: &wgpu::Device,
+    q: &wgpu::Queue,
+    label: &str,
+    src: &Texture,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let t = d.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: src.w as u32,
+            height: src.h as u32,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    q.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &t,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(&src.texels),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(src.w as u32 * 4),
+            rows_per_image: Some(src.h as u32),
+        },
+        wgpu::Extent3d {
+            width: src.w as u32,
+            height: src.h as u32,
+            depth_or_array_layers: 1,
+        },
+    );
+    let v = t.create_view(&wgpu::TextureViewDescriptor::default());
+    (t, v)
+}
+fn update_world(
+    d: &wgpu::Device,
+    q: &wgpu::Queue,
+    g: &mut GpuWorldResources,
+    s: &Scene<'_>,
+    mt: &MaterialTable,
+    size: (u32, u32),
+) -> Result<(), String> {
+    let dims = s.world.dimensions();
+    let key = (s.world.blocks().as_ptr() as usize, s.world.blocks().len());
+    let need = (s.world.blocks().len().div_ceil(4) * 4).max(4) as u64;
+    let mut changed = false;
+    if g.voxels.size() < need {
+        g.voxels = make_buffer(d, "packed voxels", need, wgpu::BufferUsages::STORAGE);
+        changed = true;
+    }
+    if g.world_key != Some(key) || g.cached_blocks.as_slice() != s.world.blocks() {
+        g.packed = pack_voxels(s.world.blocks());
+        q.write_buffer(&g.voxels, 0, bytemuck::cast_slice(&g.packed));
+        g.world_key = Some(key);
+        g.cached_blocks.clear();
+        g.cached_blocks.extend_from_slice(s.world.blocks());
+    }
+    let mut es = Vec::<GpuEntity>::new();
+    let mut bs = Vec::<GpuEntityBox>::new();
+    for ent in s.entities.iter().take(16) {
+        let def = s
+            .entity_registry
+            .get(ent.kind)
+            .ok_or_else(|| format!("unknown entity kind {}", ent.kind.0))?;
+        let start = bs.len();
+        if def.boxes.len() > 64 {
+            return Err(format!(
+                "entity kind {} exceeds the 64-box GPU entity limit",
+                ent.kind.0
+            ));
+        }
+        for bx in def.boxes {
+            bs.push(GpuEntityBox {
+                min_part: [bx.min[0], bx.min[1], bx.min[2], bx.part as f32],
+                max_sway: [bx.max[0], bx.max[1], bx.max[2], bx.phase_sway],
+            });
+        }
+        let (min, max, has) = def.bounds.map_or(([0.; 3], [0.; 3], 0), |(a, b)| (a, b, 1));
+        let mut pos = [ent.pos.x, ent.pos.y, ent.pos.z];
+        let mut yaw = ent.yaw;
+        if ent.kind == PAGE {
+            pos[2] += (ent.params[0] * 2. + ent.params[1]).sin() * 0.08;
+            yaw = ent.params[0] * 1.2 + ent.params[1];
+        }
+        es.push(GpuEntity {
+            pos_yaw: [pos[0], pos[1], pos[2], yaw],
+            params: ent.params,
+            bounds_min: [min[0], min[1], min[2], 0.],
+            bounds_max: [max[0], max[1], max[2], 0.],
+            range: [start as u32, def.boxes.len() as u32, has, ent.kind.0],
+        });
+    }
+    if s.entities.len() > 16 || bs.len() > 1024 {
+        return Err("GPU supports up to 16 entities and 1024 entity boxes".into());
+    }
+    if !es.is_empty() {
+        q.write_buffer(&g.entities, 0, bytemuck::cast_slice(&es));
+    }
+    if !bs.is_empty() {
+        q.write_buffer(&g.boxes, 0, bytemuck::cast_slice(&bs));
+    }
+    let mut mats = vec![GpuMaterial::zeroed(); 256];
+    for m in mt.materials {
+        let (tex, seed) = match m.texture {
+            TextureKind::None => (0, 0),
+            TextureKind::Bricks { seed } => (1, seed as u32),
+            TextureKind::Noise { seed } => (2, seed as u32),
+        };
+        mats[m.block_id as usize] = GpuMaterial {
+            info: [
+                u32::from(m.base_rule == BaseAlbedoRule::StudsClassic),
+                tex,
+                seed,
+                0,
+            ],
+            params: [m.constant_albedo, 0., 0., 0.],
+        };
+    }
+    q.write_buffer(&g.materials, 0, bytemuck::cast_slice(&mats));
+    let sty = s.lighting.style;
+    let lut = sty.level_lut();
+    let tones: Vec<f32> = (0..1024)
+        .map(|i| lut.tone(&sty, i as f32 * 2. / 1023.))
+        .collect();
+    let gammas: Vec<f32> = (0..1024).map(|i| lut.level(i as f32 / 1023.)).collect();
+    q.write_buffer(&g.tone, 0, bytemuck::cast_slice(&tones));
+    q.write_buffer(&g.gamma, 0, bytemuck::cast_slice(&gammas));
+    q.write_buffer(&g.palette, 0, bytemuck::cast_slice(sty.palette.colors()));
+    if changed {
+        g.bind_group = world_bind(
+            d,
+            &g.layout,
+            &g.uniform,
+            &g.voxels,
+            &g.materials,
+            &g.entities,
+            &g.boxes,
+            &g.tone,
+            &g.gamma,
+            &g.palette,
+            &g.brick_view,
+            &g.noise_view,
+        );
+    }
+    let c = s.camera;
+    let f = forward_vec(c.view);
+    let r = Vect::new(-c.view.phi.sin(), c.view.phi.cos(), 0.);
+    let up = Vect::new(
+        -c.view.psi.sin() * c.view.phi.cos(),
+        -c.view.psi.sin() * c.view.phi.sin(),
+        c.view.psi.cos(),
+    );
+    let un = WorldUniform {
+        dims: [dims.0 as u32, dims.1 as u32, dims.2 as u32, size.0],
+        eye: [c.eye.x, c.eye.y, c.eye.z, 0.],
+        forward: [f.x, f.y, f.z, 0.],
+        right: [r.x, r.y, r.z, 0.],
+        up: [up.x, up.y, up.z, 0.],
+        projection: [c.hfov, s.lighting.intensity, RENDER_DIST, 0.],
+        lighting: [
+            s.lighting.illumination,
+            sty.ambient,
+            sty.lamp,
+            sty.fog_distance,
+        ],
+        style: [sty.ao_strength, sty.texture_strength, 0., 0.],
+        frame: [
+            s.lighting.frame,
+            es.len() as u32,
+            size.1,
+            s.empty_voxel as u32,
+        ],
+    };
+    q.write_buffer(&g.uniform, 0, bytemuck::bytes_of(&un));
+    Ok(())
+}
+
+fn pack_voxels(blocks: &[u8]) -> Vec<u32> {
+    let mut packed = vec![0; blocks.len().div_ceil(4).max(1)];
+    for (i, &voxel) in blocks.iter().enumerate() {
+        packed[i / 4] |= u32::from(voxel) << ((i % 4) * 8);
+    }
+    packed
+}
+
 fn create_render_target(device: &wgpu::Device, size: (u32, u32)) -> RenderTarget {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("persistent internal render target"),
@@ -602,7 +1029,10 @@ fn create_render_target(device: &wgpu::Device, size: (u32, u32)) -> RenderTarget
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    RenderTarget { texture, view }
+    RenderTarget {
+        _texture: texture,
+        view,
+    }
 }
 
 struct PipelineSpec<'a> {
@@ -670,4 +1100,18 @@ fn create_bind_group(
             },
         ],
     })
+}
+
+#[cfg(test)]
+mod world_tests {
+    use super::pack_voxels;
+
+    #[test]
+    fn gpu_voxel_packing_preserves_linear_ids_across_words() {
+        assert_eq!(
+            pack_voxels(&[1, 2, 3, 4, 5]),
+            vec![0x0403_0201, 0x0000_0005]
+        );
+        assert_eq!(pack_voxels(&[]), vec![0]);
+    }
 }
