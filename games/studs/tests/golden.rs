@@ -5,7 +5,7 @@ use studs::input::{Controls, InputFrame};
 use studs::settings::Settings;
 use studs::surfaces::studs_material_table;
 use studs::world::World;
-use voxelworks_core::gfx::Framebuffer;
+use voxelworks_api::Framebuffer;
 use voxelworks_core::math::Rng;
 use voxelworks_render_cpu::render::render_with_materials;
 

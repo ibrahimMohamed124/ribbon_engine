@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use voxelworks_core::app::{MouseButtons, MouseInput};
+use voxelworks_api::{MouseButtons, MouseInput};
 use voxelworks_core::input::{Key, KeyState};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 use winit::keyboard::KeyCode;

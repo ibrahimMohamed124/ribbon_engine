@@ -3,7 +3,7 @@ use studs::input::Action;
 use studs::input::Key;
 use studs::settings::Settings;
 use studs::ui::{Screen, Ui, UiInput};
-use voxelworks_core::gfx::Framebuffer;
+use voxelworks_api::Framebuffer;
 
 fn press(key: Key) -> UiInput {
     UiInput::from_keys(vec![key])

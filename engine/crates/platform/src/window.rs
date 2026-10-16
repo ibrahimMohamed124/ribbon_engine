@@ -1,6 +1,6 @@
 //! Winit window attributes and framebuffer pointer conversion.
 
-use voxelworks_core::app::WindowConfig;
+use voxelworks_api::WindowConfig;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::window::{Window, WindowAttributes};
 

@@ -1,7 +1,22 @@
 //! Screen-space vignette, grain, and ordered dithering.
 
+use voxelworks_api::Framebuffer;
 use voxelworks_core::math::hash4;
 use voxelworks_scene::style::{LevelLut, RenderStyle, LEVEL_COUNT};
+
+pub fn adjust_brightness(fb: &mut Framebuffer, brightness: f32) {
+    let brightness = if brightness.is_finite() {
+        brightness.clamp(0.5, 1.5)
+    } else {
+        1.0
+    };
+    for pixel in &mut fb.pixels {
+        let r = (((*pixel >> 16) & 0xff) as f32 * brightness).clamp(0.0, 255.0) as u32;
+        let g = (((*pixel >> 8) & 0xff) as f32 * brightness).clamp(0.0, 255.0) as u32;
+        let b = ((*pixel & 0xff) as f32 * brightness).clamp(0.0, 255.0) as u32;
+        *pixel = (r << 16) | (g << 8) | b;
+    }
+}
 
 pub const LEVELS: f32 = LEVEL_COUNT as f32;
 pub const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];

@@ -1,6 +1,11 @@
 //! Minimal application contract and per-frame input/request context.
 
-use crate::input::{Key, KeyState};
+use voxelworks_core::input::{Key, KeyState};
+use voxelworks_scene::material::MaterialTable;
+use voxelworks_scene::scene::Scene;
+use voxelworks_scene::EMPTY_MATERIAL_TABLE;
+
+use crate::gfx::DrawList;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Flow {
@@ -123,5 +128,27 @@ impl<'a> Ctx<'a> {
 
     pub fn release_cursor(&mut self) {
         self.requests.cursor = CursorRequest::Release;
+    }
+}
+
+/// Ordered inputs for rendering one complete frame.
+pub struct FramePlan<'a> {
+    pub scene: Option<Scene<'a>>,
+    pub world_layer: DrawList,
+    pub brightness: f32,
+    pub ui_layer: DrawList,
+}
+
+/// Application boundary consumed by a platform runner and renderer backend.
+pub trait App {
+    fn update(&mut self, ctx: &mut Ctx<'_>) -> Flow;
+
+    /// Called when automatic presentation falls back to the CPU renderer.
+    fn on_cpu_fallback(&mut self) {}
+
+    fn frame_plan(&self, ctx: &Ctx<'_>) -> FramePlan<'_>;
+
+    fn materials(&self) -> &'static MaterialTable {
+        &EMPTY_MATERIAL_TABLE
     }
 }

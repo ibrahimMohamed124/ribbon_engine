@@ -2,10 +2,10 @@ use std::error::Error;
 
 use studs::game::Game;
 use studs::surfaces::{studs_material_table, StudsSurface};
-use voxelworks_core::app::{Ctx, Flow, WindowConfig};
-use voxelworks_core::gfx::DrawList;
+use voxelworks_api::DrawList;
+use voxelworks_api::{App, FramePlan};
+use voxelworks_api::{Ctx, Flow, WindowConfig};
 use voxelworks_render_cpu::renderer::CpuRenderer;
-use voxelworks_scene::app::{App, FramePlan};
 use voxelworks_scene::material::MaterialTable;
 
 struct Preview(Game);

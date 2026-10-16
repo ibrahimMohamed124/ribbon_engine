@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 voxelworks-core = { path = "../core" }
 voxelworks-scene = { path = "../scene" }
+voxelworks-api = { path = "../api" }
 rayon = "1.10"

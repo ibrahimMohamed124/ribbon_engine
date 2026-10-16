@@ -1,9 +1,7 @@
 //! Renderer-independent descriptions of worlds, cameras, lighting, and entities.
 
-pub mod app;
 pub mod entities;
 pub mod material;
-pub mod renderer;
 pub mod scene;
 pub mod style;
 pub mod texture;

@@ -1,7 +1,7 @@
 use studs::config::DEFAULT_HFOV;
 use studs::game::{Game, PAGES_TOTAL};
 use studs::ui::hud::{draw_caught, draw_hud, draw_won, fill_rect};
-use voxelworks_core::gfx::Framebuffer;
+use voxelworks_api::Framebuffer;
 use voxelworks_render_cpu::render::entities::ray_box;
 
 #[test]

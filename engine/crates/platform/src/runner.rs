@@ -5,11 +5,11 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use softbuffer::{Context, Surface};
-use voxelworks_core::app::{CursorRequest, FrameInfo, WindowConfig};
-use voxelworks_core::gfx::Framebuffer;
+use voxelworks_api::Framebuffer;
+use voxelworks_api::Renderer;
+use voxelworks_api::{App, Ctx, Flow};
+use voxelworks_api::{CursorRequest, FrameInfo, WindowConfig};
 use voxelworks_core::time::FixedStepper;
-use voxelworks_scene::app::{App, Ctx, Flow};
-use voxelworks_scene::renderer::Renderer;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, WindowEvent};
@@ -122,7 +122,7 @@ impl Presenter {
         &mut self,
         window: &Window,
         framebuffer: &Framebuffer,
-        plan: Option<&voxelworks_scene::app::FramePlan<'_>>,
+        plan: Option<&voxelworks_api::FramePlan<'_>>,
         materials: &voxelworks_scene::material::MaterialTable,
     ) -> Result<(), Box<dyn Error>> {
         match self {

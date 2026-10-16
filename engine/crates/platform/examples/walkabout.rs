@@ -1,12 +1,12 @@
-use voxelworks_core::app::WindowConfig;
-use voxelworks_core::gfx::DrawList;
+use voxelworks_api::DrawList;
+use voxelworks_api::WindowConfig;
+use voxelworks_api::{App, Ctx, Flow, FramePlan};
 use voxelworks_core::input::Key;
 use voxelworks_core::math::{Angles, Vect};
 use voxelworks_core::voxel::{Hit, VoxelWorld};
 use voxelworks_platform::run;
 use voxelworks_render_cpu::render::lighting::SurfaceShader;
 use voxelworks_render_cpu::renderer::CpuRenderer;
-use voxelworks_scene::app::{App, Ctx, Flow, FramePlan};
 use voxelworks_scene::entities::{
     EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
 };

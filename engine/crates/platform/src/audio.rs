@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::time::Instant;
 
+use crate::mixer::AudioBackend;
 use rodio::source::Source;
-use voxelworks_core::audio::{AmbienceId, AudioBackend, SoundBank, SoundId};
+use voxelworks_core::audio::{AmbienceId, SoundBank, SoundId};
 
 /// Fully decoded sound samples, independent of any audio output device.
 #[derive(Clone)]

@@ -2159,6 +2159,7 @@ name = "studs"
 version = "0.3.0"
 dependencies = [
  "image",
+ "voxelworks-api",
  "voxelworks-core",
  "voxelworks-platform",
  "voxelworks-render-cpu",
@@ -2452,6 +2453,7 @@ version = "0.1.0"
 name = "voxelworks-minimal"
 version = "0.1.0"
 dependencies = [
+ "voxelworks-api",
  "voxelworks-core",
  "voxelworks-platform",
  "voxelworks-render-cpu",
@@ -2464,6 +2466,7 @@ version = "0.1.0"
 dependencies = [
  "rodio",
  "softbuffer",
+ "voxelworks-api",
  "voxelworks-core",
  "voxelworks-render-cpu",
  "voxelworks-render-gpu",
@@ -2476,6 +2479,7 @@ name = "voxelworks-render-cpu"
 version = "0.1.0"
 dependencies = [
  "rayon",
+ "voxelworks-api",
  "voxelworks-core",
  "voxelworks-scene",
 ]
@@ -2487,6 +2491,7 @@ dependencies = [
  "bytemuck",
  "pollster",
  "raw-window-handle",
+ "voxelworks-api",
  "voxelworks-core",
  "voxelworks-scene",
  "wgpu",

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 voxelworks-core = { path = "../core" }
 voxelworks-scene = { path = "../scene" }
+voxelworks-api = { path = "../api" }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 pollster = "0.4.0"
 raw-window-handle = "0.6.2"

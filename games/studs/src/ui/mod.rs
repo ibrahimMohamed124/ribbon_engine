@@ -14,7 +14,7 @@ use crate::game::{Difficulty, Game, State};
 use crate::input::{key_name, Action, Key};
 use crate::settings::Settings;
 use crate::ui::hud::fill_rect;
-use voxelworks_core::gfx::Canvas;
+use voxelworks_render_cpu::Canvas;
 
 use self::theme::{ACCENT, MUTED, PANEL_EDGE, SELECTED, TEXT};
 

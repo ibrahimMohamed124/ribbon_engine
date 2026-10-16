@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use voxelworks_core::gfx::{DrawCommand, DrawList, Effect, Framebuffer};
+use voxelworks_api::FramePlan;
+use voxelworks_api::{DrawCommand, DrawList, Effect, Framebuffer};
 use voxelworks_core::math::{forward_vec, Vect};
-use voxelworks_scene::app::FramePlan;
 use voxelworks_scene::entities::{
     EntityAnimation, EntityRenderMode, EntityShadow, MAX_BOXES_PER_ENTITY, MAX_ENTITIES,
     MAX_ENTITY_BOXES,
@@ -549,10 +549,9 @@ impl GpuPresenter {
                     let scale = (*scale).max(1);
                     let mut pen_x = *x;
                     for ch in value.chars() {
-                        for (row, bits) in
-                            voxelworks_core::gfx::font::glyph(ch.to_ascii_uppercase())
-                                .iter()
-                                .enumerate()
+                        for (row, bits) in voxelworks_api::font::glyph(ch.to_ascii_uppercase())
+                            .iter()
+                            .enumerate()
                         {
                             for col in 0..5 {
                                 if bits & (1 << (4 - col)) != 0 {

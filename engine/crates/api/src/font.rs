@@ -1,35 +1,4 @@
-//! Compact 5x7 pixel font drawing.
-
-use super::{fill_rect, Canvas};
-
-pub fn text<C: Canvas + ?Sized>(
-    fb: &mut C,
-    value: &str,
-    mut x: i32,
-    y: i32,
-    scale: i32,
-    color: u32,
-) {
-    let scale = scale.max(1);
-    for ch in value.chars() {
-        let glyph = glyph(ch.to_ascii_uppercase());
-        for (row, bits) in glyph.iter().enumerate() {
-            for col in 0..5 {
-                if bits & (1 << (4 - col)) != 0 {
-                    fill_rect(
-                        fb,
-                        x + col * scale,
-                        y + row as i32 * scale,
-                        scale,
-                        scale,
-                        color,
-                    );
-                }
-            }
-        }
-        x += 6 * scale;
-    }
-}
+//! The shared 5x7 glyph table as plain data.
 
 /// Returns the shared 5x7 bitmap for a character.
 pub fn glyph(ch: char) -> [u8; 7] {

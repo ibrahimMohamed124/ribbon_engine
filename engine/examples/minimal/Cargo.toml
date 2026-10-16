@@ -6,5 +6,6 @@ edition = "2021"
 [dependencies]
 voxelworks-core = { path = "../../crates/core" }
 voxelworks-scene = { path = "../../crates/scene" }
+voxelworks-api = { path = "../../crates/api" }
 voxelworks-platform = { path = "../../crates/platform" }
 voxelworks-render-cpu = { path = "../../crates/render-cpu" }

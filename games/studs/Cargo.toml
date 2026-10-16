@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 voxelworks-core = { path = "../../engine/crates/core" }
 voxelworks-scene = { path = "../../engine/crates/scene" }
+voxelworks-api = { path = "../../engine/crates/api" }
 voxelworks-render-cpu = { path = "../../engine/crates/render-cpu" }
 voxelworks-platform = { path = "../../engine/crates/platform" }
 image = { version = "0.25", default-features = false, features = ["png"] }

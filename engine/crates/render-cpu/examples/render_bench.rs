@@ -4,7 +4,7 @@ mod shared;
 use std::time::Instant;
 
 use shared::{graded_style, Scene, SceneShader, HEIGHT, WIDTH};
-use voxelworks_core::gfx::Framebuffer;
+use voxelworks_api::Framebuffer;
 use voxelworks_render_cpu::render::{render, RenderStyle};
 
 fn main() {

@@ -1,11 +1,9 @@
-use voxelworks_core::gfx::post::adjust_brightness;
-use voxelworks_core::gfx::Framebuffer;
-use voxelworks_core::gfx::{Canvas, DrawCommand, DrawList};
-use voxelworks_scene::app::FramePlan;
+use crate::canvas::Canvas;
+use voxelworks_api::{DrawCommand, DrawList, FramePlan, Framebuffer, Renderer};
 use voxelworks_scene::material::MaterialTable;
-use voxelworks_scene::renderer::Renderer;
 
 use crate::render::lighting::SurfaceShader;
+use crate::render::post::adjust_brightness;
 use crate::render::render_with_materials;
 
 /// CPU reference renderer. The shader stays renderer-side and never enters `Scene`.
@@ -84,8 +82,8 @@ pub fn apply_draw_list(framebuffer: &mut Framebuffer, draw_list: &DrawList) {
 #[cfg(test)]
 mod tests {
     use super::{CpuRenderer, FramePlan};
-    use voxelworks_core::gfx::{DrawCommand, DrawList, Framebuffer};
-    use voxelworks_scene::renderer::Renderer;
+    use voxelworks_api::Renderer;
+    use voxelworks_api::{DrawCommand, DrawList, Framebuffer};
 
     struct NoopShader;
 

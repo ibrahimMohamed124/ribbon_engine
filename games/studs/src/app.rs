@@ -5,10 +5,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use voxelworks_core::app::{Ctx, Flow, WindowConfig, WindowRequest};
-use voxelworks_core::gfx::DrawList;
+use voxelworks_api::DrawList;
+use voxelworks_api::{App, FramePlan};
+use voxelworks_api::{Ctx, Flow, WindowConfig, WindowRequest};
 use voxelworks_core::input::MouseSource;
-use voxelworks_scene::app::{App, FramePlan};
 use voxelworks_scene::material::MaterialTable;
 
 use crate::audio::{Audio, AudioAmbience};

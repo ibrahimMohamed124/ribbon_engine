@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 voxelworks-core = { path = "../core" }
 voxelworks-scene = { path = "../scene" }
+voxelworks-api = { path = "../api" }
 winit = "0.30.13"
 softbuffer = "0.4.6"
 voxelworks-render-gpu = { path = "../render-gpu" }

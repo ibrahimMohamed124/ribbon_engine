@@ -7,7 +7,7 @@ use super::lighting::{
     cone_factor, light_with_style, shade_surface, SurfaceContext, SurfaceShader,
 };
 use super::post::{finish_pixel_styled_with_lut, PixelSample};
-use voxelworks_core::gfx::Framebuffer;
+use voxelworks_api::Framebuffer;
 use voxelworks_core::math::{forward_vec, Vect};
 use voxelworks_scene::entities::EntityRenderMode;
 use voxelworks_scene::material::MaterialTable;
@@ -248,7 +248,7 @@ mod data_driven_entity_tests {
     use super::render_with_materials_checked;
     use crate::render::lighting::SurfaceShader;
     use std::sync::OnceLock;
-    use voxelworks_core::gfx::Framebuffer;
+    use voxelworks_api::Framebuffer;
     use voxelworks_core::math::{Angles, Vect};
     use voxelworks_core::voxel::{Hit, VoxelWorld};
     use voxelworks_scene::entities::{

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use voxelworks_core::gfx::Framebuffer;
+use voxelworks_api::Framebuffer;
 use voxelworks_platform::present::blit_scaled;
 
 fn main() {

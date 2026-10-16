@@ -1,17 +1,6 @@
-//! CPU-side drawing primitives shared by games and tools.
+//! Software canvas operations and immediate-mode rasterization.
 
-pub mod font;
-pub mod post;
-
-/// Full-screen operations supported by both immediate and deferred canvases.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Effect {
-    FogBackground { frame: u32 },
-    CaughtNoise { time: f32, frame: u32 },
-    WonNoise { time: f32, frame: u32 },
-    SolidWhite,
-}
-
+use voxelworks_api::{DrawCommand, DrawList, Effect, Framebuffer};
 /// Small drawing interface used by game UI and renderer command recording.
 pub trait Canvas {
     fn width(&self) -> usize;
@@ -20,44 +9,6 @@ pub trait Canvas {
     fn text(&mut self, value: &str, x: i32, y: i32, scale: i32, color: u32);
     fn dim(&mut self, amount: f32);
     fn effect(&mut self, effect: Effect);
-}
-
-/// Ordered immediate-mode drawing commands for GPU or CPU backends.
-#[derive(Clone, Debug, PartialEq)]
-pub enum DrawCommand {
-    Rect {
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        color: u32,
-    },
-    Text {
-        value: String,
-        x: i32,
-        y: i32,
-        scale: i32,
-        color: u32,
-    },
-    Dim(f32),
-    Effect(Effect),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct DrawList {
-    pub width: usize,
-    pub height: usize,
-    pub commands: Vec<DrawCommand>,
-}
-
-impl DrawList {
-    pub fn new(width: usize, height: usize) -> Self {
-        Self {
-            width,
-            height,
-            commands: Vec::new(),
-        }
-    }
 }
 
 impl Canvas for DrawList {
@@ -87,22 +38,6 @@ impl Canvas for DrawList {
     }
 }
 
-pub struct Framebuffer {
-    pub width: usize,
-    pub height: usize,
-    pub pixels: Vec<u32>,
-}
-
-impl Framebuffer {
-    pub fn new(width: usize, height: usize) -> Self {
-        Self {
-            width,
-            height,
-            pixels: vec![0; width * height],
-        }
-    }
-}
-
 impl Canvas for Framebuffer {
     fn width(&self) -> usize {
         self.width
@@ -119,7 +54,7 @@ impl Canvas for Framebuffer {
         }
     }
     fn text(&mut self, value: &str, x: i32, y: i32, scale: i32, color: u32) {
-        font::text(self, value, x, y, scale, color);
+        text(self, value, x, y, scale, color);
     }
     fn dim(&mut self, amount: f32) {
         let factor = (1.0 - amount.clamp(0.0, 1.0)).clamp(0.0, 1.0);
@@ -140,6 +75,29 @@ impl Canvas for Framebuffer {
     }
 }
 
+fn text(canvas: &mut impl Canvas, value: &str, mut x: i32, y: i32, scale: i32, color: u32) {
+    let scale = scale.max(1);
+    for ch in value.chars() {
+        for (row, bits) in voxelworks_api::font::glyph(ch.to_ascii_uppercase())
+            .iter()
+            .enumerate()
+        {
+            for col in 0..5 {
+                if bits & (1 << (4 - col)) != 0 {
+                    fill_rect(
+                        canvas,
+                        x + col * scale,
+                        y + row as i32 * scale,
+                        scale,
+                        scale,
+                        color,
+                    );
+                }
+            }
+        }
+        x += 6 * scale;
+    }
+}
 fn hash4(x: i32, y: i32, z: i32, w: i32) -> f32 {
     let mut h = (x as u32).wrapping_mul(73_856_093)
         ^ (y as u32).wrapping_mul(19_349_663)
@@ -237,7 +195,8 @@ pub fn fill_rect<C: Canvas + ?Sized>(fb: &mut C, x0: i32, y0: i32, w: i32, h: i3
 
 #[cfg(test)]
 mod canvas_tests {
-    use super::{Canvas, DrawCommand, DrawList, Effect, Framebuffer};
+    use super::Canvas;
+    use voxelworks_api::{DrawCommand, DrawList, Effect, Framebuffer};
 
     #[test]
     fn draw_list_keeps_order_and_text_as_a_single_command() {
@@ -268,7 +227,7 @@ mod canvas_tests {
         for point in [(-1, 0, 0, 0), (0, 1, 13, 71), (1280, -720, 8, 6)] {
             assert_eq!(
                 super::hash4(point.0, point.1, point.2, point.3),
-                crate::math::hash4(point.0, point.1, point.2, point.3)
+                voxelworks_core::math::hash4(point.0, point.1, point.2, point.3)
             );
         }
     }
