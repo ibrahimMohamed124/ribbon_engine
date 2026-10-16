@@ -1,7 +1,7 @@
-use raycast_blocks::input::Controls;
-use raycast_blocks::math::{Angles, Rng};
-use raycast_blocks::player::{Player, EYE_HEIGHT};
-use raycast_blocks::world::{World, FLOOR_TOP, X_BLOCKS, Y_BLOCKS};
+use engine_core::math::{Angles, Rng};
+use studs::input::Controls;
+use studs::player::{Player, EYE_HEIGHT};
+use studs::world::{World, FLOOR_TOP, X_BLOCKS, Y_BLOCKS};
 
 fn setup() -> (World, Player) {
     let w = World::generate(&mut Rng::new(42));
@@ -77,7 +77,7 @@ fn pitch_is_clamped() {
     for _ in 0..500 {
         p.update(&w, &up, 0.02);
     }
-    assert!(p.view.psi <= raycast_blocks::player::PSI_LIMIT + 1e-6);
+    assert!(p.view.psi <= studs::player::PSI_LIMIT + 1e-6);
 }
 
 #[test]

@@ -4,9 +4,9 @@ use engine_core::app::{Ctx, Flow, WindowConfig};
 use engine_core::gfx::DrawList;
 use engine_scene::app::{App, FramePlan};
 use engine_scene::material::MaterialTable;
-use raycast_blocks::game::Game;
-use raycast_blocks::surfaces::{studs_material_table, StudsSurface};
 use render_cpu::renderer::CpuRenderer;
+use studs::game::Game;
+use studs::surfaces::{studs_material_table, StudsSurface};
 
 struct Preview(Game);
 
@@ -20,7 +20,7 @@ impl App for Preview {
         FramePlan {
             scene: self
                 .0
-                .scene_styled(ctx.frame, 1.1, raycast_blocks::styles::realistic()),
+                .scene_styled(ctx.frame, 1.1, studs::styles::realistic()),
             world_layer: DrawList::new(width, height),
             brightness: 1.0,
             ui_layer: DrawList::new(width, height),
@@ -47,5 +47,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("gpu") | None => platform::RendererMode::Gpu,
         Some(other) => return Err(format!("expected cpu or gpu; got {other}").into()),
     };
-    platform::run_with_mode(Preview(Game::new(42)), config, renderer, mode)
+    platform::run_with_mode(
+        Preview(Game::new(42)),
+        config,
+        renderer,
+        mode,
+    )
 }

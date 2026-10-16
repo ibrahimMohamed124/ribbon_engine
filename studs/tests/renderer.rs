@@ -1,7 +1,8 @@
-use raycast_blocks::game::{Game, PAGES_TOTAL};
-use raycast_blocks::renderer::entities::ray_box;
-use raycast_blocks::renderer::hud::{draw_caught, draw_hud, draw_won, fill_rect};
-use raycast_blocks::renderer::{Framebuffer, DEFAULT_HFOV};
+use engine_core::gfx::Framebuffer;
+use render_cpu::render::entities::ray_box;
+use studs::config::DEFAULT_HFOV;
+use studs::game::{Game, PAGES_TOTAL};
+use studs::ui::hud::{draw_caught, draw_hud, draw_won, fill_rect};
 
 #[test]
 fn ray_box_front_face() {

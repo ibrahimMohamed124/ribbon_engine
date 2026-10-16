@@ -1,9 +1,9 @@
-use raycast_blocks::game::{Difficulty, Game};
-use raycast_blocks::input::Action;
-use raycast_blocks::input::Key;
-use raycast_blocks::renderer::Framebuffer;
-use raycast_blocks::settings::Settings;
-use raycast_blocks::ui::{Screen, Ui, UiInput};
+use engine_core::gfx::Framebuffer;
+use studs::game::{Difficulty, Game};
+use studs::input::Action;
+use studs::input::Key;
+use studs::settings::Settings;
+use studs::ui::{Screen, Ui, UiInput};
 
 fn press(key: Key) -> UiInput {
     UiInput::from_keys(vec![key])
@@ -131,18 +131,12 @@ fn visual_style_can_be_changed_from_the_settings_screen() {
     for _ in 0..12 {
         ui.update(&press(Key::Down), &mut settings);
     }
-    assert_eq!(
-        raycast_blocks::ui::settings::value(&settings, 12),
-        "REALISTIC"
-    );
+    assert_eq!(studs::ui::settings::value(&settings, 12), "REALISTIC");
     let changed = ui.update(&press(Key::Right), &mut settings);
     assert!(changed.settings_changed);
-    assert_eq!(
-        raycast_blocks::ui::settings::value(&settings, 12),
-        "CLASSIC"
-    );
+    assert_eq!(studs::ui::settings::value(&settings, 12), "CLASSIC");
     ui.update(&press(Key::Right), &mut settings);
-    assert_eq!(raycast_blocks::ui::settings::value(&settings, 12), "MOODY");
+    assert_eq!(studs::ui::settings::value(&settings, 12), "MOODY");
 }
 
 #[test]

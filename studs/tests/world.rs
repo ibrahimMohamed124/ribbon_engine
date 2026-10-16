@@ -1,6 +1,6 @@
-use raycast_blocks::enemy::bfs_next;
-use raycast_blocks::math::{Rng, Vect};
-use raycast_blocks::world::{World, AIR, FLOOR, X_BLOCKS, Y_BLOCKS, Z_BLOCKS};
+use engine_core::math::{Rng, Vect};
+use studs::enemy::bfs_next;
+use studs::world::{World, AIR, FLOOR, X_BLOCKS, Y_BLOCKS, Z_BLOCKS};
 
 #[test]
 fn ray_down_hits_floor_top() {

@@ -1,4 +1,8 @@
-# STUDS
+# Voxelworks Engine and STUDS
+
+This workspace contains **Voxelworks Engine**, a reusable voxel raycasting engine, and **STUDS**, a separate test game built on top of it. The engine crates are `engine_core`, `engine_scene`, `render_cpu`, `render_gpu`, and `platform`; the game supplies its own entities, materials, shader, styles, and audio.
+
+The standalone engine example can be run with `cargo run -p platform --example minimal_app -- --renderer cpu` (or `gpu`); `--headless` renders one CPU frame without opening a window.
 
 A monochrome first-person horror game built with a software raycaster. Explore a block maze, collect six pages, and keep the creature in sight: it moves when you look away.
 

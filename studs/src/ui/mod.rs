@@ -1,6 +1,7 @@
 pub mod controls;
 pub mod dialogs;
 pub mod difficulty;
+pub mod hud;
 pub mod layout;
 pub mod menu;
 pub mod pause;
@@ -11,8 +12,8 @@ use self::settings as settings_page;
 
 use crate::game::{Difficulty, Game, State};
 use crate::input::{key_name, Action, Key};
-use crate::renderer::hud::fill_rect;
 use crate::settings::Settings;
+use crate::ui::hud::fill_rect;
 use engine_core::gfx::Canvas;
 
 use self::theme::{ACCENT, MUTED, PANEL_EDGE, SELECTED, TEXT};

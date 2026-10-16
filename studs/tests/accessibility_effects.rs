@@ -1,6 +1,6 @@
-use raycast_blocks::{
+use engine_scene::style::RenderStyle;
+use studs::{
     game::Game,
-    renderer::RenderStyle,
     settings::{QualityPreset, VisualStyle},
 };
 
@@ -10,7 +10,7 @@ fn reduce_flashing_uses_steady_proximity_dimming_without_random_drops() {
     game.time = 100.0;
     let style = RenderStyle {
         limit_flicker: true,
-        ..raycast_blocks::styles::realistic()
+        ..studs::styles::realistic()
     };
     let first = game
         .scene_styled(10, 1.0, style)

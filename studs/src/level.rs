@@ -3,7 +3,7 @@
 //! `World` knows nothing about rendering, players or enemies; everything else
 //! asks it questions ("is this tile open?", "what does this ray hit?").
 
-use crate::math::Rng;
+use engine_core::math::Rng;
 use engine_core::voxel::VoxelWorld;
 use std::ops::{Deref, DerefMut};
 

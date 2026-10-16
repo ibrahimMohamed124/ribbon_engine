@@ -1,5 +1,5 @@
-use raycast_blocks::math::{Rng, Vect};
-use raycast_blocks::world::{World, AIR, X_BLOCKS, Y_BLOCKS, Z_BLOCKS};
+use engine_core::math::{Rng, Vect};
+use studs::world::{World, AIR, X_BLOCKS, Y_BLOCKS, Z_BLOCKS};
 
 fn unit(rng: &mut Rng) -> f32 {
     (rng.next_u32() >> 8) as f32 / 16_777_216.0

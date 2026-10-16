@@ -1,8 +1,8 @@
 use std::error::Error;
 
-use raycast_blocks::app::StudsApp;
-use raycast_blocks::surfaces::StudsSurface;
 use render_cpu::renderer::CpuRenderer;
+use studs::app::StudsApp;
+use studs::surfaces::StudsSurface;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let app = StudsApp::new()?;

@@ -1,12 +1,13 @@
-use raycast_blocks::entities::WARDEN;
-use raycast_blocks::game::{Game, State};
-use raycast_blocks::input::{Controls, InputFrame};
-use raycast_blocks::math::Rng;
-use raycast_blocks::renderer::{Framebuffer, DEFAULT_HFOV};
-use raycast_blocks::settings::Settings;
-use raycast_blocks::surfaces::studs_material_table;
-use raycast_blocks::world::World;
+use engine_core::gfx::Framebuffer;
+use engine_core::math::Rng;
 use render_cpu::render::render_with_materials;
+use studs::config::DEFAULT_HFOV;
+use studs::entities::WARDEN;
+use studs::game::{Game, State};
+use studs::input::{Controls, InputFrame};
+use studs::settings::Settings;
+use studs::surfaces::studs_material_table;
+use studs::world::World;
 
 fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
     bytes.into_iter().fold(0xcbf29ce484222325, |hash, byte| {
@@ -53,7 +54,7 @@ fn golden_render_world_simulation_and_settings() {
         &mut framebuffer,
         137,
         DEFAULT_HFOV,
-        raycast_blocks::styles::classic(),
+        studs::styles::classic(),
     );
     let framebuffer_hash = pixels_hash(&framebuffer.pixels);
 
@@ -128,18 +129,8 @@ fn moody_render_is_deterministic_and_matches_its_golden() {
     let game = Game::new(42);
     let mut first = Framebuffer::new(160, 90);
     let mut second = Framebuffer::new(160, 90);
-    game.draw_styled(
-        &mut first,
-        137,
-        DEFAULT_HFOV,
-        raycast_blocks::styles::moody(),
-    );
-    game.draw_styled(
-        &mut second,
-        137,
-        DEFAULT_HFOV,
-        raycast_blocks::styles::moody(),
-    );
+    game.draw_styled(&mut first, 137, DEFAULT_HFOV, studs::styles::moody());
+    game.draw_styled(&mut second, 137, DEFAULT_HFOV, studs::styles::moody());
 
     let first_hash = pixels_hash(&first.pixels);
     let second_hash = pixels_hash(&second.pixels);
@@ -157,18 +148,8 @@ fn realistic_render_is_deterministic_and_matches_its_golden() {
     let game = Game::new(42);
     let mut first = Framebuffer::new(160, 90);
     let mut second = Framebuffer::new(160, 90);
-    game.draw_styled(
-        &mut first,
-        137,
-        DEFAULT_HFOV,
-        raycast_blocks::styles::realistic(),
-    );
-    game.draw_styled(
-        &mut second,
-        137,
-        DEFAULT_HFOV,
-        raycast_blocks::styles::realistic(),
-    );
+    game.draw_styled(&mut first, 137, DEFAULT_HFOV, studs::styles::realistic());
+    game.draw_styled(&mut second, 137, DEFAULT_HFOV, studs::styles::realistic());
     let first_hash = pixels_hash(&first.pixels);
     let second_hash = pixels_hash(&second.pixels);
     println!("realistic_framebuffer_hash={first_hash:#018x}");
@@ -186,12 +167,12 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
     let clear = (0..64)
         .map(|i| i as f32 * std::f32::consts::TAU / 64.0)
         .find(|&angle| {
-            let dir = raycast_blocks::math::Vect::new(angle.cos(), angle.sin(), 0.0);
+            let dir = engine_core::math::Vect::new(angle.cos(), angle.sin(), 0.0);
             game.world.cast(eye, dir, 3.0).is_none()
         })
         .expect("spawn cell should have an open neighboring corridor");
     game.player.view.phi = clear;
-    let dir = raycast_blocks::math::Vect::new(clear.cos(), clear.sin(), 0.0);
+    let dir = engine_core::math::Vect::new(clear.cos(), clear.sin(), 0.0);
     game.enemy.pos = eye + dir.scale(2.4);
     game.enemy.yaw = clear + std::f32::consts::PI;
     let materials = studs_material_table();
@@ -200,9 +181,9 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
         "baked monster atlas must load"
     );
     let mut scene = game
-        .scene_styled(137, DEFAULT_HFOV, raycast_blocks::styles::realistic())
+        .scene_styled(137, DEFAULT_HFOV, studs::styles::realistic())
         .unwrap();
-    let center_ray = raycast_blocks::math::forward_vec(scene.camera.view);
+    let center_ray = engine_core::math::forward_vec(scene.camera.view);
     let warden = scene
         .entities
         .iter()
@@ -224,7 +205,7 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
     render_with_materials(
         &mut with_monster,
         &scene,
-        &raycast_blocks::surfaces::StudsSurface,
+        &studs::surfaces::StudsSurface,
         materials,
     );
     let mut background = Framebuffer::new(160, 90);
@@ -232,7 +213,7 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
     render_with_materials(
         &mut background,
         &scene,
-        &raycast_blocks::surfaces::StudsSurface,
+        &studs::surfaces::StudsSurface,
         materials,
     );
     let hash = pixels_hash(&with_monster.pixels);

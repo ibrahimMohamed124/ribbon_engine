@@ -1,8 +1,8 @@
-use raycast_blocks::enemy::{
+use engine_core::math::{Angles, Rng, Vect};
+use studs::enemy::{
     bfs_next, Enemy, CATCH_DIST, ENEMY_AWAKE_AFTER, ENEMY_BASE_SPEED, SEEN_SPEED_FACTOR,
 };
-use raycast_blocks::math::{Angles, Rng, Vect};
-use raycast_blocks::world::{World, FLOOR_TOP};
+use studs::world::{World, FLOOR_TOP};
 
 fn world() -> World {
     World::generate(&mut Rng::new(42))

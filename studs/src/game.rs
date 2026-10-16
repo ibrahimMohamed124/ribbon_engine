@@ -8,13 +8,17 @@ use crate::enemy::{
     animation_state, flashlight_pulse_factor, footstep_crossings, proximity_intensity, Enemy,
 };
 use crate::input::{Controls, InputFrame};
-use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
-use crate::renderer::hud::{draw_caught, draw_hud, draw_won};
-use crate::renderer::{render_with_materials, Framebuffer, RenderStyle, Scene, RENDER_DIST};
 use crate::surfaces::{enemy_view, page_view, StudsSurface};
+use crate::ui::hud::{draw_caught, draw_hud, draw_won};
 use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
 use engine_core::gfx::Canvas;
+use engine_core::gfx::Framebuffer;
+use engine_core::math::{forward_vec, hash4, Angles, Rng, Vect};
+use engine_scene::scene::Scene;
+use engine_scene::style::RenderStyle;
+use engine_scene::RENDER_DIST;
+use render_cpu::render::raycaster::render_with_materials;
 
 pub const PAGES_TOTAL: usize = 6;
 const PAGE_PICKUP_RADIUS: f32 = 0.9;

@@ -1,4 +1,4 @@
-use raycast_blocks::enemy::{animation_state, EnemyAnimation, CATCH_DIST};
+use studs::enemy::{animation_state, EnemyAnimation, CATCH_DIST};
 
 #[test]
 fn enemy_animation_tracks_sleeping_walking_running_freezing_and_attack_states() {
@@ -26,7 +26,7 @@ fn enemy_animation_tracks_sleeping_walking_running_freezing_and_attack_states() 
 
 #[test]
 fn monster_proximity_effects_are_monotonic_clamped_and_finite() {
-    use raycast_blocks::enemy::{flashlight_pulse_factor, footstep_crossings, proximity_intensity};
+    use studs::enemy::{flashlight_pulse_factor, footstep_crossings, proximity_intensity};
 
     let levels: Vec<_> = (0..=20)
         .map(|step| proximity_intensity(step as f32, true))

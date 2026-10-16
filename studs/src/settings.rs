@@ -16,9 +16,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::config::{DEFAULT_HEIGHT, DEFAULT_HFOV, DEFAULT_WIDTH};
 use crate::game::Difficulty;
 use crate::input::{key_name, parse_key, Action, KeyBindings};
-use crate::renderer::{DEFAULT_HEIGHT, DEFAULT_HFOV, DEFAULT_WIDTH};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum VisualStyle {

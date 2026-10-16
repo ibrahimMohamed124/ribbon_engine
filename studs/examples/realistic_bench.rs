@@ -1,10 +1,10 @@
 use std::time::Instant;
 
 use engine_core::gfx::Framebuffer;
-use raycast_blocks::game::Game;
-use raycast_blocks::renderer::DEFAULT_HFOV;
-use raycast_blocks::surfaces::{studs_material_table, StudsSurface};
 use render_cpu::render::render_with_materials;
+use studs::config::DEFAULT_HFOV;
+use studs::game::Game;
+use studs::surfaces::{studs_material_table, StudsSurface};
 
 fn main() {
     let frames = std::env::args()
@@ -17,9 +17,9 @@ fn main() {
     let materials = studs_material_table();
     let mut framebuffer = Framebuffer::new(320, 180);
     for (name, style) in [
-        ("classic", raycast_blocks::styles::classic()),
-        ("moody", raycast_blocks::styles::moody()),
-        ("realistic", raycast_blocks::styles::realistic()),
+        ("classic", studs::styles::classic()),
+        ("moody", studs::styles::moody()),
+        ("realistic", studs::styles::realistic()),
     ] {
         for frame in 0..3 {
             let scene = game.scene_styled(frame, DEFAULT_HFOV, style).unwrap();

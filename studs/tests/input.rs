@@ -1,5 +1,5 @@
-use raycast_blocks::input::Key;
-use raycast_blocks::input::{
+use studs::input::Key;
+use studs::input::{
     key_name, parse_key, Action, Controls, Input, InputFrame, KeyBindings, KeyState, MouseSource,
 };
 

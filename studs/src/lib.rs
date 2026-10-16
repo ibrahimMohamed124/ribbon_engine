@@ -1,4 +1,4 @@
-//! STUDS - a monochrome, Roblox-flavoured horror game rendered by a software raycaster.
+//! STUDS - a first-person horror game built on the Voxelworks Engine.
 //!
 //! Module map (dependencies flow downwards only):
 //!
@@ -9,23 +9,22 @@
 //!     player.rs     movement + physics
 //!     enemy.rs      AI (pathfinding, "weeping angel" speed rule)
 //!     world.rs      maze generation, voxel storage, voxel ray queries
-//!     renderer/     raycaster, lighting, post-processing, entities, HUD
+//!     surfaces.rs   game materials, procedural albedo, and sprite loading
 //!     audio.rs      backend-agnostic sound events
 //!     ui/           menus, controls, settings, and pixel UI theme
 //!     settings.rs   persisted user settings
-//!   math.rs    Vect / Angles / Rng / hash (no dependencies)
+//!   engine_core   shared math, voxel storage, and framebuffer primitives
 //! ```
 
 pub mod app;
 pub mod audio;
+pub mod config;
 pub mod enemy;
 pub mod entities;
 pub mod game;
 pub mod input;
 pub mod level;
-pub mod math;
 pub mod player;
-pub mod renderer;
 pub mod settings;
 pub mod styles;
 pub mod surfaces;

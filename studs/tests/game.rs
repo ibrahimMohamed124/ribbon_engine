@@ -1,9 +1,9 @@
-use raycast_blocks::audio::AudioEvent;
-use raycast_blocks::enemy::ENEMY_AWAKE_AFTER;
-use raycast_blocks::game::{Difficulty, Game, State, PAGES_TOTAL};
-use raycast_blocks::input::InputFrame;
-use raycast_blocks::math::Vect;
-use raycast_blocks::world::FLOOR_TOP;
+use engine_core::math::Vect;
+use studs::audio::AudioEvent;
+use studs::enemy::ENEMY_AWAKE_AFTER;
+use studs::game::{Difficulty, Game, State, PAGES_TOTAL};
+use studs::input::InputFrame;
+use studs::world::FLOOR_TOP;
 
 const DT: f32 = 0.016;
 

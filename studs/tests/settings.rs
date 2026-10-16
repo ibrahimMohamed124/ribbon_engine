@@ -1,6 +1,6 @@
-use raycast_blocks::input::Action;
-use raycast_blocks::input::Key;
-use raycast_blocks::settings::{QualityPreset, Settings, VisualStyle};
+use studs::input::Action;
+use studs::input::Key;
+use studs::settings::{QualityPreset, Settings, VisualStyle};
 
 #[test]
 fn empty_text_gives_defaults() {
@@ -180,7 +180,7 @@ fn quality_and_flash_accessibility_settings_round_trip() {
     let settings = Settings::parse("quality_preset = realistic\nreduce_flashing = true\n");
     assert_eq!(
         settings.quality_preset,
-        raycast_blocks::settings::QualityPreset::Realistic
+        studs::settings::QualityPreset::Realistic
     );
     assert!(settings.reduce_flashing);
     let round_trip = Settings::parse(&settings.to_text());
@@ -223,7 +223,7 @@ fn legacy_file_keeps_new_movement_defaults() {
 
 #[test]
 fn parser_never_panics_on_deterministic_garbage_lines() {
-    use raycast_blocks::math::Rng;
+    use engine_core::math::Rng;
 
     let mut rng = Rng::new(0x51a7_1e55);
     let alphabet = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_=.#,+- infNaN";

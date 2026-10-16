@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use raycast_blocks::audio::{Audio, AudioAmbience, AudioBackend, AudioEvent};
 use std::time::Instant;
+use studs::audio::{Audio, AudioAmbience, AudioBackend, AudioEvent};
 
 type Log = Rc<RefCell<Vec<(AudioEvent, f32)>>>;
 
@@ -59,7 +59,7 @@ fn null_backend_is_safe() {
 
 #[test]
 fn bundled_sounds_decode_once_into_a_shared_sample_footprint() {
-    let bank = raycast_blocks::audio::sound_bank();
+    let bank = studs::audio::sound_bank();
     let start = Instant::now();
     let mut unique_data: Vec<&[u8]> = Vec::new();
     let mut sample_bytes = 0;
