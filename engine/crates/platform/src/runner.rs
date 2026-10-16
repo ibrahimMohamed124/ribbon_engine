@@ -24,6 +24,7 @@ use crate::timer::FrameTimer;
 use crate::window::{attributes, mouse_position_in_framebuffer, physical_size};
 
 enum Presenter {
+    #[cfg(feature = "gpu")]
     Gpu(Box<voxelworks_render_gpu::GpuPresenter>),
     Cpu(SoftwarePresenter),
 }
@@ -83,7 +84,7 @@ impl SoftwarePresenter {
 impl Presenter {
     fn new(
         window: Arc<Window>,
-        config: &WindowConfig,
+        _config: &WindowConfig,
         mode: RendererMode,
         application_name: &str,
     ) -> Result<Self, Box<dyn Error>> {
@@ -91,9 +92,10 @@ impl Presenter {
             println!("[{application_name}] CPU reference renderer enabled");
             return Ok(Self::Cpu(SoftwarePresenter::new(window)?));
         }
+        #[cfg(feature = "gpu")]
         match voxelworks_render_gpu::GpuPresenter::new(
             window.clone(),
-            (config.width as u32, config.height as u32),
+            (_config.width as u32, _config.height as u32),
         ) {
             Ok(gpu) => {
                 println!("[{application_name}] GPU presentation enabled");
@@ -110,11 +112,23 @@ impl Presenter {
                 Ok(Self::Cpu(SoftwarePresenter::new(window)?))
             }
         }
+        #[cfg(not(feature = "gpu"))]
+        {
+            if mode == RendererMode::Gpu {
+                return Err(std::io::Error::other(format!(
+                    "[{application_name}] GPU renderer required but platform was built without the gpu feature"
+                ))
+                .into());
+            }
+            println!("[{application_name}] GPU feature disabled; CPU presentation enabled");
+            Ok(Self::Cpu(SoftwarePresenter::new(window)?))
+        }
     }
 
-    fn resize(&mut self, window_size: PhysicalSize<u32>) {
+    fn resize(&mut self, _window_size: PhysicalSize<u32>) {
+        #[cfg(feature = "gpu")]
         if let Self::Gpu(gpu) = self {
-            gpu.resize_surface(window_size.width, window_size.height);
+            gpu.resize_surface(_window_size.width, _window_size.height);
         }
     }
 
@@ -122,15 +136,16 @@ impl Presenter {
         &mut self,
         window: &Window,
         framebuffer: &Framebuffer,
-        plan: Option<&voxelworks_api::FramePlan<'_>>,
-        materials: &voxelworks_scene::material::MaterialTable,
+        _plan: Option<&voxelworks_api::FramePlan<'_>>,
+        _materials: &voxelworks_scene::material::MaterialTable,
     ) -> Result<(), Box<dyn Error>> {
         match self {
+            #[cfg(feature = "gpu")]
             Self::Gpu(gpu) => gpu
                 .present_frame(
                     framebuffer,
-                    plan.expect("GPU presents with a frame plan"),
-                    materials,
+                    _plan.expect("GPU presents with a frame plan"),
+                    _materials,
                 )
                 .map_err(std::io::Error::other)
                 .map_err(Into::into),
@@ -159,16 +174,20 @@ pub fn run_with_mode<A: App, R: Renderer>(
     event_loop.listen_device_events(winit::event_loop::DeviceEvents::Always);
     event_loop.set_control_flow(ControlFlow::Poll);
     let application_name = if application_name.trim().is_empty() {
-        "engine"
+        if config.title.trim().is_empty() {
+            "Application".to_owned()
+        } else {
+            config.title.clone()
+        }
     } else {
-        application_name
+        application_name.to_owned()
     };
     let mut config = config;
-    config.title = application_name.to_owned();
+    config.title = application_name.clone();
     let mut runner = Runner {
         app,
         config: config.clone(),
-        application_name: application_name.to_owned(),
+        application_name,
         renderer,
         framebuffer: Framebuffer::new(config.width, config.height),
         window: None,
@@ -265,6 +284,7 @@ impl<A: App, R: Renderer> Runner<A, R> {
         let plan = self.app.frame_plan(&ctx);
         if let Some(presenter) = &mut self.presenter {
             let result = match presenter {
+                #[cfg(feature = "gpu")]
                 Presenter::Gpu(_) => presenter.present(
                     &window,
                     &self.framebuffer,

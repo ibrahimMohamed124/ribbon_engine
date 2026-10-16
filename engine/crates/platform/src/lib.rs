@@ -1,5 +1,6 @@
 //! Desktop platform integration for core applications and scene renderers.
 
+#[cfg(feature = "audio")]
 pub mod audio;
 pub mod cursor;
 pub mod keyboard;

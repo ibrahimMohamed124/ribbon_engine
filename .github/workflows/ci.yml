@@ -34,6 +34,33 @@ jobs:
       - name: Test
         run: cargo test --locked --workspace
 
+  test-no-default-features:
+    name: Build & test without optional platform features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux windowing libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxkbcommon-dev libwayland-dev \
+            libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build without default features
+        run: cargo build --locked --workspace --all-targets --no-default-features
+      - name: Test without default features
+        run: cargo test --locked --workspace --no-default-features
+      - name: Verify platform optional dependencies are absent
+        shell: bash
+        run: |
+          if cargo tree --locked -p voxelworks-platform --no-default-features -e normal | grep -E '(wgpu|rodio) v[0-9]'; then
+            echo "GPU and audio dependencies must be optional platform features"
+            exit 1
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

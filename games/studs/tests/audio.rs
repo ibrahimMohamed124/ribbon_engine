@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[cfg(feature = "audio")]
 use std::time::Instant;
 use studs::audio::{Audio, AudioAmbience, AudioBackend, AudioEvent};
 
@@ -58,6 +59,7 @@ fn null_backend_is_safe() {
 }
 
 #[test]
+#[cfg(feature = "audio")]
 fn bundled_sounds_decode_once_into_a_shared_sample_footprint() {
     let bank = studs::audio::sound_bank();
     let start = Instant::now();

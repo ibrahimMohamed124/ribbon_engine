@@ -61,11 +61,21 @@ impl StudsApp {
             settings.mouse_look_on_start,
             settings.invert_y,
         );
-        let audio = match voxelworks_platform::audio::RodioBackend::new(crate::audio::sound_bank())
-        {
-            Ok(backend) => Audio::with_engine_backend(Box::new(backend), settings.master_volume),
-            Err(error) => {
-                eprintln!("audio output unavailable; continuing silently: {error}");
+        let audio = {
+            #[cfg(feature = "audio")]
+            {
+                match voxelworks_platform::audio::RodioBackend::new(crate::audio::sound_bank()) {
+                    Ok(backend) => {
+                        Audio::with_engine_backend(Box::new(backend), settings.master_volume)
+                    }
+                    Err(error) => {
+                        eprintln!("audio output unavailable; continuing silently: {error}");
+                        Audio::null(settings.master_volume)
+                    }
+                }
+            }
+            #[cfg(not(feature = "audio"))]
+            {
                 Audio::null(settings.master_volume)
             }
         };

@@ -3,14 +3,19 @@ name = "voxelworks-platform"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["gpu", "audio"]
+gpu = ["dep:voxelworks-render-gpu"]
+audio = ["dep:rodio"]
+
 [dependencies]
 voxelworks-core = { path = "../core" }
 voxelworks-scene = { path = "../scene" }
 voxelworks-api = { path = "../api" }
 winit = "0.30.13"
 softbuffer = "0.4.6"
-voxelworks-render-gpu = { path = "../render-gpu" }
-rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }
+voxelworks-render-gpu = { path = "../render-gpu", optional = true }
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"], optional = true }
 
 [dev-dependencies]
 voxelworks-render-cpu = { path = "../render-cpu" }
