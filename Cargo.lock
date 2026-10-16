@@ -139,24 +139,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blocks_engine"
-version = "0.1.0"
-dependencies = [
- "rayon",
-]
-
-[[package]]
-name = "blocks_engine_desktop"
-version = "0.1.0"
-dependencies = [
- "blocks_engine",
- "enigo",
- "minifb",
- "rodio",
- "winit",
-]
-
-[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -469,6 +451,17 @@ dependencies = [
  "rustversion",
  "scopeguard",
  "simdutf8",
+]
+
+[[package]]
+name = "engine_core"
+version = "0.1.0"
+
+[[package]]
+name = "engine_scene"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
 ]
 
 [[package]]
@@ -1369,6 +1362,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
+name = "platform"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_scene",
+ "enigo",
+ "minifb",
+ "render_cpu",
+ "rodio",
+ "winit",
+]
+
+[[package]]
 name = "polling"
 version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1473,6 +1479,19 @@ checksum = "737970939a87c6fa31e7acad13307bccbb017a073b695b6089a2c484f929e20e"
 dependencies = [
  "bitflags 2.13.2",
 ]
+
+[[package]]
+name = "render_cpu"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_scene",
+ "rayon",
+]
+
+[[package]]
+name = "render_gpu"
+version = "0.1.0"
 
 [[package]]
 name = "rodio"
@@ -1712,8 +1731,10 @@ checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 name = "studs"
 version = "0.3.0"
 dependencies = [
- "blocks_engine",
- "blocks_engine_desktop",
+ "engine_core",
+ "engine_scene",
+ "platform",
+ "render_cpu",
 ]
 
 [[package]]

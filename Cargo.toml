@@ -1,5 +1,5 @@
 [workspace]
-members = ["engine", "engine_desktop", "studs"]
+members = ["engine_core", "engine_scene", "render_cpu", "render_gpu", "platform", "studs"]
 default-members = ["studs"]
 resolver = "2"
 

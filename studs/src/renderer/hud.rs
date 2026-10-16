@@ -1,8 +1,8 @@
 //! HUD and full-screen overlays. All coordinates are in framebuffer pixels.
 
 use crate::math::{hash4, pack_gray};
-pub use blocks_engine::gfx::fill_rect;
-use blocks_engine::gfx::Framebuffer;
+pub use engine_core::gfx::fill_rect;
+use engine_core::gfx::Framebuffer;
 
 pub fn draw_hud(
     fb: &mut Framebuffer,

@@ -4,7 +4,7 @@
 //! asks it questions ("is this tile open?", "what does this ray hit?").
 
 use crate::math::Rng;
-use blocks_engine::voxel::VoxelWorld;
+use engine_core::voxel::VoxelWorld;
 use std::ops::{Deref, DerefMut};
 
 pub const CELLS: usize = 10; // maze is CELLS x CELLS cells, each 2x2 tiles with 1-tile walls
@@ -50,10 +50,10 @@ impl World {
 
     pub fn cast(
         &self,
-        origin: blocks_engine::math::Vect,
-        dir: blocks_engine::math::Vect,
+        origin: engine_core::math::Vect,
+        dir: engine_core::math::Vect,
         max_dist: f32,
-    ) -> Option<blocks_engine::voxel::Hit> {
+    ) -> Option<engine_core::voxel::Hit> {
         self.0.cast(origin, dir, max_dist, AIR)
     }
 

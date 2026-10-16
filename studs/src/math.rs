@@ -1,2 +1,2 @@
 //! Compatibility re-exports for shared math types and helpers.
-pub use blocks_engine::math::*;
+pub use engine_core::math::*;

@@ -3,7 +3,7 @@
 use crate::input::Controls;
 use crate::math::{Angles, Vect};
 use crate::world::{World, FLOOR_TOP};
-use blocks_engine::physics::{collides as engine_collides, slide_xy, BodyShape};
+use engine_core::physics::{collides as engine_collides, slide_xy, BodyShape};
 
 pub const EYE_HEIGHT: f32 = 1.5;
 pub const HEAD_MARGIN: f32 = 0.1;

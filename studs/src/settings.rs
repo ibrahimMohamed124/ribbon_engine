@@ -43,10 +43,10 @@ impl VisualStyle {
         }
     }
 
-    pub fn render_style(self) -> blocks_engine::render::RenderStyle {
+    pub fn render_style(self) -> engine_scene::RenderStyle {
         match self {
-            Self::Classic => blocks_engine::render::RenderStyle::classic(),
-            Self::Moody => blocks_engine::render::RenderStyle::moody(),
+            Self::Classic => engine_scene::RenderStyle::classic(),
+            Self::Moody => engine_scene::RenderStyle::moody(),
         }
     }
 

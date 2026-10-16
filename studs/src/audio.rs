@@ -1,13 +1,13 @@
 //! Game audio events translated to the reusable mixer and desktop sound bank.
 
-use blocks_engine::audio::{
+use engine_core::audio::{
     AmbienceAsset, AmbienceId, Audio as Mixer, AudioBackend as MixerBackend, SoundAsset, SoundBank,
     SoundId,
 };
 
 /// Game-specific sound IDs. Numeric values remain stable for saved/debugged data.
 pub mod sounds {
-    use blocks_engine::audio::SoundId;
+    use engine_core::audio::SoundId;
 
     pub const FOOTSTEP: SoundId = SoundId(0);
     pub const CHASE_FOOTSTEP: SoundId = SoundId(1);
@@ -21,7 +21,7 @@ pub mod sounds {
 
 /// Game-specific ambience IDs.
 pub mod ambiences {
-    use blocks_engine::audio::AmbienceId;
+    use engine_core::audio::AmbienceId;
 
     pub const MENU: AmbienceId = AmbienceId(0);
     pub const THREAT: AmbienceId = AmbienceId(1);

@@ -5,14 +5,18 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use blocks_engine::app::{App, Ctx, Flow, WindowConfig, WindowRequest};
-use blocks_engine::gfx::{post::adjust_brightness, Framebuffer};
-use blocks_engine::input::MouseSource;
+use engine_core::app::{Ctx, Flow, WindowConfig, WindowRequest};
+use engine_core::gfx::{post::adjust_brightness, Framebuffer};
+use engine_core::input::MouseSource;
+use engine_scene::app::App;
+use engine_scene::material::MaterialTable;
+use engine_scene::Scene;
 
 use crate::audio::{Audio, AudioAmbience};
 use crate::game::{Game, State, PAGES_TOTAL};
 use crate::input::{Input, InputFrame};
 use crate::settings::Settings;
+use crate::surfaces::STUDS_MATERIAL_TABLE;
 use crate::ui::{Screen, Ui, UiInput};
 
 struct FrameMouse((f32, f32));
@@ -32,6 +36,7 @@ pub struct StudsApp {
     ui: Ui,
     title_timer: f32,
     pending_input: InputFrame,
+    render_frame: u32,
 }
 
 impl StudsApp {
@@ -57,8 +62,7 @@ impl StudsApp {
             settings.mouse_look_on_start,
             settings.invert_y,
         );
-        let audio = match blocks_engine_desktop::audio::RodioBackend::new(crate::audio::sound_bank())
-        {
+        let audio = match platform::audio::RodioBackend::new(crate::audio::sound_bank()) {
             Ok(backend) => Audio::with_engine_backend(Box::new(backend), settings.master_volume),
             Err(error) => {
                 eprintln!("audio output unavailable; continuing silently: {error}");
@@ -74,6 +78,7 @@ impl StudsApp {
             ui: Ui::new(),
             title_timer: 0.0,
             pending_input: InputFrame::default(),
+            render_frame: 0,
         };
         app.sync_audio_settings();
         Ok(app)
@@ -112,6 +117,7 @@ impl StudsApp {
 
 impl App for StudsApp {
     fn update(&mut self, ctx: &mut Ctx<'_>) -> Flow {
+        self.render_frame = ctx.frame;
         let ui_input = UiInput::from_keys(ctx.pressed_keys.to_vec()).with_mouse(
             ctx.mouse_position,
             ctx.mouse_buttons.left,
@@ -227,38 +233,49 @@ impl App for StudsApp {
         Flow::Continue
     }
 
-    fn render(&mut self, framebuffer: &mut Framebuffer, ctx: &Ctx<'_>) {
-        if self.ui.is_playing() {
-            self.game.draw_styled(
-                framebuffer,
-                ctx.frame,
+    fn scene(&self, _alpha: f32) -> Option<Scene<'_>> {
+        if matches!(
+            self.ui.screen(),
+            Screen::Playing
+                | Screen::Pause
+                | Screen::Settings
+                | Screen::Controls
+                | Screen::ConfirmMainMenu
+        ) {
+            self.game.scene_styled(
+                self.render_frame,
                 self.settings.hfov_radians(),
                 self.settings.visual_style.render_style(),
-            );
-            adjust_brightness(framebuffer, self.settings.brightness);
+            )
         } else {
-            if matches!(
+            None
+        }
+    }
+
+    fn overlay(&mut self, framebuffer: &mut Framebuffer, ctx: &Ctx<'_>) {
+        if self.ui.is_playing()
+            || matches!(
                 self.ui.screen(),
                 Screen::Result
                     | Screen::Pause
                     | Screen::Settings
                     | Screen::Controls
                     | Screen::ConfirmMainMenu
-            ) {
-                self.game.draw_styled(
-                    framebuffer,
-                    ctx.frame,
-                    self.settings.hfov_radians(),
-                    self.settings.visual_style.render_style(),
-                );
-                adjust_brightness(framebuffer, self.settings.brightness);
-            }
+            )
+        {
+            self.game.draw_overlay(framebuffer, ctx.frame);
+            adjust_brightness(framebuffer, self.settings.brightness);
+        }
+        if !self.ui.is_playing() {
             self.ui
                 .draw(framebuffer, ctx.frame, &self.game, &self.settings);
-        }
-        if self.ui.is_playing() {
+        } else {
             self.ui.draw_game_hints(framebuffer, &self.game);
         }
+    }
+
+    fn materials(&self) -> &'static MaterialTable {
+        &STUDS_MATERIAL_TABLE
     }
 }
 

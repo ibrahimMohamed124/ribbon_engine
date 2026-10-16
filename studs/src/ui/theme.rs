@@ -1,6 +1,6 @@
 use crate::math::hash4;
-pub use blocks_engine::gfx::font::text;
-use blocks_engine::gfx::{fill_rect, Framebuffer};
+pub use engine_core::gfx::font::text;
+use engine_core::gfx::{fill_rect, Framebuffer};
 
 pub const INK: u32 = 0x0008_0a0d;
 pub const PANEL: u32 = 0x0010_1418;

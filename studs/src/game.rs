@@ -9,7 +9,7 @@ use crate::input::{Controls, InputFrame};
 use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
 use crate::renderer::hud::{draw_caught, draw_hud, draw_won};
-use crate::renderer::{render, EntView, Frame, Framebuffer, RenderStyle, RENDER_DIST};
+use crate::renderer::{render_with_materials, Framebuffer, RenderStyle, Scene, RENDER_DIST};
 use crate::surfaces::{enemy_view, page_view, StudsSurface};
 use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
 
@@ -307,6 +307,13 @@ impl Game {
     }
 
     pub fn draw_styled(&self, fb: &mut Framebuffer, frame_no: u32, hfov: f32, style: RenderStyle) {
+        if let Some(scene) = self.scene_styled(frame_no, hfov, style) {
+            render_with_materials(fb, &scene, &StudsSurface, StudsSurface.materials());
+        }
+        self.draw_overlay(fb, frame_no);
+    }
+
+    pub fn scene_styled(&self, frame_no: u32, hfov: f32, style: RenderStyle) -> Option<Scene<'_>> {
         match self.state {
             State::Playing => {
                 let prox = self.proximity();
@@ -321,7 +328,7 @@ impl Game {
                 let flash = if self.flashlight_on { flick } else { 0.0 };
 
                 let eye = self.player.pos;
-                let mut ents: Vec<EntView> = Vec::with_capacity(1 + self.pages.len());
+                let mut ents = Vec::with_capacity(1 + self.pages.len());
                 ents.push(enemy_view(
                     self.enemy.pos,
                     self.enemy.yaw,
@@ -332,32 +339,37 @@ impl Game {
                     if self.got[i] {
                         continue;
                     }
-                    let bob = (self.time * 2.0 + i as f32).sin() * 0.08;
-                    let pos = Vect::new(p.x, p.y, p.z + bob);
-                    ents.push(page_view(pos, self.time * 1.2 + i as f32, eye));
+                    let pos = Vect::new(p.x, p.y, p.z);
+                    ents.push(page_view(pos, self.time, i as f32));
                 }
 
-                let frame = Frame {
+                Some(Scene {
                     world: &self.world,
-                    eye,
-                    view,
-                    hfov,
-                    illumination: flash,
                     empty_voxel: AIR,
-                    ents,
-                    frame: frame_no,
-                    intensity: prox,
-                    style,
-                };
-                render(fb, &frame, &StudsSurface);
-                draw_hud(
-                    fb,
-                    self.collected,
-                    PAGES_TOTAL,
-                    self.player.stamina,
-                    self.player.exhausted,
-                );
+                    camera: engine_scene::Camera { eye, view, hfov },
+                    lighting: engine_scene::LightingParams {
+                        illumination: flash,
+                        intensity: prox,
+                        frame: frame_no,
+                        style,
+                    },
+                    entities: ents,
+                    entity_registry: &engine_scene::entities::BUILTIN_ENTITY_REGISTRY,
+                })
             }
+            State::Caught | State::Won => None,
+        }
+    }
+
+    pub fn draw_overlay(&self, fb: &mut Framebuffer, frame_no: u32) {
+        match self.state {
+            State::Playing => draw_hud(
+                fb,
+                self.collected,
+                PAGES_TOTAL,
+                self.player.stamina,
+                self.player.exhausted,
+            ),
             State::Caught => draw_caught(fb, self.state_t, frame_no),
             State::Won => draw_won(fb, self.state_t, frame_no),
         }

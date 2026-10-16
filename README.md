@@ -50,7 +50,7 @@ Bindings are configurable and saved in `settings.cfg` (`%APPDATA%\raycast_blocks
 
 The game opens on a main menu. Hover over an item and click to select it; the keyboard remains available. In settings, click the value area to change a value, and use the mouse wheel to move through long control lists. Press `Esc` during a run to pause it; simulation and gameplay timers stay frozen until you resume. Settings and controls are available from both menus and are saved when changed. The settings screen exposes the currently supported audio buses, mouse options, FOV, brightness, window scale, and render resolution. Window scale choices adjust to the render resolution and keep the initial window at or below 1280x720. Mouse sensitivity is shown as an easy-to-read 0-10 level.
 
-The **Visual Style** setting switches between **Moody** (the default, with a cold green-gray palette, tone mapping, subtle procedural surface texture, and voxel ambient occlusion) and **Classic** (the original grayscale look). HUD and menu layers remain unchanged. To capture deterministic renderer samples, run `cargo run --locked -p blocks_engine --example screenshot`; PNGs are written under `target/shots/`. Compare renderer cost with `cargo run --release --locked -p blocks_engine --example render_bench -- 30`.
+The **Visual Style** setting switches between **Moody** (the default, with a cold green-gray palette, tone mapping, subtle procedural surface texture, and voxel ambient occlusion) and **Classic** (the original grayscale look). HUD and menu layers remain unchanged. To capture deterministic renderer samples, run `cargo run --locked -p render_cpu --example screenshot`; PNGs are written under `target/shots/`. Compare renderer cost with `cargo run --release --locked -p render_cpu --example render_bench -- 30`.
 
 Selecting **New Game** opens a difficulty screen. **Easy** gives more time before the enemy wakes and reduces its chase speed; **Normal** preserves the original balance; **Hard** wakes the enemy sooner and increases its speed. Looking at the enemy still slows it on every difficulty. New runs randomize the player and enemy's starting cells and place pages apart. The HUD teaches the objective and the enemy's sight rule, while a won run records the best time for its difficulty in `settings.cfg`.
 
@@ -60,15 +60,12 @@ Cursor recentering uses Enigo. On Wayland, cursor warping may be restricted or e
 
 ```text
 Cargo.toml              Workspace; `studs` is the default member
-engine/                 Reusable platform-independent engine
-  src/app.rs            App contract, per-frame context, and requests
-  src/math.rs           Vector, angle, RNG, and hashing utilities
-  src/gfx/              Framebuffer, pixel font, and image post-processing
-  src/voxel.rs          Runtime-sized voxel storage and DDA casting
-  src/render/           Raycasting, lighting, and generic entity intersections
-engine_desktop/         Desktop platform integration
-  src/                  Window, input mapping, cursor, timer, audio, and runner
-  examples/walkabout.rs Standalone room demo using only the two engine crates
+engine_core/             Platform-independent math, voxel, audio, app context, and framebuffer
+engine_scene/            Renderer-independent Scene, camera, materials, textures, and styles
+render_cpu/              Rayon CPU raycaster, lighting, post-processing, and entity intersection
+render_gpu/              Planned GPU renderer skeleton; no GPU dependencies
+platform/                Desktop window, input mapping, cursor, timer, audio, and generic runner
+  examples/walkabout.rs  Standalone room demo using the CPU renderer
 studs/
   src/main.rs           Small application entry point
   src/lib.rs            Game library and module map
@@ -78,7 +75,7 @@ studs/
   src/player.rs         Movement, physics, and stamina
   src/enemy.rs          Enemy behavior and pathfinding
   src/level.rs          Maze generation and game-specific block layout
-  src/renderer/         Camera, lighting, entities, post-processing, and HUD
+  src/renderer/         HUD and game-over overlays
   src/input.rs          Input actions and key bindings
   src/audio.rs          Audio events and swappable backend
   src/settings.rs       Settings parsing and persistence
@@ -91,7 +88,7 @@ WAV assets in `studs/assets/audio/` are embedded in the game binary and played t
 
 The main menu starts each run explicitly. During play, `Esc` opens a pause screen; simulation and gameplay timers remain frozen until resume. Settings and controls can be edited in either menu. Supported options include audio buses and mute, mouse look, FOV, brightness, render resolution, and window scaling. There is no saved-run system, so the main menu does not show a Continue option.
 
-The root is a Cargo workspace with `engine`, `engine_desktop`, and `studs` members. Shared math, framebuffer drawing, voxel queries, and generic rendering algorithms live in `engine`; maze generation, game materials, and gameplay remain in `studs`. `studs` is the default member, so `cargo run --release` from the repository root continues to launch `raycast_blocks`.
+The workspace separates `engine_core`, `engine_scene`, `render_cpu`, `render_gpu`, `platform`, and `studs`. `engine_core` has no external dependencies; the scene crate contains plain renderer-independent data; CPU rendering owns Rayon and the reference raycaster; the platform runner accepts a renderer implementation. `studs` remains the default member, so `cargo run --release` from the repository root continues to launch `raycast_blocks`. See [ARCHITECTURE.md](ARCHITECTURE.md) for dependency rules and the GPU port checklist.
 
 ## Contributing
 
@@ -116,7 +113,7 @@ cargo run --release
 cargo test --locked
 ```
 
-يضيف خيار **Visual Style** نمط **Moody** الافتراضي بلوحة باردة وخامات خفيفة وـ ambient occlusion، مع إمكانية الرجوع إلى **Classic** الرمادي الأصلي. القوائم وواجهة اللعب تظل كما هي. لإنشاء صور مقارنة ثابتة شغّل `cargo run --locked -p blocks_engine --example screenshot`؛ تحفظ الصور في `target/shots/`.
+يضيف خيار **Visual Style** نمط **Moody** الافتراضي بلوحة باردة وخامات خفيفة وـ ambient occlusion، مع إمكانية الرجوع إلى **Classic** الرمادي الأصلي. القوائم وواجهة اللعب تظل كما هي. لإنشاء صور مقارنة ثابتة شغّل `cargo run --locked -p render_cpu --example screenshot`؛ تحفظ الصور في `target/shots/`.
 
 ### أزرار التحكم الافتراضية
 
@@ -134,4 +131,4 @@ cargo test --locked
 
 تظهر تعليمات الهدف في بداية الجولة، ثم تلميح إبقاء الوحش أمامك عندما يستيقظ. الوحش يبحث لفترة قصيرة عند فقدان رؤيتك، وخطواته تتجه يسارًا ويمينًا بحسب موقعه. تتغير أماكن البداية والصفحات مع كل جولة، مع الحفاظ على مسافة بينها. تُحفظ أفضل مدة فوز لكل مستوى في `settings.cfg`. إعداد السطوع يتراوح بين 50% و150%، وتُحد خيارات تكبير النافذة حسب دقة الرسم بحيث لا تتجاوز أبعاد البداية 1280×720.
 
-Renderer reference levels can be checked with cargo run --release -p blocks_engine --example level_probe; the command fails if the Moody lighting targets are missed.
+Renderer reference levels can be checked with `cargo run --release --locked -p render_cpu --example level_probe`; the command fails if the Moody lighting targets are missed.
