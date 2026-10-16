@@ -22,18 +22,27 @@ const STUDS_MATERIALS: [Material; 3] = [
         base_rule: BaseAlbedoRule::StudsClassic,
         constant_albedo: 0.0,
         texture: TextureKind::Noise { seed: 41 },
+        pbr_texture: None,
+        uv_scale: [1.0, 1.0],
+        cell_variation: false,
     },
     Material {
         block_id: WALL,
         base_rule: BaseAlbedoRule::StudsClassic,
         constant_albedo: 0.0,
         texture: TextureKind::Bricks { seed: 17 },
+        pbr_texture: None,
+        uv_scale: [1.0, 1.0],
+        cell_variation: false,
     },
     Material {
         block_id: CEIL,
         base_rule: BaseAlbedoRule::StudsClassic,
         constant_albedo: 0.0,
         texture: TextureKind::Noise { seed: 41 },
+        pbr_texture: None,
+        uv_scale: [1.0, 1.0],
+        cell_variation: false,
     },
 ];
 
