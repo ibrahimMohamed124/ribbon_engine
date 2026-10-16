@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import io
 import re
+import subprocess
 import sys
 import tomllib
 import urllib.error
@@ -141,6 +142,21 @@ def write_credits(rows: list[dict[str, str]], monsters: list[dict[str, str]]) ->
 
 def check(rows: list[dict[str, str]], monsters: list[dict[str, str]]) -> bool:
     good = True
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=False
+    )
+    if tracked.returncode != 0:
+        print("could not inspect tracked files for accidental monster source commits")
+        good = False
+    else:
+        for name in tracked.stdout.decode("utf-8", errors="replace").split("\0"):
+            if name.startswith("assets/monster/source/"):
+                print(f"authoring source must not be committed: {name}")
+                good = False
+            path = ROOT / name
+            if name and path.is_file() and path.stat().st_size > MAX_BYTES:
+                print(f"tracked file exceeds the 40 MiB asset/source limit: {name}")
+                good = False
     for row in rows:
         path = ROOT / row["local_path"]
         expected = row["sha256"]
