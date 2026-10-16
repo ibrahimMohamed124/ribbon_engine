@@ -67,6 +67,7 @@ struct GpuEntity {
     range: [u32; 4],
     animation: [f32; 4],
     render: [f32; 4],
+    shadow: [f32; 4],
 }
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -966,9 +967,13 @@ fn update_world(
                 spin,
             } => [1.0, amplitude, speed, spin],
         };
-        let (render_mode, atlas_slot) = match def.render_mode {
-            EntityRenderMode::Boxes => (0.0, 0.0),
-            EntityRenderMode::Billboard { atlas_slot, .. } => (1.0, atlas_slot as f32),
+        let (render_mode, atlas_slot, sprite_width, sprite_height) = match def.render_mode {
+            EntityRenderMode::Boxes => (0.0, 0.0, 0.0, 0.0),
+            EntityRenderMode::Billboard {
+                atlas_slot,
+                width,
+                height,
+            } => (1.0, atlas_slot as f32, width, height),
         };
         let (shadow_x, shadow_y) = match def.shadow {
             EntityShadow::None => (0.0, 0.0),
@@ -981,7 +986,8 @@ fn update_world(
             bounds_max: [max[0], max[1], max[2], 0.],
             range: [start as u32, def.boxes.len() as u32, has, ent.kind.0],
             animation,
-            render: [render_mode, atlas_slot, shadow_x, shadow_y],
+            render: [render_mode, atlas_slot, sprite_width, sprite_height],
+            shadow: [shadow_x, shadow_y, 0.0, 0.0],
         });
     }
     if s.entities.len() > 16 || bs.len() > 1024 {
