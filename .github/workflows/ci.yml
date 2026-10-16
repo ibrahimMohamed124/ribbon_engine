@@ -36,9 +36,9 @@ jobs:
       - name: GPU fixture parity and engine-only headless examples
         if: runner.os == 'Linux'
         run: |
-          cargo test --locked -p voxelworks-render-gpu --test parity -- --nocapture
+          WGPU_BACKEND=vulkan cargo test --locked -p voxelworks-render-gpu --test parity -- --nocapture
           cargo run --locked -p voxelworks-minimal -- --headless --renderer cpu
-          cargo run --locked -p voxelworks-minimal -- --headless --renderer gpu
+          WGPU_BACKEND=vulkan cargo run --locked -p voxelworks-minimal -- --headless --renderer gpu
 
   test-no-default-features:
     name: Build & test without optional platform features

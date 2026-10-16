@@ -1,41 +1,16 @@
 # Contributing
 
-Thanks for considering a contribution to STUDS.
+Keep reusable engine code and game-specific code in their respective layers.
 
-## Before you start
+- `engine/crates/core`: portable math, voxel, physics, input/time primitives, and audio identifiers. Keep it dependency-free.
+- `engine/crates/scene`: renderer-neutral scene, material, texture, and style data.
+- `engine/crates/api`: shared app, frame, draw, framebuffer, and renderer contracts.
+- `engine/crates/render-cpu`: software raycasting, rasterization, font rendering, and post-processing.
+- `engine/crates/render-gpu`: GPU buffers, pipelines, shaders, offscreen rendering, and window presentation.
+- `engine/crates/platform`: windowing, input mapping, audio playback, and application lifecycle.
+- `engine/examples/minimal`: small examples that must build without depending on the game.
+- `games/studs`: game rules, levels, content, UI, and game-owned runtime assets/tools.
 
-- For a substantial change, open an issue first to discuss the approach.
-- Keep pull requests focused and explain the player-facing impact.
-- Do not include generated build output, local settings, or assets you do not have permission to share.
+Do not add game vocabulary or game dependencies to engine crates. Put renderer-neutral behavior in shared data when both backends need to interpret it. If a capability remains CPU-specific, document it and cover the limitation with a named test.
 
-## Development
-
-1. Install the stable Rust toolchain.
-2. Create a focused branch for your change.
-3. Make the smallest coherent change and add or update tests where behavior changes.
-4. Before opening a pull request, run:
-
-   ```sh
-   cargo fmt --all -- --check
-   cargo clippy --locked --all-targets -- -D warnings
-   cargo test --locked
-   ```
-
-5. In the pull request, describe the change, how you verified it, and include screenshots for visual changes when possible.
-
-## Renderer visuals and goldens
-
-- The engine's default `RenderStyle` is Classic; game-facing style selection is persisted as `visual_style = classic|moody`.
-- Generate deterministic visual samples with `cargo run --locked -p voxelworks-render-cpu --example screenshot` (output: `target/shots/`).
-- Compare Classic and Moody frame cost with `cargo run --release --locked -p voxelworks-render-cpu --example render_bench -- 30`.
-- If an intentional rendering change updates a golden, inspect the screenshot output first, then run `cargo test -p studs --test golden -- --nocapture`, update only the affected expected hash, and rerun the full locked workspace tests. Keep the legacy Classic golden pinned unless its output change is intentional and documented.
-
-## Code style
-
-- Follow standard Rust formatting and keep module boundaries clear.
-- Prefer deterministic tests for gameplay and rendering logic.
-- Avoid adding dependencies unless they provide a clear benefit.
-
-- Before re-blessing a Moody golden, run `cargo run --release --locked -p voxelworks-render-cpu --example level_probe` and confirm every lighting target passes. The Classic framebuffer hash must remain unchanged.
-
-- `cargo run --release --locked -p voxelworks-render-cpu --example level_probe` prints the Classic/Moody reference levels and exits nonzero if a Moody target regresses.
+Before submitting, run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, the same test suite with `--no-default-features`, `python games/studs/tools/fetch_assets.py --check`, and both CPU/GPU headless minimal example runs where a GPU adapter is available. Keep the existing game golden values unchanged.
