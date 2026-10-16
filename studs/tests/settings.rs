@@ -1,6 +1,6 @@
 use raycast_blocks::input::Action;
 use raycast_blocks::input::Key;
-use raycast_blocks::settings::Settings;
+use raycast_blocks::settings::{Settings, VisualStyle};
 
 #[test]
 fn empty_text_gives_defaults() {
@@ -149,6 +149,27 @@ fn audio_bus_settings_round_trip_and_clamp() {
 }
 
 #[test]
+fn visual_style_round_trips_and_invalid_values_use_the_default() {
+    let classic = Settings::parse("visual_style = classic\n");
+    assert_eq!(classic.visual_style, VisualStyle::Classic);
+    assert_eq!(
+        Settings::parse(&classic.to_text()).visual_style,
+        VisualStyle::Classic
+    );
+
+    let moody = Settings::parse("visual_style = MOODY\n");
+    assert_eq!(moody.visual_style, VisualStyle::Moody);
+    assert_eq!(
+        Settings::parse("visual_style = film-noir\n").visual_style,
+        Settings::default().visual_style
+    );
+    assert_eq!(
+        Settings::parse("").visual_style,
+        Settings::default().visual_style
+    );
+}
+
+#[test]
 fn version_two_settings_keep_custom_movement_but_reset_escape_quit() {
     let settings = Settings::parse("settings_version = 2\nkey.forward = I\nkey.quit = Escape,Q\n");
     assert!(matches!(settings.bindings.keys(Action::Forward)[0], Key::I));
@@ -166,4 +187,36 @@ fn legacy_file_keeps_new_movement_defaults() {
     // current-version files are honoured in full
     let s = Settings::parse("settings_version = 2\nkey.forward = I\n");
     assert!(matches!(s.bindings.keys(Action::Forward)[0], Key::I));
+}
+
+#[test]
+fn parser_never_panics_on_deterministic_garbage_lines() {
+    use raycast_blocks::math::Rng;
+
+    let mut rng = Rng::new(0x51a7_1e55);
+    let alphabet = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_=.#,+- infNaN";
+    let required_cases = "=\n# NaN inf huge numbers\nmaster_volume = NaN\nhfov_degrees = inf\nrender_width = 999999999999999999999999\nmouse_sensitivity = 1e999\nunknown_key = garbage\nkey.not_a_real_action = W\n";
+    for _ in 0..3_000 {
+        let mut text = String::from(required_cases);
+        for _ in 0..(rng.below(12) + 1) {
+            let len = rng.below(48);
+            for _ in 0..len {
+                text.push(alphabet[rng.below(alphabet.len())] as char);
+            }
+            text.push('\n');
+        }
+        let settings = Settings::parse(&text);
+        assert!((0.0..=1.0).contains(&settings.master_volume));
+        assert!((0.0..=1.0).contains(&settings.effects_volume));
+        assert!((0.0..=1.0).contains(&settings.ambient_volume));
+        assert!((40.0..=140.0).contains(&settings.hfov_degrees));
+        assert!((80..=1920).contains(&settings.render_width));
+        assert!((45..=1080).contains(&settings.render_height));
+        assert!((0.5..=1.5).contains(&settings.brightness));
+        assert!((0.0..=0.05).contains(&settings.mouse_sensitivity));
+        assert!(settings
+            .best_times
+            .iter()
+            .all(|time| (0.0..=86_400.0).contains(time)));
+    }
 }

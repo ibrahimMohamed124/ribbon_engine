@@ -123,6 +123,24 @@ fn settings_are_changed_immediately_and_request_window_rebuilds() {
 }
 
 #[test]
+fn visual_style_can_be_changed_from_the_settings_screen() {
+    let mut ui = Ui::new();
+    let mut settings = Settings::default();
+    ui.update(&press(Key::Down), &mut settings);
+    ui.update(&press(Key::Enter), &mut settings);
+    for _ in 0..12 {
+        ui.update(&press(Key::Down), &mut settings);
+    }
+    assert_eq!(raycast_blocks::ui::settings::value(&settings, 12), "MOODY");
+    let changed = ui.update(&press(Key::Right), &mut settings);
+    assert!(changed.settings_changed);
+    assert_eq!(
+        raycast_blocks::ui::settings::value(&settings, 12),
+        "CLASSIC"
+    );
+}
+
+#[test]
 fn controls_can_rebind_and_return_to_their_parent() {
     let mut ui = Ui::new();
     let mut settings = Settings::default();

@@ -31,6 +31,7 @@ pub struct StudsApp {
     audio: Audio,
     ui: Ui,
     title_timer: f32,
+    pending_input: InputFrame,
 }
 
 impl StudsApp {
@@ -72,6 +73,7 @@ impl StudsApp {
             audio,
             ui: Ui::new(),
             title_timer: 0.0,
+            pending_input: InputFrame::default(),
         };
         app.sync_audio_settings();
         Ok(app)
@@ -83,6 +85,8 @@ impl StudsApp {
             width: self.settings.render_width,
             height: self.settings.render_height,
             scale: self.settings.window_scale,
+            fixed_hz: 120,
+            max_steps: 10,
         }
     }
 
@@ -135,12 +139,14 @@ impl App for StudsApp {
             });
         }
         if outcome.start_game {
+            self.pending_input = InputFrame::default();
             self.game = Game::new_with_difficulty(
                 seed_now(),
                 outcome.difficulty.unwrap_or(self.game.difficulty),
             );
             self.game.flashlight_on = self.settings.flashlight_on_start;
         } else if outcome.restart_game {
+            self.pending_input = InputFrame::default();
             self.game.restart(seed_now());
         }
 
@@ -153,7 +159,19 @@ impl App for StudsApp {
             if frame_input.quit {
                 return Flow::Quit;
             }
-            self.game.update(&frame_input, ctx.dt);
+            if ctx.fixed_steps == 0 {
+                self.pending_input.merge(frame_input);
+            } else {
+                self.pending_input.merge(frame_input);
+                let first = std::mem::take(&mut self.pending_input);
+                for step in 0..ctx.fixed_steps {
+                    if self.game.state != State::Playing {
+                        break;
+                    }
+                    let input = if step == 0 { first } else { first.level_only() };
+                    self.game.update(&input, ctx.fixed_dt);
+                }
+            }
             if self.game.state != State::Playing {
                 if self.game.state == State::Won
                     && self
@@ -165,6 +183,12 @@ impl App for StudsApp {
                 self.ui.show_result();
             }
         } else {
+            self.pending_input = InputFrame::default();
+            if self.game.state != State::Playing {
+                for _ in 0..ctx.fixed_steps {
+                    self.game.update(&InputFrame::default(), ctx.fixed_dt);
+                }
+            }
             self.input.synchronize_keys(ctx.keys);
         }
 
@@ -205,21 +229,28 @@ impl App for StudsApp {
 
     fn render(&mut self, framebuffer: &mut Framebuffer, ctx: &Ctx<'_>) {
         if self.ui.is_playing() {
-            self.game
-                .draw(framebuffer, ctx.frame, self.settings.hfov_radians());
+            self.game.draw_styled(
+                framebuffer,
+                ctx.frame,
+                self.settings.hfov_radians(),
+                self.settings.visual_style.render_style(),
+            );
             adjust_brightness(framebuffer, self.settings.brightness);
         } else {
-            if self.ui.screen() == Screen::Result {
-                self.game.update(&InputFrame::default(), ctx.dt);
-                self.game
-                    .draw(framebuffer, ctx.frame, self.settings.hfov_radians());
-                adjust_brightness(framebuffer, self.settings.brightness);
-            } else if matches!(
+            if matches!(
                 self.ui.screen(),
-                Screen::Pause | Screen::Settings | Screen::Controls | Screen::ConfirmMainMenu
+                Screen::Result
+                    | Screen::Pause
+                    | Screen::Settings
+                    | Screen::Controls
+                    | Screen::ConfirmMainMenu
             ) {
-                self.game
-                    .draw(framebuffer, ctx.frame, self.settings.hfov_radians());
+                self.game.draw_styled(
+                    framebuffer,
+                    ctx.frame,
+                    self.settings.hfov_radians(),
+                    self.settings.visual_style.render_style(),
+                );
                 adjust_brightness(framebuffer, self.settings.brightness);
             }
             self.ui

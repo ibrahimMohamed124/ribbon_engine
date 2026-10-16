@@ -3,8 +3,11 @@
 use rayon::prelude::*;
 
 use super::entities::{EntHit, EntView};
-use super::lighting::{cone_factor, light, shade_surface, SurfaceShader};
-use super::post::finish_pixel;
+use super::lighting::{
+    cone_factor, light_with_style, shade_surface, SurfaceContext, SurfaceShader,
+};
+use super::post::{finish_pixel_styled_with_lut, PixelSample};
+use super::style::RenderStyle;
 use super::RENDER_DIST;
 use crate::gfx::Framebuffer;
 use crate::math::{forward_vec, Angles, Vect};
@@ -20,6 +23,7 @@ pub struct Frame<'a> {
     pub ents: Vec<EntView>,
     pub frame: u32,
     pub intensity: f32,
+    pub style: RenderStyle,
 }
 
 fn shade_pixel<S: SurfaceShader + Sync>(f: &Frame, shader: &S, fwd: Vect, dir: Vect) -> f32 {
@@ -40,23 +44,27 @@ fn shade_pixel<S: SurfaceShader + Sync>(f: &Frame, shader: &S, fwd: Vect, dir: V
             let fall = (1.0 - hit.t / (RENDER_DIST * 1.4)).clamp(0.0, 1.0);
             return hit.gray * fall;
         }
-        return hit.gray * light(f.illumination, hit.t, hit.ndotl, cone);
+        return hit.gray * light_with_style(f.illumination, hit.t, hit.ndotl, cone, &f.style);
     }
     match world_hit {
         Some(hit) => shade_surface(
             shader,
             f.world,
-            f.illumination,
-            &hit,
-            dir,
-            cone,
-            f.empty_voxel,
+            SurfaceContext {
+                illumination: f.illumination,
+                hit: &hit,
+                direction: dir,
+                cone,
+                empty_voxel: f.empty_voxel,
+                style: &f.style,
+            },
         ),
         None => 0.0,
     }
 }
 
 pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Frame, shader: &S) {
+    let level_lut = frame.style.level_lut();
     let (width, height) = (fb.width, fb.height);
     let view = frame.view;
     let forward = forward_vec(view);
@@ -79,7 +87,19 @@ pub fn render<S: SurfaceShader + Sync>(fb: &mut Framebuffer, frame: &Frame, shad
                 let direction =
                     (forward + right.scale(u * tan_h) + up.scale(v * tan_v)).normalize();
                 let gray = shade_pixel(frame, shader, forward, direction);
-                *pixel = finish_pixel(gray, u, v, x, y, frame.frame, frame.intensity);
+                *pixel = finish_pixel_styled_with_lut(
+                    gray,
+                    PixelSample {
+                        u,
+                        v,
+                        x,
+                        y,
+                        frame: frame.frame,
+                        intensity: frame.intensity,
+                    },
+                    &frame.style,
+                    &level_lut,
+                );
             }
         });
 }

@@ -2,7 +2,9 @@
 
 pub mod audio;
 pub mod cursor;
+pub mod keyboard;
 pub mod keys;
+pub mod present;
 pub mod timer;
 pub mod window;
 

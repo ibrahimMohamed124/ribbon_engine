@@ -29,6 +29,10 @@ pub struct WindowConfig {
     pub width: usize,
     pub height: usize,
     pub scale: u32,
+    /// Fixed simulation frequency in Hertz.
+    pub fixed_hz: u32,
+    /// Maximum simulation steps to process in one rendered frame.
+    pub max_steps: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -36,6 +40,9 @@ pub struct FrameInfo {
     pub dt: f32,
     pub frame: u32,
     pub fps: f32,
+    pub fixed_dt: f32,
+    pub fixed_steps: u32,
+    pub alpha: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -64,6 +71,9 @@ pub struct Ctx<'a> {
     pub dt: f32,
     pub frame: u32,
     pub fps: f32,
+    pub fixed_dt: f32,
+    pub fixed_steps: u32,
+    pub alpha: f32,
     pub keys: &'a dyn KeyState,
     pub pressed_keys: &'a [Key],
     pub mouse_delta: (f32, f32),
@@ -86,6 +96,9 @@ impl<'a> Ctx<'a> {
             dt: frame_info.dt,
             frame: frame_info.frame,
             fps: frame_info.fps,
+            fixed_dt: frame_info.fixed_dt,
+            fixed_steps: frame_info.fixed_steps,
+            alpha: frame_info.alpha,
             keys,
             pressed_keys,
             mouse_delta: mouse.delta,

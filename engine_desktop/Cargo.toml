@@ -7,4 +7,5 @@ edition = "2021"
 blocks_engine = { path = "../engine" }
 minifb = "0.29.0"
 enigo = "0.6.1"
+winit = "0.30.13"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }

@@ -4,7 +4,7 @@ use blocks_engine::input::Key;
 use blocks_engine::math::{Angles, Vect};
 use blocks_engine::render::entities::{Box3, EntView, EntitySurface};
 use blocks_engine::render::lighting::SurfaceShader;
-use blocks_engine::render::{render, Frame};
+use blocks_engine::render::{render, Frame, RenderStyle};
 use blocks_engine::voxel::{Hit, VoxelWorld};
 use blocks_engine_desktop::run;
 
@@ -15,7 +15,7 @@ const WALL: u8 = 2;
 struct RoomSurface;
 
 impl SurfaceShader for RoomSurface {
-    fn albedo(&self, block: u8, hit: &Hit, _direction: Vect) -> f32 {
+    fn albedo(&self, block: u8, hit: &Hit, _direction: Vect, _style: &RenderStyle) -> f32 {
         if hit.normal[2] != 0 {
             if block == FLOOR {
                 0.52
@@ -113,6 +113,7 @@ impl App for Walkabout {
             ents: vec![object],
             frame: ctx.frame,
             intensity: 0.0,
+            style: RenderStyle::classic(),
         };
         render(framebuffer, &frame, &RoomSurface);
     }
@@ -126,6 +127,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             width: 640,
             height: 360,
             scale: 1,
+            fixed_hz: 120,
+            max_steps: 10,
         },
     )
 }

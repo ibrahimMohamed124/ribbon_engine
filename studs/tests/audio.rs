@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use raycast_blocks::audio::{Audio, AudioAmbience, AudioBackend, AudioEvent};
+use std::time::Instant;
 
 type Log = Rc<RefCell<Vec<(AudioEvent, f32)>>>;
 
@@ -54,6 +55,31 @@ fn play_all_drains_the_queue() {
 fn null_backend_is_safe() {
     let mut a = Audio::null(1.0);
     a.play(AudioEvent::Won);
+}
+
+#[test]
+fn bundled_sounds_decode_once_into_a_shared_sample_footprint() {
+    let bank = raycast_blocks::audio::sound_bank();
+    let start = Instant::now();
+    let mut unique_data: Vec<&[u8]> = Vec::new();
+    let mut sample_bytes = 0;
+    for asset in bank.sounds() {
+        if unique_data.contains(&asset.data) {
+            continue;
+        }
+        let decoded = blocks_engine_desktop::audio::decode_sound(asset.data).unwrap();
+        sample_bytes += decoded.memory_bytes();
+        unique_data.push(asset.data);
+    }
+    let elapsed = start.elapsed();
+    eprintln!(
+        "bundled non-looping sounds: {} unique decodes, {:.2} ms, {} bytes of samples",
+        unique_data.len(),
+        elapsed.as_secs_f64() * 1000.0,
+        sample_bytes
+    );
+    assert_eq!(unique_data.len(), 6);
+    assert!(sample_bytes > 0);
 }
 
 type AmbienceLog = Rc<RefCell<Vec<(Option<AudioAmbience>, f32)>>>;

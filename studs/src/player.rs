@@ -3,6 +3,7 @@
 use crate::input::Controls;
 use crate::math::{Angles, Vect};
 use crate::world::{World, FLOOR_TOP};
+use blocks_engine::physics::{collides as engine_collides, slide_xy, BodyShape};
 
 pub const EYE_HEIGHT: f32 = 1.5;
 pub const HEAD_MARGIN: f32 = 0.1;
@@ -16,6 +17,13 @@ pub const GRAVITY: f32 = 20.0;
 pub const JUMP_SPEED: f32 = 6.5;
 pub const PSI_LIMIT: f32 = 1.4;
 const FOOTSTEP_DISTANCE: f32 = 1.2;
+
+fn body_shape() -> BodyShape {
+    BodyShape::new(
+        BODY_RADIUS,
+        vec![-EYE_HEIGHT, -EYE_HEIGHT + 0.9, HEAD_MARGIN],
+    )
+}
 
 pub struct Player {
     pub pos: Vect, // eye position
@@ -112,14 +120,13 @@ impl Player {
         if moving {
             // axis-separated moves so the player slides along walls
             let k = speed * dt / len;
-            let nx = Vect::new(self.pos.x + mx * k, self.pos.y, self.pos.z);
-            if !collides(nx, world) {
-                self.pos = nx;
-            }
-            let ny = Vect::new(self.pos.x, self.pos.y + my * k, self.pos.z);
-            if !collides(ny, world) {
-                self.pos = ny;
-            }
+            self.pos = slide_xy(
+                world,
+                crate::world::AIR,
+                self.pos,
+                (mx * k, my * k),
+                &body_shape(),
+            );
         }
 
         let moved = (self.pos.x - previous_xy.0).hypot(self.pos.y - previous_xy.1);
@@ -163,14 +170,5 @@ impl Player {
 
 /// Does a body with its eyes at `eye` overlap any solid block?
 pub fn collides(eye: Vect, world: &World) -> bool {
-    let feet = eye.z - EYE_HEIGHT;
-    let r = BODY_RADIUS;
-    for &(dx, dy) in &[(-r, -r), (r, -r), (-r, r), (r, r)] {
-        for &z in &[feet, feet + 0.9, eye.z + HEAD_MARGIN] {
-            if world.is_solid_at(eye.x + dx, eye.y + dy, z) {
-                return true;
-            }
-        }
-    }
-    false
+    engine_collides(world, crate::world::AIR, eye, &body_shape())
 }

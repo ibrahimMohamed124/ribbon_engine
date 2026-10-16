@@ -1,22 +1,12 @@
 //! Platform-independent sound identifiers, mixing, and backend interface.
 
+/// Opaque sound identifier owned by the application using the engine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum SoundId {
-    Footstep,
-    ChaseFootstep,
-    Jump,
-    Land,
-    Collect,
-    Sting,
-    Caught,
-    Victory,
-}
+pub struct SoundId(pub u32);
 
+/// Opaque ambience identifier owned by the application using the engine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AmbienceId {
-    Menu,
-    Threat,
-}
+pub struct AmbienceId(pub u32);
 
 #[derive(Clone, Copy)]
 pub struct SoundAsset {
@@ -50,6 +40,10 @@ impl SoundBank {
 
     pub fn ambience(&self, id: AmbienceId) -> Option<AmbienceAsset> {
         self.ambiences.iter().find(|asset| asset.id == id).copied()
+    }
+
+    pub fn sounds(&self) -> impl Iterator<Item = SoundAsset> + '_ {
+        self.sounds.iter().copied()
     }
 }
 
@@ -154,5 +148,69 @@ impl Audio {
             self.backend
                 .play_spatial(sound, volume, pan.clamp(-1.0, 1.0));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AmbienceAsset, AmbienceId, Audio, AudioBackend, SoundAsset, SoundBank, SoundId};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[derive(Default)]
+    struct Calls {
+        sounds: Vec<(SoundId, f32, f32)>,
+        ambience: Vec<(Option<AmbienceId>, f32)>,
+    }
+
+    struct Recorder(Rc<RefCell<Calls>>);
+
+    impl AudioBackend for Recorder {
+        fn play(&mut self, sound: SoundId, volume: f32) {
+            self.0.borrow_mut().sounds.push((sound, volume, 0.0));
+        }
+
+        fn play_spatial(&mut self, sound: SoundId, volume: f32, pan: f32) {
+            self.0.borrow_mut().sounds.push((sound, volume, pan));
+        }
+
+        fn set_ambience(&mut self, ambience: Option<AmbienceId>, volume: f32) {
+            self.0.borrow_mut().ambience.push((ambience, volume));
+        }
+    }
+
+    #[test]
+    fn opaque_application_ids_work_in_banks_and_mixers() {
+        let sound = SoundId(99);
+        let ambience = AmbienceId(99);
+        let bank = SoundBank::new(
+            vec![SoundAsset {
+                id: sound,
+                data: b"custom",
+                gain: 0.5,
+                speed: 1.0,
+                spatial: false,
+            }],
+            vec![AmbienceAsset {
+                id: ambience,
+                data: b"custom ambience",
+                gain: 0.5,
+            }],
+        );
+        assert_eq!(bank.sound(sound).unwrap().id, sound);
+        assert_eq!(bank.ambience(ambience).unwrap().id, ambience);
+
+        let calls = Rc::new(RefCell::new(Calls::default()));
+        let mut audio = Audio::new(Box::new(Recorder(Rc::clone(&calls))), 0.8);
+        audio.set_effects_volume(0.5);
+        audio.play(sound);
+        audio.play_spatial(sound, 4.0);
+        audio.set_muted(true);
+        audio.play(sound);
+        audio.set_ambience(Some(ambience), 1.0);
+
+        let calls = calls.borrow();
+        assert_eq!(calls.sounds, vec![(sound, 0.4, 0.0), (sound, 0.4, 1.0)]);
+        assert_eq!(calls.ambience.last(), Some(&(Some(ambience), 0.0)));
     }
 }

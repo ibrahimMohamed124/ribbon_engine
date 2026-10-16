@@ -9,7 +9,7 @@ use crate::input::{Controls, InputFrame};
 use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
 use crate::renderer::hud::{draw_caught, draw_hud, draw_won};
-use crate::renderer::{render, EntView, Frame, Framebuffer, RENDER_DIST};
+use crate::renderer::{render, EntView, Frame, Framebuffer, RenderStyle, RENDER_DIST};
 use crate::surfaces::{enemy_view, page_view, StudsSurface};
 use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
 
@@ -303,6 +303,10 @@ impl Game {
 
     /// Draw the current state into `fb`.
     pub fn draw(&self, fb: &mut Framebuffer, frame_no: u32, hfov: f32) {
+        self.draw_styled(fb, frame_no, hfov, RenderStyle::classic());
+    }
+
+    pub fn draw_styled(&self, fb: &mut Framebuffer, frame_no: u32, hfov: f32, style: RenderStyle) {
         match self.state {
             State::Playing => {
                 let prox = self.proximity();
@@ -343,6 +347,7 @@ impl Game {
                     ents,
                     frame: frame_no,
                     intensity: prox,
+                    style,
                 };
                 render(fb, &frame, &StudsSurface);
                 draw_hud(

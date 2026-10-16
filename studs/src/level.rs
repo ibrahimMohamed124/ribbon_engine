@@ -31,6 +31,7 @@ pub fn cell_center(c: usize) -> f32 {
 }
 
 impl World {
+    /// Convert `(z, y, x)` maze storage coordinates into the z-major flat index.
     pub fn idx(z: usize, y: usize, x: usize) -> usize {
         (z * Y_BLOCKS + y) * X_BLOCKS + x
     }
