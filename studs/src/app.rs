@@ -242,13 +242,13 @@ impl App for StudsApp {
                 | Screen::ConfirmMainMenu
         );
         let scene = if has_game_scene {
-            self.game.scene_styled(
-                self.render_frame,
-                self.settings.hfov_radians(),
-                self.settings
-                    .visual_style
-                    .render_style(self.settings.quality_preset),
-            )
+            let mut style = self
+                .settings
+                .visual_style
+                .render_style(self.settings.quality_preset);
+            style.reduce_flashing = self.settings.reduce_flashing;
+            self.game
+                .scene_styled(self.render_frame, self.settings.hfov_radians(), style)
         } else {
             None
         };

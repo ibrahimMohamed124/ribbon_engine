@@ -324,8 +324,18 @@ impl Game {
                     phi: self.player.view.phi + (self.time * 37.0).sin() * shake,
                 };
 
-                let n = hash4((self.time * 14.0) as i32, 3, 5, 9);
-                let flick = if n > 0.93 - prox * 0.6 { 0.12 } else { 1.0 };
+                let flick = if style.reduce_flashing {
+                    // Keep a continuous, low-amplitude proximity response;
+                    // never introduce random drops or dark pulses.
+                    1.0 - prox * 0.12
+                } else {
+                    let n = hash4((self.time * 14.0) as i32, 3, 5, 9);
+                    if n > 0.93 - prox * 0.6 {
+                        0.12
+                    } else {
+                        1.0
+                    }
+                };
                 let flash = if self.flashlight_on { flick } else { 0.0 };
 
                 let eye = self.player.pos;

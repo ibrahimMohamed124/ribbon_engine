@@ -87,6 +87,8 @@ pub struct RenderStyle {
     pub pbr_enabled: bool,
     /// Enables realistic-only assets and effects independently of quality.
     pub realistic_assets: bool,
+    /// Replaces abrupt visual pulses with a small steady illumination change.
+    pub reduce_flashing: bool,
 }
 
 impl RenderStyle {
@@ -102,6 +104,7 @@ impl RenderStyle {
             fog_distance: RENDER_DIST,
             pbr_enabled: false,
             realistic_assets: false,
+            reduce_flashing: false,
         }
     }
 
@@ -117,6 +120,7 @@ impl RenderStyle {
             fog_distance: RENDER_DIST,
             pbr_enabled: false,
             realistic_assets: false,
+            reduce_flashing: false,
         }
     }
 
@@ -133,6 +137,7 @@ impl RenderStyle {
             fog_distance: RENDER_DIST * 0.82,
             pbr_enabled: true,
             realistic_assets: true,
+            reduce_flashing: false,
         }
     }
 
