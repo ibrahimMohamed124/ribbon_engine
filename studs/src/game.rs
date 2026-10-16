@@ -12,6 +12,7 @@ use crate::renderer::hud::{draw_caught, draw_hud, draw_won};
 use crate::renderer::{render_with_materials, Framebuffer, RenderStyle, Scene, RENDER_DIST};
 use crate::surfaces::{enemy_view, page_view, StudsSurface};
 use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
+use engine_core::gfx::Canvas;
 
 pub const PAGES_TOTAL: usize = 6;
 const PAGE_PICKUP_RADIUS: f32 = 0.9;
@@ -361,7 +362,7 @@ impl Game {
         }
     }
 
-    pub fn draw_overlay(&self, fb: &mut Framebuffer, frame_no: u32) {
+    pub fn draw_overlay(&self, fb: &mut impl Canvas, frame_no: u32) {
         match self.state {
             State::Playing => draw_hud(
                 fb,

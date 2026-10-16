@@ -8,7 +8,7 @@ pub mod present;
 pub mod timer;
 pub mod window;
 
-mod runner;
+pub mod runner;
 
 pub use engine_core::app::WindowConfig;
-pub use runner::run;
+pub use runner::{run, run_with_mode, RendererMode};

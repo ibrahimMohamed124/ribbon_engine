@@ -1,8 +1,15 @@
 //! Compact 5x7 pixel font drawing.
 
-use super::{fill_rect, Framebuffer};
+use super::{fill_rect, Canvas};
 
-pub fn text(fb: &mut Framebuffer, value: &str, mut x: i32, y: i32, scale: i32, color: u32) {
+pub fn text<C: Canvas + ?Sized>(
+    fb: &mut C,
+    value: &str,
+    mut x: i32,
+    y: i32,
+    scale: i32,
+    color: u32,
+) {
     let scale = scale.max(1);
     for ch in value.chars() {
         let glyph = glyph(ch.to_ascii_uppercase());
@@ -24,7 +31,8 @@ pub fn text(fb: &mut Framebuffer, value: &str, mut x: i32, y: i32, scale: i32, c
     }
 }
 
-fn glyph(ch: char) -> [u8; 7] {
+/// Returns the shared 5x7 bitmap for a character.
+pub fn glyph(ch: char) -> [u8; 7] {
     match ch {
         'A' => [14, 17, 17, 31, 17, 17, 17],
         'B' => [30, 17, 17, 30, 17, 17, 30],
