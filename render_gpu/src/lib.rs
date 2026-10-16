@@ -6,7 +6,7 @@ use bytemuck::{Pod, Zeroable};
 use engine_core::gfx::{DrawCommand, DrawList, Effect, Framebuffer};
 use engine_core::math::{forward_vec, Vect};
 use engine_scene::app::FramePlan;
-use engine_scene::entities::PAGE;
+use engine_scene::entities::{EntityAnimation, EntityRenderMode, EntityShadow};
 use engine_scene::material::{BaseAlbedoRule, MaterialTable, TextureKind};
 use engine_scene::scene::Scene;
 use engine_scene::style::LEVEL_COUNT;
@@ -65,6 +65,8 @@ struct GpuEntity {
     bounds_min: [f32; 4],
     bounds_max: [f32; 4],
     range: [u32; 4],
+    animation: [f32; 4],
+    render: [f32; 4],
 }
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -954,18 +956,32 @@ fn update_world(
             });
         }
         let (min, max, has) = def.bounds.map_or(([0.; 3], [0.; 3], 0), |(a, b)| (a, b, 1));
-        let mut pos = [ent.pos.x, ent.pos.y, ent.pos.z];
-        let mut yaw = ent.yaw;
-        if ent.kind == PAGE {
-            pos[2] += (ent.params[0] * 2. + ent.params[1]).sin() * 0.08;
-            yaw = ent.params[0] * 1.2 + ent.params[1];
-        }
+        let pos = [ent.pos.x, ent.pos.y, ent.pos.z];
+        let yaw = ent.yaw;
+        let animation = match def.animation {
+            EntityAnimation::None => [0.0; 4],
+            EntityAnimation::BobSpin {
+                amplitude,
+                speed,
+                spin,
+            } => [1.0, amplitude, speed, spin],
+        };
+        let (render_mode, atlas_slot) = match def.render_mode {
+            EntityRenderMode::Boxes => (0.0, 0.0),
+            EntityRenderMode::Billboard { atlas_slot, .. } => (1.0, atlas_slot as f32),
+        };
+        let (shadow_x, shadow_y) = match def.shadow {
+            EntityShadow::None => (0.0, 0.0),
+            EntityShadow::Ellipse { rx, ry } => (rx, ry),
+        };
         es.push(GpuEntity {
             pos_yaw: [pos[0], pos[1], pos[2], yaw],
             params: ent.params,
             bounds_min: [min[0], min[1], min[2], 0.],
             bounds_max: [max[0], max[1], max[2], 0.],
             range: [start as u32, def.boxes.len() as u32, has, ent.kind.0],
+            animation,
+            render: [render_mode, atlas_slot, shadow_x, shadow_y],
         });
     }
     if s.entities.len() > 16 || bs.len() > 1024 {

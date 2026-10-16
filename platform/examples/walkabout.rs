@@ -45,6 +45,9 @@ const WALKABOUT_DEFINITIONS: [EntityDefinition; 1] = [EntityDefinition {
     kind: WALKABOUT_KIND,
     bounds: Some(([-0.5, -0.5, 0.0], [0.5, 0.5, 1.5])),
     boxes: &WALKABOUT_BOXES,
+    render_mode: engine_scene::entities::EntityRenderMode::Boxes,
+    animation: engine_scene::entities::EntityAnimation::None,
+    shadow: engine_scene::entities::EntityShadow::None,
 }];
 static WALKABOUT_REGISTRY: EntityRegistry = EntityRegistry::new(&WALKABOUT_DEFINITIONS);
 

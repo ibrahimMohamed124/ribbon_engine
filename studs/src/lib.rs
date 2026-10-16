@@ -19,6 +19,7 @@
 pub mod app;
 pub mod audio;
 pub mod enemy;
+pub mod entities;
 pub mod game;
 pub mod input;
 pub mod level;

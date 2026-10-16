@@ -1,4 +1,4 @@
-use engine_scene::entities::WARDEN;
+use raycast_blocks::entities::WARDEN;
 use raycast_blocks::game::{Game, State};
 use raycast_blocks::input::{Controls, InputFrame};
 use raycast_blocks::math::Rng;
@@ -183,8 +183,12 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
         .iter()
         .find(|entity| entity.kind == WARDEN)
         .unwrap();
-    let sprite_hit = render_cpu::render::entities::SpriteView::new(*warden, scene.camera.eye)
-        .hit(center_ray, materials.sprite_atlas.unwrap());
+    let sprite_hit = render_cpu::render::entities::SpriteView::new(
+        *warden,
+        scene.entity_registry.get(warden.kind).unwrap(),
+        scene.camera.eye,
+    )
+    .hit(center_ray, materials.sprite_atlas.unwrap());
     let sprite_hit = sprite_hit.expect("center ray should intersect the monster sprite");
     let wall_hit = game.world.cast(scene.camera.eye, center_ray, 10.0).unwrap();
     assert!(

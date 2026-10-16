@@ -1,6 +1,9 @@
 use engine_core::math::{forward_vec, hash4, Angles, Rng, Vect};
 use engine_core::voxel::{face_uv, Hit, VoxelWorld};
-use engine_scene::entities::{EntityInstance, BUILTIN_ENTITY_REGISTRY, PREVIEW_WARDEN};
+use engine_scene::entities::{
+    EntityAnimation, EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
+    EntityRenderMode, EntityShadow,
+};
 use engine_scene::texture::Texture;
 use render_cpu::render::entities::EntitySurface;
 use render_cpu::render::lighting::SurfaceShader;
@@ -10,6 +13,42 @@ use render_cpu::render::Scene as RenderScene;
 pub const WIDTH: usize = 320;
 pub const HEIGHT: usize = 180;
 pub const EMPTY: u8 = 0;
+const PREVIEW_KIND: EntityKind = EntityKind(1);
+const PREVIEW_BOXES: [EntityBox; 4] = [
+    EntityBox {
+        min: [-0.36, -0.36, 0.0],
+        max: [0.30, 0.36, 1.8],
+        part: 0,
+        phase_sway: 0.0,
+    },
+    EntityBox {
+        min: [-0.30, -0.30, 1.55],
+        max: [0.30, 0.30, 2.1],
+        part: 0,
+        phase_sway: 0.0,
+    },
+    EntityBox {
+        min: [0.30, -0.20, 1.82],
+        max: [0.36, -0.06, 1.92],
+        part: 1,
+        phase_sway: 0.0,
+    },
+    EntityBox {
+        min: [0.30, 0.06, 1.82],
+        max: [0.36, 0.20, 1.92],
+        part: 1,
+        phase_sway: 0.0,
+    },
+];
+const PREVIEW_DEFINITIONS: [EntityDefinition; 1] = [EntityDefinition {
+    kind: PREVIEW_KIND,
+    bounds: None,
+    boxes: &PREVIEW_BOXES,
+    render_mode: EntityRenderMode::Boxes,
+    animation: EntityAnimation::None,
+    shadow: EntityShadow::None,
+}];
+static PREVIEW_REGISTRY: EntityRegistry = EntityRegistry::new(&PREVIEW_DEFINITIONS);
 pub const FLOOR: u8 = 1;
 pub const WALL: u8 = 2;
 const WORLD_W: usize = 32;
@@ -172,7 +211,7 @@ impl Scene {
                 0.0,
             );
             vec![EntityInstance {
-                kind: PREVIEW_WARDEN,
+                kind: PREVIEW_KIND,
                 pos,
                 yaw: view.angles.phi,
                 params: [0.0; 4],
@@ -195,7 +234,7 @@ impl Scene {
                 style,
             },
             entities: ents,
-            entity_registry: &BUILTIN_ENTITY_REGISTRY,
+            entity_registry: &PREVIEW_REGISTRY,
         }
     }
 }

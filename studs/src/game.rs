@@ -387,7 +387,7 @@ impl Game {
                         style,
                     },
                     entities: ents,
-                    entity_registry: &engine_scene::entities::BUILTIN_ENTITY_REGISTRY,
+                    entity_registry: &crate::entities::ENTITY_REGISTRY,
                 })
             }
             State::Won => None,

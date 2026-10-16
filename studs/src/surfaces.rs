@@ -2,10 +2,11 @@
 
 use std::sync::OnceLock;
 
+pub use crate::entities::ENEMY_BOUNDS;
+use crate::entities::{PAGE, WARDEN};
 use engine_core::math::{hash4, Vect};
 use engine_core::voxel::{face_uv, Hit};
-pub use engine_scene::entities::ENEMY_BOUNDS;
-use engine_scene::entities::{EntityInstance, EntityKind, PAGE, WARDEN};
+use engine_scene::entities::{EntityInstance, EntityKind};
 use engine_scene::texture::{
     PbrTextureSet, RgbaMipChain, RgbaMipLevel, SpriteAtlas, Texture, TextureColorSpace, TextureId,
 };

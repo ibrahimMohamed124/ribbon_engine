@@ -9,6 +9,7 @@ use super::lighting::{
 use super::post::{finish_pixel_styled_with_lut, PixelSample};
 use engine_core::gfx::Framebuffer;
 use engine_core::math::{forward_vec, Vect};
+use engine_scene::entities::EntityRenderMode;
 use engine_scene::material::MaterialTable;
 use engine_scene::scene::Scene;
 use engine_scene::RENDER_DIST;
@@ -153,7 +154,12 @@ pub fn render_with_materials<S: SurfaceShader + Sync>(
         .filter(|entity| {
             !(frame.lighting.style.realistic_assets
                 && materials.sprite_atlas.is_some()
-                && entity.kind == engine_scene::entities::WARDEN)
+                && frame
+                    .entity_registry
+                    .get(entity.kind)
+                    .is_some_and(|definition| {
+                        matches!(definition.render_mode, EntityRenderMode::Billboard { .. })
+                    }))
         })
         .filter_map(|entity| EntView::new(*entity, frame.camera.eye, frame.entity_registry))
         .collect();
@@ -162,8 +168,11 @@ pub fn render_with_materials<S: SurfaceShader + Sync>(
             frame
                 .entities
                 .iter()
-                .filter(|entity| entity.kind == engine_scene::entities::WARDEN)
-                .map(|entity| SpriteView::new(*entity, frame.camera.eye))
+                .filter_map(|entity| {
+                    let definition = frame.entity_registry.get(entity.kind)?;
+                    matches!(definition.render_mode, EntityRenderMode::Billboard { .. })
+                        .then(|| SpriteView::new(*entity, definition, frame.camera.eye))
+                })
                 .collect()
         } else {
             Vec::new()

@@ -3,7 +3,9 @@
 pub use super::lighting::EntitySurface;
 use engine_core::math::Vect;
 pub use engine_scene::entities::{Bounds3, Box3};
-use engine_scene::entities::{EntityDefinition, EntityInstance, EntityKind, EntityRegistry, PAGE};
+use engine_scene::entities::{
+    EntityAnimation, EntityDefinition, EntityInstance, EntityKind, EntityRegistry, EntityShadow,
+};
 use engine_scene::texture::SpriteAtlas;
 
 pub fn ray_box(o: [f32; 3], d: [f32; 3], mn: [f32; 3], mx: [f32; 3]) -> Option<(f32, usize, f32)> {
@@ -75,6 +77,7 @@ pub struct SpriteView {
     plane_distance: f32,
     width: f32,
     height: f32,
+    shadow: EntityShadow,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -88,7 +91,7 @@ pub struct SpriteHit {
 }
 
 impl SpriteView {
-    pub fn new(instance: EntityInstance, eye: Vect) -> Self {
+    pub fn new(instance: EntityInstance, definition: &EntityDefinition, eye: Vect) -> Self {
         let dx = eye.x - instance.pos.x;
         let dy = eye.y - instance.pos.y;
         let length = (dx * dx + dy * dy).sqrt().max(1e-6);
@@ -101,8 +104,15 @@ impl SpriteView {
             right,
             camera_angle: dy.atan2(dx) - instance.yaw,
             plane_distance: length,
-            width: 0.92,
-            height: 2.2,
+            width: match definition.render_mode {
+                engine_scene::entities::EntityRenderMode::Billboard { width, .. } => width,
+                engine_scene::entities::EntityRenderMode::Boxes => 0.92,
+            },
+            height: match definition.render_mode {
+                engine_scene::entities::EntityRenderMode::Billboard { height, .. } => height,
+                engine_scene::entities::EntityRenderMode::Boxes => 2.2,
+            },
+            shadow: definition.shadow,
         }
     }
 
@@ -146,11 +156,14 @@ impl SpriteView {
     }
 
     pub fn floor_shadow_strength(&self, point: [f32; 3]) -> f32 {
+        let EntityShadow::Ellipse { rx, ry } = self.shadow else {
+            return 0.0;
+        };
         if (point[2] - self.instance.pos.z).abs() > 0.08 {
             return 0.0;
         }
-        let dx = (point[0] - self.instance.pos.x) / 0.62;
-        let dy = (point[1] - self.instance.pos.y) / 0.34;
+        let dx = (point[0] - self.instance.pos.x) / rx.max(0.001);
+        let dy = (point[1] - self.instance.pos.y) / ry.max(0.001);
         let edge = (1.0 - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
         0.38 * edge * edge * (3.0 - 2.0 * edge)
     }
@@ -164,11 +177,15 @@ impl<'a> EntView<'a> {
     ) -> Option<Self> {
         let definition = registry.get(instance.kind)?;
         let mut yaw = instance.yaw;
-        if instance.kind == PAGE {
-            let time = instance.params[0];
-            let page_index = instance.params[1];
-            instance.pos.z += (time * 2.0 + page_index).sin() * 0.08;
-            yaw = time * 1.2 + page_index;
+        if let EntityAnimation::BobSpin {
+            amplitude,
+            speed,
+            spin,
+        } = definition.animation
+        {
+            let phase = instance.params[0] * speed + instance.params[1];
+            instance.pos.z += phase.sin() * amplitude;
+            yaw = instance.params[0] * spin + instance.params[1];
         }
         let (sin_yaw, cos_yaw) = yaw.sin_cos();
         let dx = eye.x - instance.pos.x;
@@ -240,8 +257,26 @@ mod sprite_tests {
     use super::SpriteView;
     use engine_core::{math::Vect, voxel::VoxelWorld};
     use engine_scene::{
-        entities::{EntityInstance, WARDEN},
+        entities::{
+            EntityAnimation, EntityBox, EntityDefinition, EntityInstance, EntityKind,
+            EntityRenderMode, EntityShadow,
+        },
         texture::SpriteAtlas,
+    };
+
+    const KIND: EntityKind = EntityKind(1);
+    const BOXES: [EntityBox; 0] = [];
+    const DEFINITION: EntityDefinition = EntityDefinition {
+        kind: KIND,
+        bounds: None,
+        boxes: &BOXES,
+        render_mode: EntityRenderMode::Billboard {
+            atlas_slot: 0,
+            width: 0.92,
+            height: 2.2,
+        },
+        animation: EntityAnimation::None,
+        shadow: EntityShadow::Ellipse { rx: 0.62, ry: 0.34 },
     };
 
     fn atlas() -> SpriteAtlas {
@@ -262,12 +297,12 @@ mod sprite_tests {
     #[test]
     fn sprite_selects_relative_view_animation_state_and_frame() {
         let instance = EntityInstance {
-            kind: WARDEN,
+            kind: KIND,
             pos: Vect::new(4.5, 0.5, 0.0),
             yaw: 0.0,
             params: [std::f32::consts::TAU * 0.30, 3.0, 0.0, 0.0],
         };
-        let view = SpriteView::new(instance, Vect::new(0.5, 0.5, 1.0));
+        let view = SpriteView::new(instance, &DEFINITION, Vect::new(0.5, 0.5, 1.0));
         let hit = view.hit(Vect::new(1.0, 0.0, 0.0), &atlas()).unwrap();
         assert_eq!((hit.view, hit.state, hit.frame), (8, 3, 2));
     }
@@ -282,12 +317,14 @@ mod sprite_tests {
         let dir = Vect::new(1.0, 0.0, 0.0);
         let wall = world.cast(eye, dir, 10.0, 0).unwrap();
         let instance = EntityInstance {
-            kind: WARDEN,
+            kind: KIND,
             pos: Vect::new(4.5, 0.5, 0.0),
             yaw: 0.0,
             params: [0.0; 4],
         };
-        let sprite = SpriteView::new(instance, eye).hit(dir, &atlas()).unwrap();
+        let sprite = SpriteView::new(instance, &DEFINITION, eye)
+            .hit(dir, &atlas())
+            .unwrap();
         assert!(
             wall.dist < sprite.t,
             "wall at {} must occlude sprite at {}",
@@ -299,12 +336,12 @@ mod sprite_tests {
     #[test]
     fn floor_contact_shadow_is_soft_and_local() {
         let instance = EntityInstance {
-            kind: WARDEN,
+            kind: KIND,
             pos: Vect::new(4.5, 0.5, 0.0),
             yaw: 0.0,
             params: [0.0; 4],
         };
-        let view = SpriteView::new(instance, Vect::new(0.5, 0.5, 1.0));
+        let view = SpriteView::new(instance, &DEFINITION, Vect::new(0.5, 0.5, 1.0));
         let center = view.floor_shadow_strength([4.5, 0.5, 0.0]);
         let edge = view.floor_shadow_strength([4.9, 0.5, 0.0]);
         let far = view.floor_shadow_strength([6.0, 0.5, 0.0]);
