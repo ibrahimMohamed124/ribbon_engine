@@ -85,9 +85,10 @@ impl Presenter {
         window: Arc<Window>,
         config: &WindowConfig,
         mode: RendererMode,
+        application_name: &str,
     ) -> Result<Self, Box<dyn Error>> {
         if mode == RendererMode::Cpu {
-            println!("CPU reference renderer enabled");
+            println!("[{application_name}] CPU reference renderer enabled");
             return Ok(Self::Cpu(SoftwarePresenter::new(window)?));
         }
         match render_gpu::GpuPresenter::new(
@@ -95,17 +96,17 @@ impl Presenter {
             (config.width as u32, config.height as u32),
         ) {
             Ok(gpu) => {
-                println!("GPU presentation enabled");
+                println!("[{application_name}] GPU presentation enabled");
                 Ok(Self::Gpu(Box::new(gpu)))
             }
             Err(error) => {
                 if mode == RendererMode::Gpu {
                     return Err(std::io::Error::other(format!(
-                        "GPU renderer required but unavailable: {error}"
+                        "[{application_name}] GPU renderer required but unavailable: {error}"
                     ))
                     .into());
                 }
-                eprintln!("GPU unavailable; falling back to CPU presentation: {error}");
+                eprintln!("[{application_name}] GPU unavailable; falling back to CPU presentation: {error}");
                 Ok(Self::Cpu(SoftwarePresenter::new(window)?))
             }
         }
@@ -140,14 +141,16 @@ impl Presenter {
 
 pub fn run<A: App, R: Renderer>(
     app: A,
+    application_name: &str,
     config: WindowConfig,
     renderer: R,
 ) -> Result<(), Box<dyn Error>> {
-    run_with_mode(app, config, renderer, RendererMode::Auto)
+    run_with_mode(app, application_name, config, renderer, RendererMode::Auto)
 }
 
 pub fn run_with_mode<A: App, R: Renderer>(
     app: A,
+    application_name: &str,
     config: WindowConfig,
     renderer: R,
     renderer_mode: RendererMode,
@@ -155,9 +158,17 @@ pub fn run_with_mode<A: App, R: Renderer>(
     let event_loop = EventLoop::new()?;
     event_loop.listen_device_events(winit::event_loop::DeviceEvents::Always);
     event_loop.set_control_flow(ControlFlow::Poll);
+    let application_name = if application_name.trim().is_empty() {
+        "engine"
+    } else {
+        application_name
+    };
+    let mut config = config;
+    config.title = application_name.to_owned();
     let mut runner = Runner {
         app,
         config: config.clone(),
+        application_name: application_name.to_owned(),
         renderer,
         framebuffer: Framebuffer::new(config.width, config.height),
         window: None,
@@ -184,6 +195,7 @@ pub fn run_with_mode<A: App, R: Renderer>(
 
 struct Runner<A, R> {
     app: A,
+    application_name: String,
     config: WindowConfig,
     renderer: R,
     framebuffer: Framebuffer,
@@ -282,7 +294,7 @@ impl<A: App, R: Renderer> Runner<A, R> {
             self.grab_mode = None;
         }
         if let Some(title) = ctx.requests.title {
-            window.set_title(&title);
+            window.set_title(&format!("{} — {title}", self.application_name));
         }
         self.timer.cap_frame();
     }
@@ -299,7 +311,12 @@ impl<A: App, R: Renderer> ApplicationHandler for Runner<A, R> {
                 self.window_active = true;
                 self.renderer
                     .resize(self.config.width as u32, self.config.height as u32);
-                match Presenter::new(window.clone(), &self.config, self.renderer_mode) {
+                match Presenter::new(
+                    window.clone(),
+                    &self.config,
+                    self.renderer_mode,
+                    &self.application_name,
+                ) {
                     Ok(presenter) => {
                         if self.renderer_mode == RendererMode::Auto
                             && matches!(&presenter, Presenter::Cpu(_))

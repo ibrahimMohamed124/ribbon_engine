@@ -25,5 +25,5 @@ fn main() -> Result<(), Box<dyn Error>> {
         "gpu" => platform::runner::RendererMode::Gpu,
         _ => return Err(format!("unknown renderer '{selected}'; use auto, cpu, or gpu").into()),
     };
-    platform::runner::run_with_mode(app, window_config, renderer, mode)
+    platform::runner::run_with_mode(app, "STUDS", window_config, renderer, mode)
 }

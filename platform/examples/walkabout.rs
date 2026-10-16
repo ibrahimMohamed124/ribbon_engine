@@ -139,6 +139,7 @@ impl App for Walkabout {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     run(
         Walkabout::new(),
+        "Walkabout",
         WindowConfig {
             title: "Walkabout".to_owned(),
             width: 640,

@@ -49,6 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     platform::run_with_mode(
         Preview(Game::new(42)),
+        "STUDS Preview",
         config,
         renderer,
         mode,
