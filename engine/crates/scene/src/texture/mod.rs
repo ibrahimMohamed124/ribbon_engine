@@ -5,6 +5,8 @@ mod procedural;
 
 pub use pbr::{
     PbrTextureSet, RgbaMipChain, RgbaMipLevel, SpriteAtlas, TextureColorSpace, TextureId,
+    MAX_PBR_MAP_DIMENSION, MAX_PBR_TEXTURE_SETS, PBR_MAPS_PER_SET, PBR_MIP_LEVEL_COUNT,
+    PBR_MIP_TEXEL_COUNT,
 };
 pub use procedural::Texture;
 

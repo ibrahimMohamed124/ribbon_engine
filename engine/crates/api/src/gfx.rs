@@ -1,5 +1,11 @@
 //! Backend-neutral drawing data shared by games and renderers.
 
+/// Maximum number of expanded rectangle and glyph quads accepted per frame.
+pub const MAX_DRAW_QUADS_PER_FRAME: usize = 524_288;
+
+/// Maximum number of GPU fullscreen and presentation passes accepted per frame.
+pub const MAX_RENDER_PASSES_PER_FRAME: usize = 128;
+
 /// Full-screen operations recorded by the application and interpreted by renderers.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Effect {

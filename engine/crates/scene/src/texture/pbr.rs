@@ -1,5 +1,16 @@
 //! PBR and billboard texture data shared by renderer backends.
 
+/// GPU shader's maximum supported side length for one PBR map.
+pub const MAX_PBR_MAP_DIMENSION: usize = 256;
+/// Number of mip levels stored by the shared CPU/GPU PBR representation.
+pub const PBR_MIP_LEVEL_COUNT: usize = 9;
+/// Number of texels reserved by the GPU for one map's complete mip chain.
+pub const PBR_MIP_TEXEL_COUNT: usize = 87_381;
+/// Maximum material texture-set id supported by the GPU bindings.
+pub const MAX_PBR_TEXTURE_SETS: usize = 4;
+/// Albedo, normal, roughness, and ambient-occlusion maps per texture set.
+pub const PBR_MAPS_PER_SET: usize = 4;
+
 /// Stable renderer-independent identifier for a decoded PBR texture set.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u32);

@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use voxelworks_api::FramePlan;
-use voxelworks_api::{DrawCommand, DrawList, Effect, Framebuffer};
+use voxelworks_api::{
+    DrawCommand, DrawList, Effect, Framebuffer, Renderer, MAX_DRAW_QUADS_PER_FRAME,
+    MAX_RENDER_PASSES_PER_FRAME,
+};
 use voxelworks_core::math::{forward_vec, Vect};
 use voxelworks_scene::entities::{
     EntityAnimation, EntityRenderMode, EntityShadow, MAX_BOXES_PER_ENTITY, MAX_ENTITIES,
@@ -13,14 +16,21 @@ use voxelworks_scene::entities::{
 use voxelworks_scene::material::{BaseAlbedoRule, MaterialTable, TextureKind};
 use voxelworks_scene::scene::Scene;
 use voxelworks_scene::style::LEVEL_COUNT;
-use voxelworks_scene::texture::{SpriteAtlas, Texture};
+use voxelworks_scene::texture::{
+    PbrTextureSet, RgbaMipChain, SpriteAtlas, Texture, MAX_PBR_MAP_DIMENSION, MAX_PBR_TEXTURE_SETS,
+    PBR_MAPS_PER_SET, PBR_MIP_LEVEL_COUNT, PBR_MIP_TEXEL_COUNT,
+};
+use voxelworks_scene::MATERIAL_ID_SPACE;
 use voxelworks_scene::RENDER_DIST;
 use winit::window::Window;
 
 const PRESENT_SHADER: &str = include_str!("../shaders/present.wgsl");
 const QUAD_SHADER: &str = include_str!("../shaders/ui.wgsl");
 const WORLD_SHADER: &str = include_str!("../shaders/world.wgsl");
-const PBR_WORD_CAPACITY: u64 = 4 * 4 * 87_381;
+const SCREEN_UNIFORM_ALIGNMENT: u64 = 256;
+const INITIAL_QUAD_CAPACITY: usize = 65_536;
+const PBR_WORD_CAPACITY: u64 =
+    (MAX_PBR_TEXTURE_SETS * PBR_MAPS_PER_SET * PBR_MIP_TEXEL_COUNT) as u64;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -109,13 +119,10 @@ struct RenderTarget {
     view: wgpu::TextureView,
 }
 
-/// GPU overlay and presentation pipeline; world pixels are uploaded by the CPU reference renderer.
-pub struct GpuPresenter {
+struct GpuBackend {
     _instance: wgpu::Instance,
-    surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    surface_config: wgpu::SurfaceConfiguration,
     present_pipeline: wgpu::RenderPipeline,
     internal_pipeline: wgpu::RenderPipeline,
     quad_pipeline: wgpu::RenderPipeline,
@@ -128,26 +135,152 @@ pub struct GpuPresenter {
     sample_bind_groups: [wgpu::BindGroup; 2],
     quad_buffer: wgpu::Buffer,
     quads: Vec<QuadInstance>,
+    frame_quad_count: usize,
     uniform_cursor: u32,
     quad_cursor: u64,
     internal_size: (u32, u32),
     frame_index: u32,
 }
 
+/// Window and surface adapter over the shared offscreen GPU renderer.
+pub struct GpuPresenter {
+    surface: wgpu::Surface<'static>,
+    surface_config: wgpu::SurfaceConfiguration,
+    backend: GpuBackend,
+}
+
+/// Offscreen GPU renderer implementing the engine's shared renderer contract.
+pub struct GpuRenderer {
+    backend: GpuBackend,
+    framebuffer: Framebuffer,
+    last_error: Option<String>,
+}
+
 impl GpuPresenter {
     pub fn new(window: Arc<Window>, internal_size: (u32, u32)) -> Result<Self, String> {
-        pollster::block_on(Self::new_async(window, internal_size))
+        let (backend, surface, surface_config) =
+            pollster::block_on(GpuBackend::new_async(Some(window), internal_size))?;
+        Ok(Self {
+            surface: surface.expect("window creates a GPU surface"),
+            surface_config: surface_config.expect("window creates a surface configuration"),
+            backend,
+        })
     }
 
-    async fn new_async(window: Arc<Window>, internal_size: (u32, u32)) -> Result<Self, String> {
+    pub fn resize_surface(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.surface_config.width = width;
+        self.surface_config.height = height;
+        self.surface
+            .configure(&self.backend.device, &self.surface_config);
+    }
+
+    pub fn present_frame(
+        &mut self,
+        framebuffer: &Framebuffer,
+        plan: &FramePlan<'_>,
+        materials: &MaterialTable,
+    ) -> Result<(), String> {
+        if framebuffer.width == 0 || framebuffer.height == 0 {
+            return Ok(());
+        }
+        let size = (framebuffer.width as u32, framebuffer.height as u32);
+        let (mut encoder, current) = self.backend.encode_frame(plan, materials, size)?;
+        let present_uniform_offset = self.backend.write_uniform(ScreenUniform {
+            size: [
+                self.surface_config.width as f32,
+                self.surface_config.height as f32,
+            ],
+            mode: 0,
+            frame: 0,
+            time: 0.0,
+            amount: 1.0,
+            pad: [0.0; 2],
+        })?;
+        let frame = match self.surface.get_current_texture() {
+            Ok(frame) => frame,
+            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                self.surface
+                    .configure(&self.backend.device, &self.surface_config);
+                self.surface
+                    .get_current_texture()
+                    .map_err(|error| format!("surface recovery failed: {error}"))?
+            }
+            Err(error) => return Err(format!("surface frame unavailable: {error}")),
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("nearest upscale pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.backend.present_pipeline);
+            pass.set_bind_group(
+                0,
+                &self.backend.sample_bind_groups[current],
+                &[present_uniform_offset],
+            );
+            pass.draw(0..3, 0..1);
+        }
+        self.backend.queue.submit(Some(encoder.finish()));
+        frame.present();
+        self.backend.frame_index = self.backend.frame_index.wrapping_add(1);
+        Ok(())
+    }
+}
+
+impl GpuRenderer {
+    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        let (backend, _, _) = pollster::block_on(GpuBackend::new_async(None, (width, height)))?;
+        Ok(Self {
+            backend,
+            framebuffer: Framebuffer::new(width as usize, height as usize),
+            last_error: None,
+        })
+    }
+
+    /// Returns the last frame error captured by the infallible `Renderer` trait.
+    pub fn take_error(&mut self) -> Option<String> {
+        self.last_error.take()
+    }
+}
+
+impl GpuBackend {
+    async fn new_async(
+        window: Option<Arc<Window>>,
+        internal_size: (u32, u32),
+    ) -> Result<
+        (
+            Self,
+            Option<wgpu::Surface<'static>>,
+            Option<wgpu::SurfaceConfiguration>,
+        ),
+        String,
+    > {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let surface = instance
-            .create_surface(window.clone())
+        let surface = window
+            .as_ref()
+            .map(|window| instance.create_surface(window.clone()))
+            .transpose()
             .map_err(|error| format!("could not create wgpu surface: {error}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
+                compatible_surface: surface.as_ref(),
                 force_fallback_adapter: false,
             })
             .await
@@ -163,30 +296,38 @@ impl GpuPresenter {
             .await
             .map_err(|error| format!("could not create wgpu device: {error}"))?;
 
-        let size = window.inner_size();
-        let capabilities = surface.get_capabilities(&adapter);
-        let format = capabilities
-            .formats
-            .iter()
-            .copied()
-            .find(wgpu::TextureFormat::is_srgb)
-            .or_else(|| capabilities.formats.first().copied())
-            .ok_or_else(|| "wgpu surface exposes no color formats".to_owned())?;
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Fifo,
-            desired_maximum_frame_latency: 2,
-            alpha_mode: capabilities
-                .alpha_modes
-                .first()
+        let surface_config = if let Some(surface) = &surface {
+            let size = window.as_ref().expect("surface has a window").inner_size();
+            let capabilities = surface.get_capabilities(&adapter);
+            let format = capabilities
+                .formats
+                .iter()
                 .copied()
-                .ok_or_else(|| "wgpu surface exposes no alpha modes".to_owned())?,
-            view_formats: vec![],
+                .find(wgpu::TextureFormat::is_srgb)
+                .or_else(|| capabilities.formats.first().copied())
+                .ok_or_else(|| "wgpu surface exposes no color formats".to_owned())?;
+            let config = wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format,
+                width: size.width.max(1),
+                height: size.height.max(1),
+                present_mode: wgpu::PresentMode::Fifo,
+                desired_maximum_frame_latency: 2,
+                alpha_mode: capabilities
+                    .alpha_modes
+                    .first()
+                    .copied()
+                    .ok_or_else(|| "wgpu surface exposes no alpha modes".to_owned())?,
+                view_formats: vec![],
+            };
+            surface.configure(&device, &config);
+            Some(config)
+        } else {
+            None
         };
-        surface.configure(&device, &surface_config);
+        let output_format = surface_config
+            .as_ref()
+            .map_or(wgpu::TextureFormat::Rgba8Unorm, |config| config.format);
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("nearest upscale bindings"),
@@ -217,7 +358,7 @@ impl GpuPresenter {
         });
         let screen_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("persistent per-pass uniform arena"),
-            size: 256 * 128,
+            size: SCREEN_UNIFORM_ALIGNMENT * MAX_RENDER_PASSES_PER_FRAME as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -243,7 +384,7 @@ impl GpuPresenter {
             &shader,
             &pipeline_layout,
             PipelineSpec {
-                format,
+                format: output_format,
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 buffers: &[],
@@ -351,17 +492,15 @@ impl GpuPresenter {
         ];
         let quad_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("persistent overlay instances"),
-            size: 65_536 * std::mem::size_of::<QuadInstance>() as u64 * 8,
+            size: MAX_DRAW_QUADS_PER_FRAME as u64 * std::mem::size_of::<QuadInstance>() as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        Ok(Self {
+        let backend = Self {
             _instance: instance,
-            surface,
             device,
             queue,
-            surface_config,
             present_pipeline,
             internal_pipeline,
             quad_pipeline,
@@ -373,33 +512,25 @@ impl GpuPresenter {
             targets,
             sample_bind_groups,
             quad_buffer,
-            quads: Vec::with_capacity(65_536),
+            quads: Vec::with_capacity(INITIAL_QUAD_CAPACITY),
+            frame_quad_count: 0,
             uniform_cursor: 0,
             quad_cursor: 0,
             internal_size,
             frame_index: 0,
-        })
+        };
+        Ok((backend, surface, surface_config))
     }
 
-    pub fn resize_surface(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
-            return;
-        }
-        self.surface_config.width = width;
-        self.surface_config.height = height;
-        self.surface.configure(&self.device, &self.surface_config);
-    }
-
-    pub fn present_frame(
+    fn encode_frame(
         &mut self,
-        framebuffer: &Framebuffer,
         plan: &FramePlan<'_>,
         materials: &MaterialTable,
-    ) -> Result<(), String> {
-        if framebuffer.width == 0 || framebuffer.height == 0 {
-            return Ok(());
+        size: (u32, u32),
+    ) -> Result<(wgpu::CommandEncoder, usize), String> {
+        if size.0 == 0 || size.1 == 0 {
+            return Err("GPU frame dimensions must be nonzero".to_owned());
         }
-        let size = (framebuffer.width as u32, framebuffer.height as u32);
         if size != self.internal_size {
             self.resize_internal(size);
         }
@@ -420,6 +551,7 @@ impl GpuPresenter {
             });
         self.uniform_cursor = 0;
         self.quad_cursor = 0;
+        self.frame_quad_count = 0;
         let mut current = 0usize;
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -443,60 +575,9 @@ impl GpuPresenter {
             }
         }
         self.apply_draw_list(&mut encoder, &plan.world_layer, &mut current)?;
-        self.fullscreen_pass(&mut encoder, 6, 0, 0.0, plan.brightness, &mut current);
+        self.fullscreen_pass(&mut encoder, 6, 0, 0.0, plan.brightness, &mut current)?;
         self.apply_draw_list(&mut encoder, &plan.ui_layer, &mut current)?;
-        let present_uniform_offset = self.write_uniform(ScreenUniform {
-            size: [
-                self.surface_config.width as f32,
-                self.surface_config.height as f32,
-            ],
-            mode: 0,
-            frame: 0,
-            time: 0.0,
-            amount: 1.0,
-            pad: [0.0; 2],
-        });
-
-        let frame = match self.surface.get_current_texture() {
-            Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface.configure(&self.device, &self.surface_config);
-                self.surface
-                    .get_current_texture()
-                    .map_err(|error| format!("surface recovery failed: {error}"))?
-            }
-            Err(error) => return Err(format!("surface frame unavailable: {error}")),
-        };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("nearest upscale pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.present_pipeline);
-            pass.set_bind_group(
-                0,
-                &self.sample_bind_groups[current],
-                &[present_uniform_offset],
-            );
-            pass.draw(0..3, 0..1);
-        }
-        self.queue.submit(Some(encoder.finish()));
-        frame.present();
-        self.frame_index = self.frame_index.wrapping_add(1);
-        Ok(())
+        Ok((encoder, current))
     }
 
     fn resize_internal(&mut self, size: (u32, u32)) {
@@ -521,12 +602,17 @@ impl GpuPresenter {
         ];
     }
 
-    fn write_uniform(&mut self, uniform: ScreenUniform) -> u32 {
-        let offset = u64::from(self.uniform_cursor) * 256;
-        self.uniform_cursor = self.uniform_cursor.saturating_add(1).min(127);
+    fn write_uniform(&mut self, uniform: ScreenUniform) -> Result<u32, String> {
+        if self.uniform_cursor as usize >= MAX_RENDER_PASSES_PER_FRAME {
+            return Err(format!(
+                "frame exceeds the GPU limit of {MAX_RENDER_PASSES_PER_FRAME} render passes"
+            ));
+        }
+        let offset = u64::from(self.uniform_cursor) * SCREEN_UNIFORM_ALIGNMENT;
+        self.uniform_cursor += 1;
         self.queue
             .write_buffer(&self.screen_buffer, offset, bytemuck::bytes_of(&uniform));
-        offset as u32
+        Ok(offset as u32)
     }
 
     fn apply_draw_list(
@@ -538,7 +624,9 @@ impl GpuPresenter {
         self.quads.clear();
         for command in &draw_list.commands {
             match command {
-                DrawCommand::Rect { x, y, w, h, color } => self.push_quad(*x, *y, *w, *h, *color),
+                DrawCommand::Rect { x, y, w, h, color } => {
+                    self.push_quad(*x, *y, *w, *h, *color)?
+                }
                 DrawCommand::Text {
                     value,
                     x,
@@ -561,7 +649,7 @@ impl GpuPresenter {
                                         scale,
                                         scale,
                                         *color,
-                                    );
+                                    )?;
                                 }
                             }
                         }
@@ -570,7 +658,7 @@ impl GpuPresenter {
                 }
                 DrawCommand::Dim(amount) => {
                     self.flush_quads(encoder, draw_list, *current)?;
-                    self.fullscreen_pass(encoder, 1, 0, 0.0, *amount, current);
+                    self.fullscreen_pass(encoder, 1, 0, 0.0, *amount, current)?;
                 }
                 DrawCommand::Effect(effect) => {
                     self.flush_quads(encoder, draw_list, *current)?;
@@ -580,17 +668,23 @@ impl GpuPresenter {
                         Effect::WonNoise { time, frame } => (4, frame, time),
                         Effect::SolidWhite => (5, 0, 0.0),
                     };
-                    self.fullscreen_pass(encoder, mode, frame, time, 0.0, current);
+                    self.fullscreen_pass(encoder, mode, frame, time, 0.0, current)?;
                 }
             }
         }
         self.flush_quads(encoder, draw_list, *current)
     }
 
-    fn push_quad(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32) {
-        if w <= 0 || h <= 0 || self.quads.len() == 65_536 {
-            return;
+    fn push_quad(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32) -> Result<(), String> {
+        if w <= 0 || h <= 0 {
+            return Ok(());
         }
+        if self.frame_quad_count >= MAX_DRAW_QUADS_PER_FRAME {
+            return Err(format!(
+                "frame exceeds the GPU limit of {MAX_DRAW_QUADS_PER_FRAME} draw quads"
+            ));
+        }
+        self.frame_quad_count += 1;
         self.quads.push(QuadInstance {
             rect: [x as f32, y as f32, w as f32, h as f32],
             color: [
@@ -600,6 +694,7 @@ impl GpuPresenter {
                 1.0,
             ],
         });
+        Ok(())
     }
 
     fn flush_quads(
@@ -618,14 +713,18 @@ impl GpuPresenter {
             time: 0.0,
             amount: 1.0,
             pad: [0.0; 2],
-        });
+        })?;
         let quad_offset = self.quad_cursor;
+        let quad_bytes = std::mem::size_of_val(self.quads.as_slice()) as u64;
+        if quad_offset + quad_bytes > self.quad_buffer.size() {
+            return Err("GPU draw quad buffer capacity exceeded".to_owned());
+        }
         self.queue.write_buffer(
             &self.quad_buffer,
             quad_offset,
             bytemuck::cast_slice(&self.quads),
         );
-        self.quad_cursor += std::mem::size_of_val(self.quads.as_slice()) as u64;
+        self.quad_cursor += quad_bytes;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ordered overlay quads"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -656,7 +755,7 @@ impl GpuPresenter {
         time: f32,
         amount: f32,
         current: &mut usize,
-    ) {
+    ) -> Result<(), String> {
         let uniform_offset = self.write_uniform(ScreenUniform {
             size: [self.internal_size.0 as f32, self.internal_size.1 as f32],
             mode,
@@ -664,7 +763,7 @@ impl GpuPresenter {
             time,
             amount,
             pad: [0.0; 2],
-        });
+        })?;
         let next = 1 - *current;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ordered full-screen effect"),
@@ -685,6 +784,128 @@ impl GpuPresenter {
         pass.draw(0..3, 0..1);
         drop(pass);
         *current = next;
+        Ok(())
+    }
+}
+
+impl Renderer for GpuRenderer {
+    fn resize(&mut self, width: u32, height: u32) {
+        self.framebuffer = Framebuffer::new(width as usize, height as usize);
+    }
+
+    fn render_scene(&mut self, scene: Option<&Scene<'_>>, materials: &MaterialTable) {
+        let width = self.framebuffer.width;
+        let height = self.framebuffer.height;
+        let plan = FramePlan {
+            scene: scene.cloned(),
+            world_layer: DrawList::new(width, height),
+            brightness: 1.0,
+            ui_layer: DrawList::new(width, height),
+        };
+        self.render_frame(&plan, materials);
+    }
+
+    fn render_frame(&mut self, plan: &FramePlan<'_>, materials: &MaterialTable) {
+        if self.framebuffer.width != plan.world_layer.width
+            || self.framebuffer.height != plan.world_layer.height
+        {
+            self.resize(
+                plan.world_layer.width as u32,
+                plan.world_layer.height as u32,
+            );
+        }
+        self.framebuffer.pixels.fill(0);
+        self.last_error = self.render_to_framebuffer(plan, materials).err();
+    }
+
+    fn present(&mut self, out: &mut Framebuffer) {
+        if out.width != self.framebuffer.width || out.height != self.framebuffer.height {
+            out.width = self.framebuffer.width;
+            out.height = self.framebuffer.height;
+            out.pixels.resize(self.framebuffer.pixels.len(), 0);
+        }
+        out.pixels.copy_from_slice(&self.framebuffer.pixels);
+    }
+}
+
+impl GpuRenderer {
+    fn render_to_framebuffer(
+        &mut self,
+        plan: &FramePlan<'_>,
+        materials: &MaterialTable,
+    ) -> Result<(), String> {
+        let size = (
+            self.framebuffer.width as u32,
+            self.framebuffer.height as u32,
+        );
+        let (mut encoder, current) = self.backend.encode_frame(plan, materials, size)?;
+        let bytes_per_row = size.0 * 4;
+        let padded_bytes_per_row = bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let readback = self.backend.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("offscreen framebuffer readback"),
+            size: u64::from(padded_bytes_per_row) * u64::from(size.1),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.backend.targets[current]._texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(size.1),
+                },
+            },
+            wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.backend.queue.submit(Some(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        self.backend
+            .device
+            .poll(wgpu::PollType::Wait)
+            .map_err(|error| format!("GPU readback wait failed: {error}"))?;
+        receiver
+            .recv()
+            .map_err(|error| format!("GPU readback callback failed: {error}"))?
+            .map_err(|error| format!("GPU framebuffer map failed: {error}"))?;
+        {
+            let mapped = slice.get_mapped_range();
+            for (y, row) in mapped
+                .chunks_exact(padded_bytes_per_row as usize)
+                .take(size.1 as usize)
+                .enumerate()
+            {
+                for (x, rgba) in row
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .take(size.0 as usize)
+                    .enumerate()
+                {
+                    self.framebuffer.pixels[y * size.0 as usize + x] =
+                        (u32::from(rgba[0]) << 16) | (u32::from(rgba[1]) << 8) | u32::from(rgba[2]);
+                }
+            }
+        }
+        readback.unmap();
+        self.backend.frame_index = self.backend.frame_index.wrapping_add(1);
+        Ok(())
     }
 }
 
@@ -734,7 +955,12 @@ fn create_world_resources(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuWorl
         wgpu::BufferUsages::UNIFORM,
     );
     let voxels = make_buffer(device, "packed voxels", 4, wgpu::BufferUsages::STORAGE);
-    let materials = make_buffer(device, "materials", 256 * 32, wgpu::BufferUsages::STORAGE);
+    let materials = make_buffer(
+        device,
+        "materials",
+        (MATERIAL_ID_SPACE * std::mem::size_of::<GpuMaterial>()) as u64,
+        wgpu::BufferUsages::STORAGE,
+    );
     let entities = make_buffer(
         device,
         "entities",
@@ -920,6 +1146,9 @@ fn update_world(
     size: (u32, u32),
 ) -> Result<(), String> {
     s.validate_entity_limits()?;
+    for set in mt.pbr_textures {
+        validate_pbr_texture_set(set)?;
+    }
     let dims = s.world.dimensions();
     let key = (s.world.blocks().as_ptr() as usize, s.world.blocks().len());
     let need = (s.world.blocks().len().div_ceil(4) * 4).max(4) as u64;
@@ -1014,7 +1243,7 @@ fn update_world(
     if !bs.is_empty() {
         q.write_buffer(&g.boxes, 0, bytemuck::cast_slice(&bs));
     }
-    let mut mats = vec![GpuMaterial::zeroed(); 256];
+    let mut mats = vec![GpuMaterial::zeroed(); MATERIAL_ID_SPACE];
     for m in mt.materials {
         let (tex, seed) = match m.texture {
             TextureKind::None => (0, 0),
@@ -1042,7 +1271,7 @@ fn update_world(
     q.write_buffer(&g.materials, 0, bytemuck::cast_slice(&mats));
     let pbr_key = (mt.pbr_textures.as_ptr() as usize, mt.pbr_textures.len());
     if g.pbr_key != Some(pbr_key) {
-        let packed = pack_pbr_textures(mt);
+        let packed = pack_pbr_textures(mt)?;
         q.write_buffer(&g.pbr_texels, 0, bytemuck::cast_slice(&packed));
         g.pbr_key = Some(pbr_key);
     }
@@ -1166,14 +1395,47 @@ fn pack_voxels(blocks: &[u8]) -> Vec<u32> {
     packed
 }
 
-fn pack_pbr_textures(materials: &MaterialTable) -> Vec<u32> {
-    const MIP_TEXELS: usize = 87_381;
-    const MIP_LEVELS: [usize; 9] = [65_536, 16_384, 4_096, 1_024, 256, 64, 16, 4, 1];
-    let mut packed = vec![0u32; 4 * 4 * MIP_TEXELS];
-    for set in materials.pbr_textures {
-        if !(1..=4).contains(&set.id.0) {
-            continue;
+fn validate_pbr_texture_set(set: &PbrTextureSet) -> Result<(), String> {
+    if set.id.0 == 0 || set.id.0 as usize > MAX_PBR_TEXTURE_SETS {
+        return Err(format!(
+            "PBR texture set id {} is outside the GPU-supported range 1..={MAX_PBR_TEXTURE_SETS}",
+            set.id.0
+        ));
+    }
+    for (name, chain) in [
+        ("albedo", &set.albedo),
+        ("normal", &set.normal),
+        ("roughness", &set.roughness),
+        ("ambient occlusion", &set.ambient_occlusion),
+    ] {
+        validate_pbr_mip_chain(set.id.0, name, chain)?;
+    }
+    Ok(())
+}
+
+fn validate_pbr_mip_chain(id: u32, name: &str, chain: &RgbaMipChain) -> Result<(), String> {
+    if chain.levels.len() != PBR_MIP_LEVEL_COUNT {
+        return Err(format!(
+            "PBR texture set {id} {name} map has {} mip levels; GPU requires {PBR_MIP_LEVEL_COUNT}",
+            chain.levels.len()
+        ));
+    }
+    for (level_index, level) in chain.levels.iter().enumerate() {
+        let expected = (MAX_PBR_MAP_DIMENSION >> level_index).max(1);
+        if level.width != expected || level.height != expected {
+            return Err(format!(
+                "PBR texture set {id} {name} mip {level_index} is {}x{}; GPU requires {expected}x{expected}",
+                level.width, level.height
+            ));
         }
+    }
+    Ok(())
+}
+
+fn pack_pbr_textures(materials: &MaterialTable) -> Result<Vec<u32>, String> {
+    let mut packed = vec![0u32; MAX_PBR_TEXTURE_SETS * PBR_MAPS_PER_SET * PBR_MIP_TEXEL_COUNT];
+    for set in materials.pbr_textures {
+        validate_pbr_texture_set(set)?;
         let set_index = set.id.0 as usize - 1;
         for (map_index, chain) in [
             &set.albedo,
@@ -1185,21 +1447,18 @@ fn pack_pbr_textures(materials: &MaterialTable) -> Vec<u32> {
         .enumerate()
         {
             let mut mip_offset = 0;
-            for (level_index, level) in chain.levels.iter().take(9).enumerate() {
-                let map_base = (set_index * 4 + map_index) * MIP_TEXELS + mip_offset;
-                for (texel_index, texel) in level
-                    .texels
-                    .iter()
-                    .take(MIP_LEVELS[level_index])
-                    .enumerate()
-                {
+            for (level_index, level) in chain.levels.iter().enumerate() {
+                let map_base =
+                    (set_index * PBR_MAPS_PER_SET + map_index) * PBR_MIP_TEXEL_COUNT + mip_offset;
+                for (texel_index, texel) in level.texels.iter().enumerate() {
                     packed[map_base + texel_index] = u32::from_le_bytes(*texel);
                 }
-                mip_offset += MIP_LEVELS[level_index];
+                let dimension = (MAX_PBR_MAP_DIMENSION >> level_index).max(1);
+                mip_offset += dimension * dimension;
             }
         }
     }
-    packed
+    Ok(packed)
 }
 
 fn pack_sprite_atlas(atlas: &SpriteAtlas) -> Vec<u32> {
@@ -1229,6 +1488,7 @@ fn create_render_target(device: &wgpu::Device, size: (u32, u32)) -> RenderTarget
         format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC
             | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
@@ -1308,7 +1568,17 @@ fn create_bind_group(
 
 #[cfg(test)]
 mod world_tests {
-    use super::pack_voxels;
+    use super::{pack_voxels, validate_pbr_texture_set, GpuRenderer};
+    use voxelworks_api::{DrawCommand, DrawList, FramePlan, Framebuffer, Renderer};
+    use voxelworks_scene::texture::{
+        PbrTextureSet, RgbaMipChain, RgbaMipLevel, TextureColorSpace, TextureId,
+    };
+
+    #[test]
+    fn gpu_renderer_implements_the_shared_renderer_contract() {
+        fn assert_renderer<T: Renderer>() {}
+        assert_renderer::<GpuRenderer>();
+    }
 
     #[test]
     fn gpu_voxel_packing_preserves_linear_ids_across_words() {
@@ -1318,4 +1588,64 @@ mod world_tests {
         );
         assert_eq!(pack_voxels(&[]), vec![0]);
     }
+
+    #[test]
+    fn gpu_pbr_limits_return_clear_errors() {
+        let small = RgbaMipChain::new(
+            RgbaMipLevel::new(4, 4, vec![[255; 4]; 16]),
+            TextureColorSpace::Srgb,
+        );
+        let set = PbrTextureSet {
+            id: TextureId(1),
+            albedo: small.clone(),
+            normal: small.clone(),
+            roughness: small.clone(),
+            ambient_occlusion: small,
+        };
+        assert!(validate_pbr_texture_set(&set)
+            .unwrap_err()
+            .contains("GPU requires 9"));
+
+        let unsupported_id = PbrTextureSet {
+            id: TextureId(5),
+            ..set
+        };
+        assert!(validate_pbr_texture_set(&unsupported_id)
+            .unwrap_err()
+            .contains("GPU-supported range 1..=4"));
+    }
+
+    #[test]
+    fn offscreen_renderer_reads_its_gpu_target_into_a_framebuffer() {
+        let mut renderer = match GpuRenderer::new(2, 1) {
+            Ok(renderer) => renderer,
+            Err(error) => {
+                println!("skipped GPU readback smoke test: {error}");
+                return;
+            }
+        };
+        let mut ui_layer = DrawList::new(2, 1);
+        ui_layer.commands.push(DrawCommand::Rect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+            color: 0x00ff_ffff,
+        });
+        let plan = FramePlan {
+            scene: None,
+            world_layer: DrawList::new(2, 1),
+            brightness: 1.0,
+            ui_layer,
+        };
+        renderer.render_frame(&plan, &voxelworks_scene::EMPTY_MATERIAL_TABLE);
+        assert_eq!(renderer.take_error(), None);
+        let mut output = Framebuffer::new(2, 1);
+        renderer.present(&mut output);
+        assert_eq!(output.pixels, vec![0x00ff_ffff, 0]);
+    }
+
+    #[test]
+    #[ignore = "Known limitation: GPU reads MaterialTable data, while custom SurfaceShader::albedo and entity_surface implementations are CPU-only."]
+    fn custom_cpu_surface_shader_appearance_is_not_shared_with_gpu() {}
 }

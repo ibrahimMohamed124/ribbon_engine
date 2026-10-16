@@ -20,6 +20,7 @@ pub struct LightingParams {
     pub style: RenderStyle,
 }
 
+#[derive(Clone)]
 pub struct Scene<'a> {
     pub world: &'a VoxelWorld,
     pub empty_voxel: u8,

@@ -1,4 +1,7 @@
 use crate::texture::{PbrTextureSet, SpriteAtlas, Texture, TextureId};
+
+/// Number of distinct block ids representable by the core voxel format.
+pub const MATERIAL_ID_SPACE: usize = u8::MAX as usize + 1;
 use voxelworks_core::math::hash4;
 
 /// Stable per-voxel UV transform and tint shared by both render backends.

@@ -132,24 +132,25 @@ impl Presenter {
         }
     }
 
-    fn present(
+    fn render_and_present<R: Renderer>(
         &mut self,
         window: &Window,
-        framebuffer: &Framebuffer,
-        _plan: Option<&voxelworks_api::FramePlan<'_>>,
-        _materials: &voxelworks_scene::material::MaterialTable,
+        renderer: &mut R,
+        framebuffer: &mut Framebuffer,
+        plan: &voxelworks_api::FramePlan<'_>,
+        materials: &voxelworks_scene::material::MaterialTable,
     ) -> Result<(), Box<dyn Error>> {
         match self {
             #[cfg(feature = "gpu")]
             Self::Gpu(gpu) => gpu
-                .present_frame(
-                    framebuffer,
-                    _plan.expect("GPU presents with a frame plan"),
-                    _materials,
-                )
+                .present_frame(framebuffer, plan, materials)
                 .map_err(std::io::Error::other)
                 .map_err(Into::into),
-            Self::Cpu(cpu) => cpu.present(window, framebuffer),
+            Self::Cpu(cpu) => {
+                renderer.render_frame(plan, materials);
+                renderer.present(framebuffer);
+                cpu.present(window, framebuffer)
+            }
         }
     }
 }
@@ -283,20 +284,13 @@ impl<A: App, R: Renderer> Runner<A, R> {
         }
         let plan = self.app.frame_plan(&ctx);
         if let Some(presenter) = &mut self.presenter {
-            let result = match presenter {
-                #[cfg(feature = "gpu")]
-                Presenter::Gpu(_) => presenter.present(
-                    &window,
-                    &self.framebuffer,
-                    Some(&plan),
-                    self.app.materials(),
-                ),
-                Presenter::Cpu(_) => {
-                    self.renderer.render_frame(&plan, self.app.materials());
-                    self.renderer.present(&mut self.framebuffer);
-                    presenter.present(&window, &self.framebuffer, None, self.app.materials())
-                }
-            };
+            let result = presenter.render_and_present(
+                &window,
+                &mut self.renderer,
+                &mut self.framebuffer,
+                &plan,
+                self.app.materials(),
+            );
             if let Err(error) = result {
                 self.failure = Some(error.to_string());
                 event_loop.exit();
