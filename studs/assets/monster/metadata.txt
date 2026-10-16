@@ -1,0 +1,8 @@
+views=16
+states=idle,walk,run_lunge,attack,frozen
+frames_per_state=8
+cell_width=48
+cell_height=96
+width=768
+height=3840
+coordinate_system=studs-z-up

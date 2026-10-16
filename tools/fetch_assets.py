@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch Poly Haven 1K PBR maps and package compact 256px PNG texture sets."""
+"""Fetch licensed source assets, build compact runtime textures, and check hashes."""
 
 from __future__ import annotations
 
@@ -106,8 +106,8 @@ def update_hashes(rows: list[dict[str, str]], hashes: dict[str, str]) -> None:
     MANIFEST.write_text(text, encoding="utf-8", newline="\n")
 
 
-def write_credits(rows: list[dict[str, str]]) -> None:
-    lines = ["# Asset credits", "", "All listed assets are CC0-1.0. Original source downloads are excluded; compact processed texture sets are included in the game assets.", ""]
+def write_credits(rows: list[dict[str, str]], monsters: list[dict[str, str]]) -> None:
+    lines = ["# Asset credits", "", "Texture source downloads and raw monster FBX archives are excluded from version control. Compact processed texture sets and baked monster sprites are intended for game distribution.", ""]
     for row in rows:
         lines.extend([
             f"## {row['name']}",
@@ -121,10 +121,25 @@ def write_credits(rows: list[dict[str, str]]) -> None:
             f"- SHA-256: `{row['sha256']}`",
             "",
         ])
+    for row in monsters:
+        lines.extend([
+            f"## {row['name']}",
+            "",
+            f"- Source: [{row['source_url']}]({row['source_url']})",
+            f"- Download: [{row['download_url']}]({row['download_url']})",
+            f"- Author and provenance: {row['author']}",
+            f"- License: {row['license']} (the source page displays CC0)",
+            f"- Use: {row['usage']}",
+            f"- Raw archive (ignored): `{row['local_path']}`",
+            f"- Selected model: `{row['selected_model']}`",
+            f"- SHA-256: `{row['sha256']}`",
+            f"- Baked game maps: `{row['albedo_path']}`, `{row['normal_path']}`, and `{row['emissive_path']}` (their SHA-256 values are recorded in `assets/manifest.toml`)",
+            "",
+        ])
     (ROOT / "assets" / "CREDITS.md").write_text("\n".join(lines), encoding="utf-8", newline="\n")
 
 
-def check(rows: list[dict[str, str]]) -> bool:
+def check(rows: list[dict[str, str]], monsters: list[dict[str, str]]) -> bool:
     good = True
     for row in rows:
         path = ROOT / row["local_path"]
@@ -166,6 +181,29 @@ def check(rows: list[dict[str, str]]) -> bool:
     if total_size > MAX_BYTES:
         print(f"processed assets exceed the 40 MiB shipping limit: {total_size} bytes")
         good = False
+    for row in monsters:
+        source = ROOT / row["local_path"]
+        if source.is_file():
+            actual = hashlib.sha256(source.read_bytes()).hexdigest()
+            if actual != row["sha256"]:
+                print(f"monster source hash mismatch: {row['name']} expected {row['sha256']}, got {actual}")
+                good = False
+        # The compact baked maps are shipped; CI verifies every digest and
+        # accounts for them in the common asset budget.
+        for kind in ("albedo", "normal", "emissive"):
+            baked = ROOT / row[f"{kind}_path"]
+            if not baked.is_file():
+                print(f"missing baked monster {kind}: {baked}")
+                good = False
+                continue
+            actual = hashlib.sha256(baked.read_bytes()).hexdigest()
+            if actual != row[f"{kind}_sha256"]:
+                print(f"baked monster {kind} hash mismatch: expected {row[f'{kind}_sha256']}, got {actual}")
+                good = False
+            total_size += baked.stat().st_size
+    if total_size > MAX_BYTES:
+        print(f"processed assets including monster exceed the 40 MiB shipping limit: {total_size} bytes")
+        good = False
     return good
 
 
@@ -184,15 +222,43 @@ def validate_manifest(rows: list[dict[str, str]], require_hashes: bool) -> None:
             raise RuntimeError(f"manifest SHA-256 is missing or invalid for {row['asset_id']}")
 
 
+def validate_monster_manifest(rows: list[dict[str, str]]) -> None:
+    required = {"name", "source_url", "download_url", "author", "license", "sha256", "local_path", "usage", "selected_model", "processed_path", "albedo_path", "albedo_sha256", "normal_path", "normal_sha256", "emissive_path", "emissive_sha256"}
+    for row in rows:
+        missing = required - row.keys()
+        if missing:
+            raise RuntimeError(f"monster manifest entry is missing: {', '.join(sorted(missing))}")
+        if row["license"] not in ALLOWED_LICENSES:
+            raise RuntimeError(f"monster license is not approved: {row['license']}")
+        if not re.fullmatch(r"[0-9a-f]{64}", row["sha256"]):
+            raise RuntimeError(f"monster SHA-256 is missing or invalid for {row['name']}")
+        for kind in ("albedo", "normal", "emissive"):
+            if not re.fullmatch(r"[0-9a-f]{64}", row[f"{kind}_sha256"]):
+                raise RuntimeError(f"monster {kind} SHA-256 is missing or invalid for {row['name']}")
+
+
+def fetch_monster_sources(rows: list[dict[str, str]]) -> None:
+    for row in rows:
+        destination = ROOT / row["local_path"]
+        if not destination.is_file():
+            fetch([row["download_url"]], destination)
+        actual = hashlib.sha256(destination.read_bytes()).hexdigest()
+        if actual != row["sha256"]:
+            raise RuntimeError(f"monster source hash mismatch for {row['name']}: expected {row['sha256']}, got {actual}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify local files and manifest hashes without downloading")
     args = parser.parse_args()
-    rows = tomllib.loads(MANIFEST.read_text(encoding="utf-8"))["assets"]
-    write_credits(rows)
+    manifest = tomllib.loads(MANIFEST.read_text(encoding="utf-8"))
+    rows = manifest["assets"]
+    monsters = manifest.get("monsters", [])
+    write_credits(rows, monsters)
     validate_manifest(rows, require_hashes=args.check)
+    validate_monster_manifest(monsters)
     if args.check:
-        return 0 if check(rows) else 1
+        return 0 if check(rows, monsters) else 1
 
     hashes: dict[str, str] = {}
     try:
@@ -200,14 +266,15 @@ def main() -> int:
             output = ROOT / row["local_path"]
             print(f"Fetching and processing {row['asset_id']}...")
             hashes[row["asset_id"]] = process_set(row["asset_id"], output)
+        fetch_monster_sources(monsters)
         update_hashes(rows, hashes)
         rows = tomllib.loads(MANIFEST.read_text(encoding="utf-8"))["assets"]
-        write_credits(rows)
+        write_credits(rows, monsters)
     except Exception as error:
         print(f"Asset fetch failed: {error}", file=sys.stderr)
         print("No placeholder or fabricated image files were created.", file=sys.stderr)
         return 1
-    write_credits(rows)
+    write_credits(rows, monsters)
     print("Processed texture sets and manifest hashes updated.")
     return 0
 

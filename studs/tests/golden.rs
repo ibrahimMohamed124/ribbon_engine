@@ -1,9 +1,12 @@
+use engine_scene::entities::WARDEN;
 use raycast_blocks::game::{Game, State};
 use raycast_blocks::input::{Controls, InputFrame};
 use raycast_blocks::math::Rng;
 use raycast_blocks::renderer::{Framebuffer, RenderStyle, DEFAULT_HFOV};
 use raycast_blocks::settings::Settings;
+use raycast_blocks::surfaces::studs_material_table;
 use raycast_blocks::world::World;
+use render_cpu::render::render_with_materials;
 
 fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
     bytes.into_iter().fold(0xcbf29ce484222325, |hash, byte| {
@@ -148,4 +151,68 @@ fn realistic_render_is_deterministic_and_matches_its_golden() {
         "realistic rendering must be deterministic"
     );
     assert_eq!(first_hash, 0x39c8dc756d52afc6);
+}
+
+#[test]
+fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
+    let mut game = Game::new(42);
+    let eye = game.player.pos;
+    let clear = (0..64)
+        .map(|i| i as f32 * std::f32::consts::TAU / 64.0)
+        .find(|&angle| {
+            let dir = raycast_blocks::math::Vect::new(angle.cos(), angle.sin(), 0.0);
+            game.world.cast(eye, dir, 3.0).is_none()
+        })
+        .expect("spawn cell should have an open neighboring corridor");
+    game.player.view.phi = clear;
+    let dir = raycast_blocks::math::Vect::new(clear.cos(), clear.sin(), 0.0);
+    game.enemy.pos = eye + dir.scale(2.4);
+    game.enemy.yaw = clear + std::f32::consts::PI;
+    let materials = studs_material_table();
+    assert!(
+        materials.sprite_atlas.is_some(),
+        "baked monster atlas must load"
+    );
+    let mut scene = game
+        .scene_styled(137, DEFAULT_HFOV, RenderStyle::realistic())
+        .unwrap();
+    let center_ray = raycast_blocks::math::forward_vec(scene.camera.view);
+    let warden = scene
+        .entities
+        .iter()
+        .find(|entity| entity.kind == WARDEN)
+        .unwrap();
+    let sprite_hit = render_cpu::render::entities::SpriteView::new(*warden, scene.camera.eye)
+        .hit(center_ray, materials.sprite_atlas.unwrap());
+    let sprite_hit = sprite_hit.expect("center ray should intersect the monster sprite");
+    let wall_hit = game.world.cast(scene.camera.eye, center_ray, 10.0).unwrap();
+    assert!(
+        sprite_hit.t < wall_hit.dist,
+        "monster must be in front of the corridor wall"
+    );
+    let mut with_monster = Framebuffer::new(160, 90);
+    render_with_materials(
+        &mut with_monster,
+        &scene,
+        &raycast_blocks::surfaces::StudsSurface,
+        materials,
+    );
+    let mut background = Framebuffer::new(160, 90);
+    scene.entities.retain(|entity| entity.kind != WARDEN);
+    render_with_materials(
+        &mut background,
+        &scene,
+        &raycast_blocks::surfaces::StudsSurface,
+        materials,
+    );
+    let hash = pixels_hash(&with_monster.pixels);
+    let changed = with_monster
+        .pixels
+        .iter()
+        .zip(&background.pixels)
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(changed > 0, "monster must contribute visible pixels");
+    println!("realistic_monster_framebuffer_hash={hash:#018x}");
+    assert_eq!(hash, 0x99f2b567fd1244eb);
 }

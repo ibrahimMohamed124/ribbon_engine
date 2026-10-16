@@ -1,5 +1,5 @@
 [workspace]
-members = ["engine_core", "engine_scene", "render_cpu", "render_gpu", "platform", "studs"]
+members = ["engine_core", "engine_scene", "render_cpu", "render_gpu", "platform", "studs", "tools/bake_sprites"]
 default-members = ["studs"]
 resolver = "2"
 

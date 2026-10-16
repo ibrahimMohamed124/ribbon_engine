@@ -158,6 +158,59 @@ pub struct PbrTextureSet {
     pub ambient_occlusion: RgbaMipChain,
 }
 
+/// Compact baked billboard atlas shared by both rendering backends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpriteAtlas {
+    pub width: usize,
+    pub height: usize,
+    pub cell_width: usize,
+    pub cell_height: usize,
+    pub views: usize,
+    pub states: usize,
+    pub frames_per_state: usize,
+    pub albedo: Vec<[u8; 4]>,
+    pub normal: Vec<[u8; 4]>,
+    /// One byte per atlas texel; white is emissive.
+    pub emissive: Vec<u8>,
+}
+
+impl SpriteAtlas {
+    pub fn is_valid(&self) -> bool {
+        self.width == self.cell_width * self.views
+            && self.height == self.cell_height * self.states * self.frames_per_state
+            && self.albedo.len() == self.width * self.height
+            && self.normal.len() == self.width * self.height
+            && self.emissive.len() == self.width * self.height
+            && self.views > 0
+            && self.states > 0
+            && self.frames_per_state > 0
+    }
+
+    pub fn texel(
+        &self,
+        view: usize,
+        state: usize,
+        frame: usize,
+        u: f32,
+        v: f32,
+    ) -> Option<([u8; 4], [u8; 4], u8)> {
+        if !self.is_valid() || !u.is_finite() || !v.is_finite() {
+            return None;
+        }
+        let view = view % self.views;
+        let state = state.min(self.states - 1);
+        let frame = frame % self.frames_per_state;
+        let x = (u.clamp(0.0, 0.999_999) * self.cell_width as f32) as usize;
+        let y = (v.clamp(0.0, 0.999_999) * self.cell_height as f32) as usize;
+        let index =
+            (state * self.frames_per_state * self.cell_height + frame * self.cell_height + y)
+                * self.width
+                + view * self.cell_width
+                + x;
+        Some((self.albedo[index], self.normal[index], self.emissive[index]))
+    }
+}
+
 fn srgb_to_linear(value: f32) -> f32 {
     if value <= 0.04045 {
         value / 12.92

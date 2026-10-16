@@ -4,7 +4,7 @@
 //! into a [`Framebuffer`].
 
 use crate::audio::{AudioEvent, SpatialAudioEvent};
-use crate::enemy::Enemy;
+use crate::enemy::{animation_state, Enemy};
 use crate::input::{Controls, InputFrame};
 use crate::math::{forward_vec, hash4, Angles, Rng, Vect};
 use crate::player::Player;
@@ -330,10 +330,37 @@ impl Game {
 
                 let eye = self.player.pos;
                 let mut ents = Vec::with_capacity(1 + self.pages.len());
+                let enemy_awake = self.enemy_awake();
+                let distance = self.player.pos.dist_xy(self.enemy.pos);
+                let enemy_seen = enemy_awake
+                    && self.enemy.is_seen_from(
+                        self.player.pos,
+                        self.player.view,
+                        &self.world,
+                        RENDER_DIST,
+                    );
+                let animation = animation_state(
+                    enemy_awake,
+                    enemy_seen,
+                    distance,
+                    Enemy::speed_with_tuning(
+                        self.collected,
+                        enemy_seen,
+                        self.difficulty.enemy_speed_multiplier(),
+                        self.difficulty.seen_speed_factor(),
+                    ),
+                    self.enemy.moving,
+                );
+                let animation_phase = if self.enemy.moving {
+                    self.enemy.phase
+                } else {
+                    self.time * 0.22
+                };
                 ents.push(enemy_view(
                     self.enemy.pos,
                     self.enemy.yaw,
-                    self.enemy.phase,
+                    animation_phase,
+                    animation as usize,
                     eye,
                 ));
                 for (i, p) in self.pages.iter().enumerate() {

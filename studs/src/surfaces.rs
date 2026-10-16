@@ -7,7 +7,7 @@ use engine_core::voxel::{face_uv, Hit};
 pub use engine_scene::entities::ENEMY_BOUNDS;
 use engine_scene::entities::{EntityInstance, EntityKind, PAGE, WARDEN};
 use engine_scene::texture::{
-    PbrTextureSet, RgbaMipChain, RgbaMipLevel, Texture, TextureColorSpace, TextureId,
+    PbrTextureSet, RgbaMipChain, RgbaMipLevel, SpriteAtlas, Texture, TextureColorSpace, TextureId,
 };
 use engine_scene::RenderStyle;
 use engine_scene::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
@@ -61,8 +61,56 @@ pub fn studs_material_table() -> &'static MaterialTable {
         .filter_map(|(id, name)| load_pbr_set(id, name))
         .collect::<Vec<_>>();
         let textures: &'static [PbrTextureSet] = Box::leak(loaded.into_boxed_slice());
-        MaterialTable::with_pbr_textures(&STUDS_MATERIALS, textures)
+        let sprites: Option<&'static SpriteAtlas> =
+            load_sprite_atlas().map(|atlas| Box::leak(Box::new(atlas)) as &SpriteAtlas);
+        MaterialTable::with_pbr_and_sprite(&STUDS_MATERIALS, textures, sprites)
     })
+}
+
+fn load_sprite_atlas() -> Option<SpriteAtlas> {
+    let directory = asset_roots()
+        .into_iter()
+        .map(|root| root.join("monster"))
+        .find(|path| path.join("albedo.png").is_file());
+    let Some(directory) = directory else {
+        eprintln!("warning: baked monster sprite atlas is missing; using the legacy box monster");
+        return None;
+    };
+    let load = |name: &str| -> Option<image::RgbaImage> {
+        image::open(directory.join(name))
+            .ok()
+            .map(|image| image.to_rgba8())
+    };
+    let albedo_image = load("albedo.png")?;
+    let normal_image = load("normal.png")?;
+    let emissive_image = load("emissive.png")?;
+    let (width, height) = (
+        albedo_image.width() as usize,
+        albedo_image.height() as usize,
+    );
+    if normal_image.dimensions() != albedo_image.dimensions()
+        || emissive_image.dimensions() != albedo_image.dimensions()
+        || width % 16 != 0
+        || height % 40 != 0
+    {
+        eprintln!(
+            "warning: baked monster atlas dimensions are invalid; using the legacy box monster"
+        );
+        return None;
+    }
+    let atlas = SpriteAtlas {
+        width,
+        height,
+        cell_width: width / 16,
+        cell_height: height / 40,
+        views: 16,
+        states: 5,
+        frames_per_state: 8,
+        albedo: albedo_image.pixels().map(|p| p.0).collect(),
+        normal: normal_image.pixels().map(|p| p.0).collect(),
+        emissive: emissive_image.pixels().map(|p| p.0[0]).collect(),
+    };
+    atlas.is_valid().then_some(atlas)
 }
 
 fn load_pbr_set(id: u32, name: &str) -> Option<PbrTextureSet> {
@@ -124,15 +172,22 @@ fn load_pbr_set(id: u32, name: &str) -> Option<PbrTextureSet> {
 }
 
 fn asset_directories() -> Vec<std::path::PathBuf> {
+    asset_roots()
+        .into_iter()
+        .map(|root| root.join("materials"))
+        .collect()
+}
+
+fn asset_roots() -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
     if let Ok(executable) = std::env::current_exe() {
         if let Some(parent) = executable.parent() {
-            paths.push(parent.join("assets/materials"));
+            paths.push(parent.join("assets"));
         }
     }
     if let Ok(current) = std::env::current_dir() {
-        paths.push(current.join("assets/materials"));
-        paths.push(current.join("studs/assets/materials"));
+        paths.push(current.join("assets"));
+        paths.push(current.join("studs/assets"));
     }
     paths
 }
@@ -354,12 +409,18 @@ fn page_surface(point: [f32; 3], axis: usize) -> EntitySurface {
     }
 }
 
-pub fn enemy_view(pos: Vect, yaw: f32, phase: f32, _eye: Vect) -> EntityInstance {
+pub fn enemy_view(
+    pos: Vect,
+    yaw: f32,
+    phase: f32,
+    animation_state: usize,
+    _eye: Vect,
+) -> EntityInstance {
     EntityInstance {
         kind: WARDEN,
         pos,
         yaw,
-        params: [phase, 0.0, 0.0, 0.0],
+        params: [phase, animation_state.min(4) as f32, 0.0, 0.0],
     }
 }
 

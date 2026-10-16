@@ -1,5 +1,5 @@
-# Run `python tools/fetch_assets.py` to download the CC0 maps, produce the
-# processed 256px sets, and replace each pending digest with the output SHA-256.
+# Run `python tools/fetch_assets.py` to fetch/check source assets and process
+# the compact runtime textures. Source downloads stay outside version control.
 
 [[assets]]
 name = "Damaged concrete wall"
@@ -44,3 +44,21 @@ sha256 = "a6dfcabdee86a1012ae8bc8bb8c09cc21154198acca0d1826d6c41c2d0f9ab9d"
 local_path = "studs/assets/materials/ceiling_interior.zip"
 runtime_path = "studs/assets/materials/ceiling_interior"
 usage = "Ceiling material: sRGB albedo, tangent normal, roughness, and AO."
+
+[[monsters]]
+name = "Nightmare Monsters - Crawlmaster Deluxe"
+source_url = "https://opengameart.org/content/nightmare-monsters"
+download_url = "https://opengameart.org/sites/default/files/vividcharacters.zip"
+author = "Models: Teh_Bucket; textures: Joao Paulo via 3dtextures.me; Sonask concept art by raymoohawk (public-domain permission noted by uploader)"
+license = "CC0-1.0"
+sha256 = "961c5918c4420382e1dacae3272f2154514540e16b3178ad0abaed42a556f4f1"
+local_path = "assets/monster/source/vividcharacters.zip"
+usage = "Selected humanoid candidate: Crawlmaster Deluxe; raw FBX source for offline procedural sprite baking."
+selected_model = "crawlmaster deluxe.fbx"
+processed_path = "studs/assets/monster"
+albedo_path = "studs/assets/monster/albedo.png"
+albedo_sha256 = "248e2a0e50927c4190e796253725c3b35231b4bb8c3854b10c1b4ff4ce215954"
+normal_path = "studs/assets/monster/normal.png"
+normal_sha256 = "89e18fdba44d737cb2929b1a4e81b89c7fda6dbb95fbe2fb05f6ab0d4d212136"
+emissive_path = "studs/assets/monster/emissive.png"
+emissive_sha256 = "97420595eef94770091a3f75d5f186a44c9b9edaa02e1ae8ae164bf1897b9cca"

@@ -1,4 +1,4 @@
-struct WorldUniform { dims: vec4<u32>, eye: vec4<f32>, forward: vec4<f32>, right: vec4<f32>, up: vec4<f32>, projection: vec4<f32>, lighting: vec4<f32>, style: vec4<f32>, frame: vec4<u32> }
+struct WorldUniform { dims: vec4<u32>, eye: vec4<f32>, forward: vec4<f32>, right: vec4<f32>, up: vec4<f32>, projection: vec4<f32>, lighting: vec4<f32>, style: vec4<f32>, frame: vec4<u32>, sprite: vec4<u32> }
 struct Material { info: vec4<u32>, params: vec4<f32> }
 struct Entity { pos_yaw: vec4<f32>, params: vec4<f32>, bounds_min: vec4<f32>, bounds_max: vec4<f32>, range: vec4<u32> }
 struct Box { min_part: vec4<f32>, max_sway: vec4<f32> }
@@ -16,12 +16,38 @@ struct Box { min_part: vec4<f32>, max_sway: vec4<f32> }
 struct Hit { ok: bool, id: u32, cell: vec3<i32>, normal: vec3<i32>, point: vec3<f32>, t: f32 }
 struct BoxHit { ok: bool, t: f32, axis: u32, sign: f32 }
 struct EntityHit { ok: bool, t: f32, axis: u32, sign: f32, part: u32, kind: u32, point: vec3<f32>, ndotl: f32 }
+struct SpriteHit { ok: bool, t: f32, u: f32, v: f32, view: u32, state: u32, frame: u32 }
 @vertex fn vs_main(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32>{let p=array<vec2<f32>,3>(vec2<f32>(-1.,-1.),vec2<f32>(3.,-1.),vec2<f32>(-1.,3.));return vec4<f32>(p[i],0.,1.);}
 fn voxel(c:vec3<i32>)->i32{if(any(c<vec3<i32>(0))||any(c>=vec3<i32>(u.dims.xyz))){return -1;}let i=(u32(c.z)*u.dims.y+u32(c.y))*u.dims.x+u32(c.x);return i32((voxels[i>>2u]>>((i&3u)*8u))&255u);}
 fn cast_world(o:vec3<f32>,d:vec3<f32>)->Hit{var c=vec3<i32>(floor(o));var st=vec3<i32>(0);var delta=vec3<f32>(1e30);var edge=vec3<f32>(1e30);for(var a=0u;a<3u;a++){if(d[a]>0.){st[a]=1;delta[a]=1./d[a];edge[a]=(f32(c[a]+1)-o[a])*delta[a];}else if(d[a]<0.){st[a]=-1;delta[a]=-1./d[a];edge[a]=(o[a]-f32(c[a]))*delta[a];}}var n=vec3<i32>(0);var t=0.;for(var k=0u;k<58u;k++){let id=voxel(c);if(id<0){break;}if(u32(id)!=u.frame.w){return Hit(true,u32(id),c,n,o+d*t,t);}var a=2u;if(edge.x<edge.y){if(edge.x<edge.z){a=0u;}}else if(edge.y<edge.z){a=1u;}if(edge[a]>u.projection.z){break;}t=edge[a];c[a]+=st[a];edge[a]+=delta[a];n=vec3<i32>(0);n[a]=-st[a];}return Hit(false,0u,vec3<i32>(0),vec3<i32>(0),vec3<f32>(0.),1e30);}
 fn box_hit(o:vec3<f32>,d:vec3<f32>,mn:vec3<f32>,mx:vec3<f32>)->BoxHit{var lo=-1e30;var hi=1e30;var ax=0u;var sg=1.;for(var a=0u;a<3u;a++){if(abs(d[a])<1e-8){if(o[a]<mn[a]||o[a]>mx[a]){return BoxHit(false,0.,0u,0.);}}else{var x=(mn[a]-o[a])/d[a];var y=(mx[a]-o[a])/d[a];var s=-1.;if(x>y){let z=x;x=y;y=z;s=1.;}if(x>lo){lo=x;ax=a;sg=s;}hi=min(hi,y);if(lo>hi){return BoxHit(false,0.,0u,0.);}}}return BoxHit(lo>=0.,lo,ax,sg);}
 fn rotate(v:vec3<f32>,c:f32,s:f32)->vec3<f32>{return vec3<f32>(c*v.x+s*v.y,-s*v.x+c*v.y,v.z);}
-fn cast_entities(o:vec3<f32>,d:vec3<f32>,max_t:f32)->EntityHit{var best=EntityHit(false,max_t,0u,0.,0u,0u,vec3<f32>(0.),0.);for(var ei=0u;ei<min(u.frame.y,16u);ei++){let e=entities[ei];let c=cos(e.pos_yaw.w);let s=sin(e.pos_yaw.w);let lo=rotate(o-e.pos_yaw.xyz,c,s);let ld=rotate(d,c,s);if(e.range.z==1u){let bh=box_hit(lo,ld,e.bounds_min.xyz,e.bounds_max.xyz);if(bh.ok==false&&(any(lo<e.bounds_min.xyz)||any(lo>e.bounds_max.xyz))){continue;}}for(var bi=0u;bi<min(e.range.y,64u);bi++){let b=boxes[e.range.x+bi];let sway=b.max_sway.w*sin(e.params.x)*.28;let mn=b.min_part.xyz+vec3<f32>(sway,0.,0.);let mx=b.max_sway.xyz+vec3<f32>(sway,0.,0.);let h=box_hit(lo,ld,mn,mx);if(h.ok&&h.t<best.t){best=EntityHit(true,h.t,h.axis,h.sign,u32(b.min_part.w),e.range.w,lo+ld*h.t,abs(ld[h.axis]));}}}return best;}
+fn cast_entities(o:vec3<f32>,d:vec3<f32>,max_t:f32)->EntityHit{var best=EntityHit(false,max_t,0u,0.,0u,0u,vec3<f32>(0.),0.);for(var ei=0u;ei<min(u.frame.y,16u);ei++){let e=entities[ei];if(u.style.w>0.5&&u.sprite.x>0u&&e.range.w==1u){continue;}let c=cos(e.pos_yaw.w);let s=sin(e.pos_yaw.w);let lo=rotate(o-e.pos_yaw.xyz,c,s);let ld=rotate(d,c,s);if(e.range.z==1u){let bh=box_hit(lo,ld,e.bounds_min.xyz,e.bounds_max.xyz);if(bh.ok==false&&(any(lo<e.bounds_min.xyz)||any(lo>e.bounds_max.xyz))){continue;}}for(var bi=0u;bi<min(e.range.y,64u);bi++){let b=boxes[e.range.x+bi];let sway=b.max_sway.w*sin(e.params.x)*.28;let mn=b.min_part.xyz+vec3<f32>(sway,0.,0.);let mx=b.max_sway.xyz+vec3<f32>(sway,0.,0.);let h=box_hit(lo,ld,mn,mx);if(h.ok&&h.t<best.t){best=EntityHit(true,h.t,h.axis,h.sign,u32(b.min_part.w),e.range.w,lo+ld*h.t,abs(ld[h.axis]));}}}return best;}
+fn cast_sprites(o:vec3<f32>,d:vec3<f32>,max_t:f32)->SpriteHit{
+ var best=SpriteHit(false,max_t,0.,0.,0u,0u,0u);
+ if(u.sprite.x==0u||u.sprite.y==0u){return best;}
+ for(var i=0u;i<min(u.frame.y,16u);i++){
+  let e=entities[i]; if(e.range.w!=1u){continue;}
+  let rel=o.xy-e.pos_yaw.xy; let dist=length(rel); if(dist<.001){continue;}
+  let toward=rel/dist; let denom=dot(d.xy,toward); if(denom>=-1e-6){continue;}
+  let t=-dist/denom; if(t<=0.||t>=best.t){continue;}
+  let p=o+d*t; let right=vec2<f32>(-toward.y,toward.x); let local=p.xy-e.pos_yaw.xy;
+  let su=.5+dot(local,right)/.92; let sv=(p.z-e.pos_yaw.z)/2.2;
+  if(su<0.||su>=1.||sv<0.||sv>=1.){continue;}
+  let angle=(atan2(rel.y,rel.x)-e.pos_yaw.w+6.28318530718)%6.28318530718;
+  let view=min(u32(floor(angle/6.28318530718*16.)),15u);
+  let state=min(u32(max(round(e.params.y),0.)),4u);
+  let frame=u32(floor(abs(e.params.x)/6.28318530718*8.))%8u;
+  best=SpriteHit(true,t,su,sv,view,state,frame);
+ }
+ return best;
+}
+fn sprite_fetch(map:u32,hit:SpriteHit)->vec4<f32>{
+ let x=min(u32(hit.u*f32(u.sprite.z)),u.sprite.z-1u); let y=min(u32((1.-hit.v)*f32(u.sprite.w)),u.sprite.w-1u);
+ let row=hit.state*8u+hit.frame; let idx=(row*u.sprite.w+y)*u.sprite.x+hit.view*u.sprite.z+x;
+ let count=u.sprite.x*u.sprite.y; let word=pbr_texels[1398096u+map*count+idx];
+ return vec4<f32>(f32(word&255u),f32((word>>8u)&255u),f32((word>>16u)&255u),f32((word>>24u)&255u))/255.;
+}
 fn hash4(a:i32,b:i32,c:i32,d:i32)->f32{var h=bitcast<u32>(a)*73856093u^bitcast<u32>(b)*19349663u^bitcast<u32>(c)*83492791u^bitcast<u32>(d)*2654435761u;h^=h>>13u;h*=0x5bd1e995u;h^=h>>15u;return f32(h&65535u)/32767.5-1.;}
 fn light(t:f32,nd:f32,cone:f32)->f32{let fog=clamp(1.-t/max(u.lighting.w,.001),0.,1.);let lamp=u.lighting.z/(1.+.7*t*t);let beam=u.lighting.x*cone*(.3+.7*nd)*(1.7/(1.+.06*t*t));return (u.lighting.y+lamp+beam)*fog;}
 fn texel_fade(tex:texture_2d<f32>,uv:vec2<f32>,t:f32,fade0:f32,fade1:f32,avg:f32)->f32{let sz=vec2<i32>(textureDimensions(tex));let p=min(vec2<i32>(floor(fract(uv)*vec2<f32>(sz))),sz-1);return mix(textureLoad(tex,p,0).x,avg,clamp((t-fade0)/(fade1-fade0),0.,1.));}
@@ -32,7 +58,50 @@ fn pbr_sample(set_id:u32,map_id:u32,uv:vec2<f32>,lod:f32)->vec4<f32>{let l=clamp
 fn face_ao(h:Hit)->f32{let axis=select(select(2u,1u,h.normal.y!=0),0u,h.normal.x!=0);var ax=vec2<u32>(0u,1u);if(axis==0u){ax=vec2<u32>(1u,2u);}else if(axis==1u){ax=vec2<u32>(0u,2u);}var uv=h.point.xy;if(h.normal.x!=0){uv=h.point.yz;}else if(h.normal.y!=0){uv=vec2<f32>(h.point.x,h.point.z);}uv=fract(uv);let out=h.cell+h.normal;var cv=vec4<f32>(0.);for(var i=0u;i<2u;i++){for(var j=0u;j<2u;j++){let su=select(-1,1,i==1u);let sv=select(-1,1,j==1u);var a=out;var b=out;var c=out;a[ax.x]+=su;b[ax.y]+=sv;c[ax.x]+=su;c[ax.y]+=sv;let sa=voxel(a)!=i32(u.frame.w);let sb=voxel(b)!=i32(u.frame.w);let sc=voxel(c)!=i32(u.frame.w);var v=0.;if(!(sa&&sb)){v=f32(3-i32(sa)-i32(sb)-i32(sc))/3.;}let index=j*2u+i;cv[index]=v;}}let top=mix(cv.x,cv.y,uv.x);let bot=mix(cv.z,cv.w,uv.x);return mix(top,bot,uv.y);}
 fn albedo(h:Hit)->f32{let m=materials[h.id];if(m.info.x==0u){return m.params.x;}let axis=select(select(2u,1u,h.normal.y!=0),0u,h.normal.x!=0);var base=0.;var high=0.;var row=0;var rp=0.;var hor=0.;if(axis==2u){let f=fract(h.point.xy);let d=length(f-vec2<f32>(.5));base=select(.4,.3,h.id==99u);if(d<.27){base*=1.25;}else if(d<.34){base*=.6;}if(any(f<vec2<f32>(.025))||any(f>vec2<f32>(.975))){base*=.65;}base*=1.+.05*hash4(h.cell.x,h.cell.y,h.cell.z,7);}else{high=h.point[select(0u,1u,axis==0u)];rp=h.point.z*2.;row=i32(floor(rp));hor=high+select(0.,.5,(row&1)==1);if(fract(rp)<.10||fract(hor)<.06){base=.2;}else{base=.52+.10*hash4(i32(floor(hor)),row,i32(axis)+3*h.normal[axis],h.cell.x+h.cell.y*31);}}if(u.style.z>0.5&&m.info.w>0u){var uv=fract(h.point.xy);if(h.normal.x!=0){uv=fract(h.point.yz);}else if(h.normal.y!=0){uv=fract(vec2<f32>(h.point.x,h.point.z));}let p=pbr_sample(m.info.w,0u,uv*vec2<f32>(m.params.y,m.params.z),log2(max(h.t,1.)));let lum=dot(p.xyz,vec3<f32>(.2126,.7152,.0722));return base*clamp(.35+1.3*lum,.35,1.3);}if(u.style.y==0.||m.info.y==0u){return base;}var detail=1.;if(m.info.y==1u&&h.id==35u){let v=texel_fade(brick,vec2<f32>(hor,rp),h.t,7.,17.,.50);let variation=.92+.16*hash4(i32(floor(hor)),row,i32(axis)+h.normal[axis],i32(m.info.z));detail=clamp(v/.50*variation,.7,1.3);}else if(m.info.y==2u&&(h.id==102u||h.id==99u)){var uv=fract(h.point.xy);if(h.normal.x!=0){uv=fract(h.point.yz);}else if(h.normal.y!=0){uv=fract(vec2<f32>(h.point.x,h.point.z));}detail=clamp(texel_fade(noise_tex,uv,h.t,5.,14.,.46)/.46,.7,1.3);}return base*mix(1.,detail,clamp(u.style.y,0.,1.));}
 fn finish(g:f32,p:vec2<i32>,uv:vec2<f32>)->vec4<f32>{let tp=clamp(g,0.,2.)*511.5;let ti=u32(tp);let mapped=mix(tone[ti],tone[min(ti+1u,1023u)],fract(tp));let vig=1.-dot(uv,uv)*(.45+.5*u.projection.y);let grain=hash4(p.x,p.y,i32(u.frame.x),5)*.025*(1.+3.*u.projection.y);let value=clamp(mapped*vig+grain,0.,1.)*1023.;let gi=u32(value);let level=mix(gamma[gi],gamma[min(gi+1u,1023u)],fract(value));let bayer=array<u32,16>(0u,8u,2u,10u,12u,4u,14u,6u,3u,11u,1u,9u,15u,7u,13u,5u);let b=(u32(p.y)&3u)*4u+(u32(p.x)&3u);let rgb=palette[u32(clamp(floor(level+(f32(bayer[b])+.5)/16.),0.,13.))];return vec4<f32>(f32((rgb>>16u)&255u)/255.,f32((rgb>>8u)&255u)/255.,f32(rgb&255u)/255.,1.);}
-@fragment fn fs_world(@builtin(position) pos:vec4<f32>)->@location(0) vec4<f32>{let p=vec2<i32>(pos.xy);let uv=vec2<f32>((f32(p.x)+.5)/f32(u.dims.w)*2.-1.,1.-(f32(p.y)+.5)/f32(u.frame.z)*2.);let th=tan(u.projection.x*.5);let d=normalize(u.forward.xyz+u.right.xyz*uv.x*th+u.up.xyz*uv.y*th*f32(u.frame.z)/f32(u.dims.w));let wh=cast_world(u.eye.xyz,d);let eh=cast_entities(u.eye.xyz,d,select(1e30,wh.t,wh.ok));let cone=clamp((dot(d,u.forward.xyz)-.86)/(.985-.86),0.,1.);let c=cone*cone*(3.-2.*cone);var g=0.;if(eh.ok&&(!wh.ok||eh.t<wh.t)){if(eh.kind==1u){if(eh.part==1u&&eh.axis==0u&&eh.sign>0.&&abs(eh.point.y)>.05&&abs(eh.point.y)<.17&&eh.point.z>1.93&&eh.point.z<2.06){g=clamp(1.-eh.t/(u.projection.z*1.4),0.,1.);}else if(eh.part==1u&&eh.axis==0u&&eh.sign>0.&&abs(eh.point.y)<.13&&eh.point.z>1.78&&eh.point.z<1.82){g=clamp(1.-eh.t/(u.projection.z*1.4),0.,1.);}else{g=.10*light(eh.t,eh.ndotl,c);}}else if(eh.kind==2u){var pg=.92;if(eh.axis==1u){let row=(eh.point.z+.25)*9.;if(fract(row)<.45&&abs(eh.point.x)<.15&&row>1.&&row<7.5){pg=.35;}}g=pg*clamp(1.-eh.t/(u.projection.z*1.4),0.,1.);}else{g=.10*light(eh.t,eh.ndotl,c);}}else if(wh.ok){let axis=select(select(2u,1u,wh.normal.y!=0),0u,wh.normal.x!=0);let strength=clamp(u.style.x,0.,1.)*clamp(1.-wh.t/4.,0.,1.);let ao=mix(1.,face_ao(wh),strength);let m=materials[wh.id];if(u.style.z>0.5&&m.info.w>0u){var tuv=fract(wh.point.xy);if(wh.normal.x!=0){tuv=fract(wh.point.yz);}else if(wh.normal.y!=0){tuv=fract(vec2<f32>(wh.point.x,wh.point.z));}let tuv_scaled=tuv*vec2<f32>(m.params.y,m.params.z);let lod=log2(max(wh.t,1.));let tn=pbr_sample(m.info.w,1u,tuv_scaled,lod).xyz*2.-vec3<f32>(1.);var tangent=vec3<f32>(1.,0.,0.);var bitangent=vec3<f32>(0.,1.,0.);if(axis==0u){tangent=vec3<f32>(0.,f32(wh.normal.x),0.);bitangent=vec3<f32>(0.,0.,1.);}else if(axis==1u){tangent=vec3<f32>(1.,0.,0.);bitangent=vec3<f32>(0.,0.,1.);}let surface_normal=normalize(tangent*tn.x+bitangent*tn.y+vec3<f32>(wh.normal)*tn.z);let ndotl=clamp(dot(surface_normal,-d),0.,1.);let rough=clamp(pbr_sample(m.info.w,2u,tuv_scaled,lod).x,.04,1.);let mat_ao=clamp(pbr_sample(m.info.w,3u,tuv_scaled,lod).x,0.,1.);let diffuse=light(wh.t,ndotl,c)*ao*mat_ao;let spec=u.lighting.x*c/(1.+.06*wh.t*wh.t)*(1.-rough)*.22*pow(ndotl,2.+32.*(1.-rough))*clamp(1.-wh.t/max(u.lighting.w,.001),0.,1.);g=albedo(wh)*(diffuse+spec);}else{g=albedo(wh)*light(wh.t,abs(d[axis]),c)*ao;}}return finish(g,p,uv);}
+@fragment fn fs_world(@builtin(position) pos:vec4<f32>)->@location(0) vec4<f32>{
+ let p=vec2<i32>(pos.xy);
+ let uv=vec2<f32>((f32(p.x)+.5)/f32(u.dims.w)*2.-1.,1.-(f32(p.y)+.5)/f32(u.frame.z)*2.);
+ let th=tan(u.projection.x*.5);
+ let d=normalize(u.forward.xyz+u.right.xyz*uv.x*th+u.up.xyz*uv.y*th*f32(u.frame.z)/f32(u.dims.w));
+ let wh=cast_world(u.eye.xyz,d);
+ let eh=cast_entities(u.eye.xyz,d,select(1e30,wh.t,wh.ok));
+ var sh=SpriteHit(false,1e30,0.,0.,0u,0u,0u);
+ var sprite_color=vec4<f32>(0.);
+ var sprite_normal=vec4<f32>(.5,.5,1.,0.);
+ var sprite_emissive=vec4<f32>(0.);
+ if(u.style.w>0.5){sh=cast_sprites(u.eye.xyz,d,select(1e30,wh.t,wh.ok));if(sh.ok){sprite_color=sprite_fetch(0u,sh);sprite_normal=sprite_fetch(1u,sh);sprite_emissive=sprite_fetch(2u,sh);}}
+ let cone=clamp((dot(d,u.forward.xyz)-.86)/(.985-.86),0.,1.);
+ let c=cone*cone*(3.-2.*cone);
+ var g=0.;
+ if(sh.ok&&sprite_color.a>.5&&(!eh.ok||sh.t<eh.t)){
+  let n=normalize(sprite_normal.xyz*2.-vec3<f32>(1.));
+  let ndotl=max(dot(n,-d),0.);
+  let rgb=vec3<f32>(decode_srgb(sprite_color.r),decode_srgb(sprite_color.g),decode_srgb(sprite_color.b));
+  let base=dot(rgb,vec3<f32>(.2126,.7152,.0722));
+  g=base*light(sh.t,ndotl,c)+sprite_emissive.r*.85;
+ }else if(eh.ok&&(!wh.ok||eh.t<wh.t)){
+  if(eh.kind==1u){if(eh.part==1u&&eh.axis==0u&&eh.sign>0.&&abs(eh.point.y)>.05&&abs(eh.point.y)<.17&&eh.point.z>1.93&&eh.point.z<2.06){g=clamp(1.-eh.t/(u.projection.z*1.4),0.,1.);}else if(eh.part==1u&&eh.axis==0u&&eh.sign>0.&&abs(eh.point.y)<.13&&eh.point.z>1.78&&eh.point.z<1.82){g=clamp(1.-eh.t/(u.projection.z*1.4),0.,1.);}else{g=.10*light(eh.t,eh.ndotl,c);}}
+  else if(eh.kind==2u){var pg=.92;if(eh.axis==1u){let row=(eh.point.z+.25)*9.;if(fract(row)<.45&&abs(eh.point.x)<.15&&row>1.&&row<7.5){pg=.35;}}g=pg*clamp(1.-eh.t/(u.projection.z*1.4),0.,1.);}
+  else{g=.10*light(eh.t,eh.ndotl,c);}
+ }else if(wh.ok){
+  let axis=select(select(2u,1u,wh.normal.y!=0),0u,wh.normal.x!=0);
+  let strength=clamp(u.style.x,0.,1.)*clamp(1.-wh.t/4.,0.,1.);
+  let ao=mix(1.,face_ao(wh),strength);
+  let m=materials[wh.id];
+  if(u.style.z>0.5&&m.info.w>0u){
+   var tuv=fract(wh.point.xy);if(wh.normal.x!=0){tuv=fract(wh.point.yz);}else if(wh.normal.y!=0){tuv=fract(vec2<f32>(wh.point.x,wh.point.z));}
+   let tuv_scaled=tuv*vec2<f32>(m.params.y,m.params.z);let lod=log2(max(wh.t,1.));
+   let tn=pbr_sample(m.info.w,1u,tuv_scaled,lod).xyz*2.-vec3<f32>(1.);
+   var tangent=vec3<f32>(1.,0.,0.);var bitangent=vec3<f32>(0.,1.,0.);
+   if(axis==0u){tangent=vec3<f32>(0.,f32(wh.normal.x),0.);bitangent=vec3<f32>(0.,0.,1.);}else if(axis==1u){tangent=vec3<f32>(1.,0.,0.);bitangent=vec3<f32>(0.,0.,1.);}
+   let surface_normal=normalize(tangent*tn.x+bitangent*tn.y+vec3<f32>(wh.normal)*tn.z);
+   let ndotl=clamp(dot(surface_normal,-d),0.,1.);let rough=clamp(pbr_sample(m.info.w,2u,tuv_scaled,lod).x,.04,1.);let mat_ao=clamp(pbr_sample(m.info.w,3u,tuv_scaled,lod).x,0.,1.);
+   let diffuse=light(wh.t,ndotl,c)*ao*mat_ao;let spec=u.lighting.x*c/(1.+.06*wh.t*wh.t)*(1.-rough)*.22*pow(ndotl,2.+32.*(1.-rough))*clamp(1.-wh.t/max(u.lighting.w,.001),0.,1.);
+   g=albedo(wh)*(diffuse+spec);
+  }else{g=albedo(wh)*light(wh.t,abs(d[axis]),c)*ao;}
+ }
+ return finish(g,p,uv);
+}
 
 
 

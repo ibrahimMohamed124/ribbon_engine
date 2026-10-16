@@ -16,3 +16,4 @@ engine_core = { path = "../engine_core" }
 engine_scene = { path = "../engine_scene" }
 render_cpu = { path = "../render_cpu" }
 platform = { path = "../platform" }
+image = { version = "0.25", default-features = false, features = ["png"] }

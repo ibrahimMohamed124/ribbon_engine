@@ -16,6 +16,38 @@ const SEARCH_DURATION: f32 = 7.0;
 /// Minimum dot(view direction, direction to enemy) for the player to "see" it.
 const VIEW_CONE_DOT: f32 = 0.82;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(usize)]
+pub enum EnemyAnimation {
+    Idle = 0,
+    Walk = 1,
+    RunLunge = 2,
+    Attack = 3,
+    Frozen = 4,
+}
+
+pub fn animation_state(
+    awake: bool,
+    seen: bool,
+    distance: f32,
+    speed: f32,
+    moving: bool,
+) -> EnemyAnimation {
+    if !awake {
+        EnemyAnimation::Idle
+    } else if distance <= CATCH_DIST {
+        EnemyAnimation::Attack
+    } else if seen {
+        EnemyAnimation::Frozen
+    } else if distance <= CATCH_DIST * 3.0 || speed >= 4.8 {
+        EnemyAnimation::RunLunge
+    } else if moving {
+        EnemyAnimation::Walk
+    } else {
+        EnemyAnimation::Idle
+    }
+}
+
 pub struct Enemy {
     pub pos: Vect, // feet position
     pub yaw: f32,

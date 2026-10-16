@@ -4,6 +4,7 @@ pub use super::lighting::EntitySurface;
 use engine_core::math::Vect;
 pub use engine_scene::entities::{Bounds3, Box3};
 use engine_scene::entities::{EntityDefinition, EntityInstance, EntityKind, EntityRegistry, PAGE};
+use engine_scene::texture::SpriteAtlas;
 
 pub fn ray_box(o: [f32; 3], d: [f32; 3], mn: [f32; 3], mx: [f32; 3]) -> Option<(f32, usize, f32)> {
     let mut tmin = f32::NEG_INFINITY;
@@ -62,6 +63,87 @@ pub struct EntHit {
     pub part: u8,
     pub kind: EntityKind,
     pub ndotl: f32,
+}
+
+#[derive(Clone)]
+pub struct SpriteView {
+    instance: EntityInstance,
+    center: [f32; 3],
+    toward_camera: [f32; 2],
+    right: [f32; 2],
+    camera_angle: f32,
+    plane_distance: f32,
+    width: f32,
+    height: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SpriteHit {
+    pub t: f32,
+    pub u: f32,
+    pub v: f32,
+    pub view: usize,
+    pub state: usize,
+    pub frame: usize,
+}
+
+impl SpriteView {
+    pub fn new(instance: EntityInstance, eye: Vect) -> Self {
+        let dx = eye.x - instance.pos.x;
+        let dy = eye.y - instance.pos.y;
+        let length = (dx * dx + dy * dy).sqrt().max(1e-6);
+        let toward_camera = [dx / length, dy / length];
+        let right = [-toward_camera[1], toward_camera[0]];
+        Self {
+            instance,
+            center: [instance.pos.x, instance.pos.y, instance.pos.z + 1.1],
+            toward_camera,
+            right,
+            camera_angle: dy.atan2(dx) - instance.yaw,
+            plane_distance: length,
+            width: 0.92,
+            height: 2.2,
+        }
+    }
+
+    pub fn hit(&self, direction: Vect, atlas: &SpriteAtlas) -> Option<SpriteHit> {
+        let denom = direction.x * self.toward_camera[0] + direction.y * self.toward_camera[1];
+        if denom.abs() < 1e-6 {
+            return None;
+        }
+        let t = -self.plane_distance / denom;
+        if !t.is_finite() || t <= 0.0 {
+            return None;
+        }
+        let point = [
+            self.instance.pos.x + direction.x * t,
+            self.instance.pos.y + direction.y * t,
+            self.instance.pos.z + direction.z * t,
+        ];
+        let rel = [point[0] - self.center[0], point[1] - self.center[1]];
+        let u = 0.5 + (rel[0] * self.right[0] + rel[1] * self.right[1]) / self.width;
+        let v = (point[2] - self.instance.pos.z) / self.height;
+        if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
+            return None;
+        }
+        let wrapped = self.camera_angle.rem_euclid(std::f32::consts::TAU);
+        let view =
+            (wrapped / std::f32::consts::TAU * atlas.views as f32).floor() as usize % atlas.views;
+        let state = self.instance.params[1]
+            .round()
+            .clamp(0.0, (atlas.states - 1) as f32) as usize;
+        let frame_phase =
+            self.instance.params[0].abs() / std::f32::consts::TAU * atlas.frames_per_state as f32;
+        let frame = frame_phase.floor() as usize % atlas.frames_per_state;
+        Some(SpriteHit {
+            t,
+            u,
+            v,
+            view,
+            state,
+            frame,
+        })
+    }
 }
 
 impl<'a> EntView<'a> {
@@ -140,5 +222,67 @@ impl<'a> EntView<'a> {
             kind: self.instance.kind,
             ndotl: local_direction[axis].abs(),
         })
+    }
+}
+
+#[cfg(test)]
+mod sprite_tests {
+    use super::SpriteView;
+    use engine_core::{math::Vect, voxel::VoxelWorld};
+    use engine_scene::{
+        entities::{EntityInstance, WARDEN},
+        texture::SpriteAtlas,
+    };
+
+    fn atlas() -> SpriteAtlas {
+        SpriteAtlas {
+            width: 16,
+            height: 40,
+            cell_width: 1,
+            cell_height: 1,
+            views: 16,
+            states: 5,
+            frames_per_state: 8,
+            albedo: vec![[255; 4]; 640],
+            normal: vec![[128, 128, 255, 255]; 640],
+            emissive: vec![0; 640],
+        }
+    }
+
+    #[test]
+    fn sprite_selects_relative_view_animation_state_and_frame() {
+        let instance = EntityInstance {
+            kind: WARDEN,
+            pos: Vect::new(4.5, 0.5, 0.0),
+            yaw: 0.0,
+            params: [std::f32::consts::TAU * 0.30, 3.0, 0.0, 0.0],
+        };
+        let view = SpriteView::new(instance, Vect::new(0.5, 0.5, 1.0));
+        let hit = view.hit(Vect::new(1.0, 0.0, 0.0), &atlas()).unwrap();
+        assert_eq!((hit.view, hit.state, hit.frame), (8, 3, 2));
+    }
+
+    #[test]
+    fn wall_dda_hit_occludes_sprite_behind_it() {
+        let mut blocks = vec![0; 6 * 2 * 3];
+        let idx = 14;
+        blocks[idx] = 1;
+        let world = VoxelWorld::new(6, 2, 3, blocks);
+        let eye = Vect::new(0.5, 0.5, 1.1);
+        let dir = Vect::new(1.0, 0.0, 0.0);
+        let wall = world.cast(eye, dir, 10.0, 0).unwrap();
+        let instance = EntityInstance {
+            kind: WARDEN,
+            pos: Vect::new(4.5, 0.5, 0.0),
+            yaw: 0.0,
+            params: [0.0; 4],
+        };
+        let sprite = SpriteView::new(instance, eye).hit(dir, &atlas()).unwrap();
+        assert!(
+            wall.dist < sprite.t,
+            "wall at {} must occlude sprite at {}",
+            wall.dist,
+            sprite.t
+        );
     }
 }

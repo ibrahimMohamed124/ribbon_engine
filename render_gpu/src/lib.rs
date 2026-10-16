@@ -10,13 +10,14 @@ use engine_scene::entities::PAGE;
 use engine_scene::material::{BaseAlbedoRule, MaterialTable, TextureKind};
 use engine_scene::scene::Scene;
 use engine_scene::style::LEVEL_COUNT;
-use engine_scene::texture::Texture;
+use engine_scene::texture::{SpriteAtlas, Texture};
 use engine_scene::RENDER_DIST;
 use winit::window::Window;
 
 const PRESENT_SHADER: &str = include_str!("../shaders/present.wgsl");
 const QUAD_SHADER: &str = include_str!("../shaders/ui.wgsl");
 const WORLD_SHADER: &str = include_str!("../shaders/world.wgsl");
+const PBR_WORD_CAPACITY: u64 = 4 * 4 * 87_381;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -48,6 +49,7 @@ struct WorldUniform {
     lighting: [f32; 4],
     style: [f32; 4],
     frame: [u32; 4],
+    sprite: [u32; 4],
 }
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -91,6 +93,7 @@ struct GpuWorldResources {
     packed: Vec<u32>,
     cached_blocks: Vec<u8>,
     pbr_key: Option<(usize, usize)>,
+    sprite_key: Option<(usize, usize)>,
 }
 
 struct RenderTarget {
@@ -741,8 +744,8 @@ fn create_world_resources(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuWorl
     );
     let pbr_texels = make_buffer(
         device,
-        "PBR texture mip data",
-        4 * 4 * 87_381 * 4,
+        "PBR mip data and baked monster sprites",
+        (PBR_WORD_CAPACITY + (768 * 3840 * 3) as u64) * 4,
         wgpu::BufferUsages::STORAGE,
     );
     let (bt, bv) = make_texture(device, queue, "bricks", &Texture::bricks(64, 32, 17));
@@ -782,6 +785,7 @@ fn create_world_resources(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuWorl
         packed: Vec::new(),
         cached_blocks: Vec::new(),
         pbr_key: None,
+        sprite_key: None,
     }
 }
 fn make_buffer(
@@ -910,6 +914,18 @@ fn update_world(
         g.voxels = make_buffer(d, "packed voxels", need, wgpu::BufferUsages::STORAGE);
         changed = true;
     }
+    if let Some(atlas) = mt.sprite_atlas.filter(|atlas| atlas.is_valid()) {
+        let required = (atlas.width * atlas.height * 3 * 4) as u64;
+        if g.pbr_texels.size() < PBR_WORD_CAPACITY * 4 + required {
+            g.pbr_texels = make_buffer(
+                d,
+                "PBR mip data and baked monster sprites",
+                PBR_WORD_CAPACITY * 4 + required,
+                wgpu::BufferUsages::STORAGE,
+            );
+            changed = true;
+        }
+    }
     if g.world_key != Some(key) || g.cached_blocks.as_slice() != s.world.blocks() {
         g.packed = pack_voxels(s.world.blocks());
         q.write_buffer(&g.voxels, 0, bytemuck::cast_slice(&g.packed));
@@ -990,6 +1006,21 @@ fn update_world(
         q.write_buffer(&g.pbr_texels, 0, bytemuck::cast_slice(&packed));
         g.pbr_key = Some(pbr_key);
     }
+    let sprite_key = mt
+        .sprite_atlas
+        .filter(|atlas| atlas.is_valid())
+        .map(|atlas| (atlas.albedo.as_ptr() as usize, atlas.albedo.len()));
+    if g.sprite_key != sprite_key {
+        if let Some(atlas) = mt.sprite_atlas.filter(|atlas| atlas.is_valid()) {
+            let packed = pack_sprite_atlas(atlas);
+            q.write_buffer(
+                &g.pbr_texels,
+                PBR_WORD_CAPACITY * 4,
+                bytemuck::cast_slice(&packed),
+            );
+        }
+        g.sprite_key = sprite_key;
+    }
     let sty = s.lighting.style;
     let lut = sty.level_lut();
     let tones: Vec<f32> = (0..1024)
@@ -1041,7 +1072,7 @@ fn update_world(
             sty.ao_strength,
             sty.texture_strength,
             f32::from(sty.pbr_enabled),
-            0.,
+            f32::from(sty.realistic_assets),
         ],
         frame: [
             s.lighting.frame,
@@ -1049,6 +1080,17 @@ fn update_world(
             size.1,
             s.empty_voxel as u32,
         ],
+        sprite: mt
+            .sprite_atlas
+            .filter(|atlas| atlas.is_valid())
+            .map_or([0; 4], |atlas| {
+                [
+                    atlas.width as u32,
+                    atlas.height as u32,
+                    atlas.cell_width as u32,
+                    atlas.cell_height as u32,
+                ]
+            }),
     };
     q.write_buffer(&g.uniform, 0, bytemuck::bytes_of(&un));
     Ok(())
@@ -1095,6 +1137,19 @@ fn pack_pbr_textures(materials: &MaterialTable) -> Vec<u32> {
             }
         }
     }
+    packed
+}
+
+fn pack_sprite_atlas(atlas: &SpriteAtlas) -> Vec<u32> {
+    let mut packed = Vec::with_capacity(atlas.width * atlas.height * 3);
+    packed.extend(atlas.albedo.iter().map(|pixel| u32::from_le_bytes(*pixel)));
+    packed.extend(atlas.normal.iter().map(|pixel| u32::from_le_bytes(*pixel)));
+    packed.extend(
+        atlas
+            .emissive
+            .iter()
+            .map(|value| u32::from(*value) | 0xff00_0000),
+    );
     packed
 }
 

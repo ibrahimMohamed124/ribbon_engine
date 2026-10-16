@@ -1,4 +1,4 @@
-use crate::texture::{PbrTextureSet, Texture, TextureId};
+use crate::texture::{PbrTextureSet, SpriteAtlas, Texture, TextureId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BaseAlbedoRule {
@@ -31,6 +31,7 @@ pub struct Material {
 pub struct MaterialTable {
     pub materials: &'static [Material],
     pub pbr_textures: &'static [PbrTextureSet],
+    pub sprite_atlas: Option<&'static SpriteAtlas>,
 }
 
 impl MaterialTable {
@@ -38,6 +39,7 @@ impl MaterialTable {
         Self {
             materials,
             pbr_textures: &[],
+            sprite_atlas: None,
         }
     }
 
@@ -48,6 +50,19 @@ impl MaterialTable {
         Self {
             materials,
             pbr_textures,
+            sprite_atlas: None,
+        }
+    }
+
+    pub const fn with_pbr_and_sprite(
+        materials: &'static [Material],
+        pbr_textures: &'static [PbrTextureSet],
+        sprite_atlas: Option<&'static SpriteAtlas>,
+    ) -> Self {
+        Self {
+            materials,
+            pbr_textures,
+            sprite_atlas,
         }
     }
 

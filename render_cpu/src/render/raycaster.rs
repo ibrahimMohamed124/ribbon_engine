@@ -2,7 +2,7 @@
 
 use rayon::prelude::*;
 
-use super::entities::{EntHit, EntView};
+use super::entities::{EntHit, EntView, SpriteView};
 use super::lighting::{
     cone_factor, light_with_style, shade_surface, SurfaceContext, SurfaceShader,
 };
@@ -18,6 +18,7 @@ const EMPTY_MATERIALS: MaterialTable = MaterialTable::new(&[]);
 fn shade_pixel<S: SurfaceShader + Sync>(
     f: &Scene,
     entities: &[EntView<'_>],
+    sprites: &[SpriteView],
     shader: &S,
     materials: &MaterialTable,
     fwd: Vect,
@@ -26,6 +27,60 @@ fn shade_pixel<S: SurfaceShader + Sync>(
     let cone = cone_factor(dir.dot(fwd));
     let world_hit = f.world.cast(f.camera.eye, dir, RENDER_DIST, f.empty_voxel);
     let world_distance = world_hit.map_or(f32::INFINITY, |hit| hit.dist);
+
+    if f.lighting.style.realistic_assets {
+        if let Some(atlas) = materials.sprite_atlas.filter(|atlas| atlas.is_valid()) {
+            let mut sprite_hit = None;
+            for sprite in sprites {
+                if let Some(hit) = sprite.hit(dir, atlas) {
+                    if hit.t < world_distance
+                        && sprite_hit
+                            .is_none_or(|current: super::entities::SpriteHit| hit.t < current.t)
+                    {
+                        sprite_hit = Some(hit);
+                    }
+                }
+            }
+            if let Some(hit) = sprite_hit {
+                if let Some((albedo, normal, emissive)) =
+                    // The pose atlas is stored top-down while sprite hit V is
+                    // measured upward from the entity's feet.
+                    atlas.texel(hit.view, hit.state, hit.frame, hit.u, 1.0 - hit.v)
+                {
+                    if albedo[3] >= 128 {
+                        let linear = |v: u8| {
+                            let x = v as f32 / 255.0;
+                            if x <= 0.04045 {
+                                x / 12.92
+                            } else {
+                                ((x + 0.055) / 1.055).powf(2.4)
+                            }
+                        };
+                        let base = 0.2126 * linear(albedo[0])
+                            + 0.7152 * linear(albedo[1])
+                            + 0.0722 * linear(albedo[2]);
+                        let n = Vect::new(
+                            normal[0] as f32 / 127.5 - 1.0,
+                            normal[1] as f32 / 127.5 - 1.0,
+                            normal[2] as f32 / 127.5 - 1.0,
+                        )
+                        .normalize();
+                        let ndotl = n.dot(dir.scale(-1.0)).max(0.0);
+                        let cone = cone_factor(dir.dot(fwd));
+                        let lit = base
+                            * light_with_style(
+                                f.lighting.illumination,
+                                hit.t,
+                                ndotl,
+                                cone,
+                                &f.lighting.style,
+                            );
+                        return (lit + emissive as f32 / 255.0 * 0.85).clamp(0.0, 2.0);
+                    }
+                }
+            }
+        }
+    }
 
     let mut best: Option<EntHit> = None;
     for entity in entities {
@@ -82,8 +137,24 @@ pub fn render_with_materials<S: SurfaceShader + Sync>(
     let entities: Vec<_> = frame
         .entities
         .iter()
+        .filter(|entity| {
+            !(frame.lighting.style.realistic_assets
+                && materials.sprite_atlas.is_some()
+                && entity.kind == engine_scene::entities::WARDEN)
+        })
         .filter_map(|entity| EntView::new(*entity, frame.camera.eye, frame.entity_registry))
         .collect();
+    let sprites: Vec<_> =
+        if frame.lighting.style.realistic_assets && materials.sprite_atlas.is_some() {
+            frame
+                .entities
+                .iter()
+                .filter(|entity| entity.kind == engine_scene::entities::WARDEN)
+                .map(|entity| SpriteView::new(*entity, frame.camera.eye))
+                .collect()
+        } else {
+            Vec::new()
+        };
     let (width, height) = (fb.width, fb.height);
     let view = frame.camera.view;
     let forward = forward_vec(view);
@@ -105,7 +176,9 @@ pub fn render_with_materials<S: SurfaceShader + Sync>(
                 let u = ((x as f32 + 0.5) / width as f32) * 2.0 - 1.0;
                 let direction =
                     (forward + right.scale(u * tan_h) + up.scale(v * tan_v)).normalize();
-                let gray = shade_pixel(frame, &entities, shader, materials, forward, direction);
+                let gray = shade_pixel(
+                    frame, &entities, &sprites, shader, materials, forward, direction,
+                );
                 *pixel = finish_pixel_styled_with_lut(
                     gray,
                     PixelSample {
