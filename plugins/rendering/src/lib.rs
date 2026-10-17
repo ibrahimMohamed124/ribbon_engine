@@ -4,6 +4,8 @@
 
 #[cfg(feature = "cpu")]
 pub mod cpu;
+#[cfg(feature = "cpu")]
+pub mod ecs;
 pub mod types;
 
 #[cfg(feature = "cpu")]

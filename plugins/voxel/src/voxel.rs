@@ -94,6 +94,9 @@ pub struct VoxelWorld {
     blocks: Vec<u8>,
 }
 
+/// Shared collision/raycast grid resource with its empty-block identifier.
+pub struct VoxelWorldRes(pub VoxelWorld, pub u8);
+
 impl VoxelWorld {
     pub fn new(width: usize, height: usize, depth: usize, blocks: Vec<u8>) -> Self {
         assert_eq!(blocks.len(), width * height * depth);
