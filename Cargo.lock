@@ -1828,10 +1828,24 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 [[package]]
 name = "plugin_animation"
 version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_ecs",
+ "engine_math",
+ "engine_plugins",
+]
 
 [[package]]
 name = "plugin_audio"
 version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_ecs",
+ "engine_events",
+ "engine_math",
+ "engine_plugins",
+ "rodio",
+]
 
 [[package]]
 name = "plugin_editor_tools"
@@ -1841,7 +1855,11 @@ version = "0.1.0"
 name = "plugin_physics"
 version = "0.1.0"
 dependencies = [
+ "engine_app",
+ "engine_ecs",
  "engine_math",
+ "engine_plugins",
+ "engine_scene",
  "plugin_voxel",
 ]
 
@@ -1849,8 +1867,15 @@ dependencies = [
 name = "plugin_rendering"
 version = "0.1.0"
 dependencies = [
+ "engine_app",
+ "engine_assets",
+ "engine_ecs",
+ "engine_events",
  "engine_math",
+ "engine_platform",
+ "engine_plugins",
  "engine_render",
+ "engine_scene",
  "plugin_voxel",
  "rayon",
 ]
@@ -2639,6 +2664,7 @@ dependencies = [
  "engine_app",
  "engine_math",
  "engine_platform",
+ "plugin_audio",
  "plugin_physics",
  "plugin_voxel",
 ]
@@ -2661,7 +2687,7 @@ version = "0.1.0"
 dependencies = [
  "engine_platform",
  "engine_render",
- "rodio",
+ "plugin_audio",
  "softbuffer",
  "voxelworks-api",
  "voxelworks-core",

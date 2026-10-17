@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::time::Instant;
 
+use crate::bank::{AmbienceId, SoundBank, SoundId};
 use crate::mixer::AudioBackend;
 use rodio::source::Source;
-use voxelworks_core::audio::{AmbienceId, SoundBank, SoundId};
 
 /// Fully decoded sound samples, independent of any audio output device.
 #[derive(Clone)]
@@ -180,6 +180,16 @@ impl AudioBackend for RodioBackend {
             }
             Err(error) => eprintln!("could not decode {ambience:?} audio: {error}"),
         }
+    }
+}
+
+impl crate::AudioSink for RodioBackend {
+    fn play(&mut self, sound: SoundId, gain: f32, pan: f32) {
+        <Self as AudioBackend>::play_spatial(self, sound, gain, pan);
+    }
+
+    fn set_ambience(&mut self, ambience: Option<AmbienceId>, gain: f32) {
+        <Self as AudioBackend>::set_ambience(self, ambience, gain);
     }
 }
 

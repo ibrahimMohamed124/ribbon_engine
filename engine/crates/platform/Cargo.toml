@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = ["gpu", "audio"]
 gpu = ["dep:voxelworks-render-gpu"]
-audio = ["dep:rodio"]
+audio = ["plugin_audio/audio"]
 
 [dependencies]
 voxelworks-core = { path = "../core" }
@@ -17,7 +17,7 @@ engine_render = { path = "../../../crates/engine_render" }
 winit = "0.30.13"
 softbuffer = "0.4.6"
 voxelworks-render-gpu = { path = "../render-gpu", optional = true }
-rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"], optional = true }
+plugin_audio = { path = "../../../plugins/audio" }
 
 [dev-dependencies]
 voxelworks-render-cpu = { path = "../render-cpu" }

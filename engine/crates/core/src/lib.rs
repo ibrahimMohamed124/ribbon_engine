@@ -1,6 +1,9 @@
 //! Platform-independent game and utility primitives.
 
-pub mod audio;
+/// Temporary audio descriptor shim; removed with the legacy core crate.
+pub mod audio {
+    pub use plugin_audio::{AmbienceAsset, AmbienceId, SoundAsset, SoundBank, SoundId};
+}
 pub use engine_app::time;
 pub use engine_platform::input;
 

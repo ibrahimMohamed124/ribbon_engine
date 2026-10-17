@@ -2,3 +2,15 @@
 name = "plugin_audio"
 version = "0.1.0"
 edition = "2021"
+
+[features]
+default = ["audio"]
+audio = ["dep:rodio"]
+
+[dependencies]
+engine_app = { path = "../../crates/engine_app" }
+engine_plugins = { path = "../../crates/engine_plugins" }
+engine_ecs = { path = "../../crates/engine_ecs" }
+engine_events = { path = "../../crates/engine_events" }
+engine_math = { path = "../../crates/engine_math" }
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"], optional = true }

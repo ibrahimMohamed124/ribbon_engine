@@ -1,6 +1,6 @@
 //! Platform audio mixing and backend interface.
 
-use voxelworks_core::audio::{AmbienceId, SoundId};
+use crate::bank::{AmbienceId, SoundId};
 
 pub trait AudioBackend {
     fn play(&mut self, sound: SoundId, volume: f32);
@@ -109,9 +109,9 @@ impl Audio {
 #[cfg(test)]
 mod tests {
     use super::{AmbienceId, Audio, AudioBackend, SoundId};
+    use crate::bank::{AmbienceAsset, SoundAsset, SoundBank};
     use std::cell::RefCell;
     use std::rc::Rc;
-    use voxelworks_core::audio::{AmbienceAsset, SoundAsset, SoundBank};
 
     #[derive(Default)]
     struct Calls {
