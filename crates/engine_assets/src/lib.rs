@@ -43,7 +43,8 @@ pub struct LoadError {
 }
 
 impl LoadError {
-    fn new(kind: LoadErrorKind, path: &str, message: impl Into<String>) -> Self {
+    /// Create a loader error associated with the path being decoded.
+    pub fn new(kind: LoadErrorKind, path: &str, message: impl Into<String>) -> Self {
         Self {
             kind,
             path: path.to_owned(),
