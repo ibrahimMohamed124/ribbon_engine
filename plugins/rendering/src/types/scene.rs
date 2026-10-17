@@ -21,7 +21,7 @@ pub struct LightingParams {
 }
 
 #[derive(Clone)]
-pub struct Scene<'a> {
+pub struct RenderScene<'a> {
     pub world: &'a VoxelWorld,
     pub empty_voxel: u8,
     pub camera: Camera,
@@ -30,7 +30,10 @@ pub struct Scene<'a> {
     pub entity_registry: &'a EntityRegistry,
 }
 
-impl Scene<'_> {
+/// Compatibility name retained while the legacy scene crate is in use.
+pub type Scene<'a> = RenderScene<'a>;
+
+impl RenderScene<'_> {
     /// Validate backend-shared entity and box-buffer limits before rendering.
     pub fn validate_entity_limits(&self) -> Result<(), String> {
         if self.entities.len() > MAX_ENTITIES {
@@ -91,8 +94,8 @@ mod tests {
         world: &'a VoxelWorld,
         entities: Vec<EntityInstance>,
         registry: &'a EntityRegistry,
-    ) -> Scene<'a> {
-        Scene {
+    ) -> RenderScene<'a> {
+        RenderScene {
             world,
             empty_voxel: 0,
             camera: Camera {

@@ -9,8 +9,8 @@ pub use cpu::{canvas, render, renderer};
 pub use types::{entities, material, scene, style, texture};
 pub use types::{
     BaseAlbedoRule, Camera, LightingParams, Material, MaterialTable, Palette, PbrTextureSet,
-    RenderStyle, RgbaMipChain, RgbaMipLevel, Scene, TextureAtlas, TextureColorSpace, TextureId,
-    TextureKind, Tonemap, EMPTY_MATERIAL_TABLE, LEVEL_COUNT, MATERIAL_ID_SPACE,
+    RenderScene, RenderStyle, RgbaMipChain, RgbaMipLevel, Scene, TextureAtlas, TextureColorSpace,
+    TextureId, TextureKind, Tonemap, EMPTY_MATERIAL_TABLE, LEVEL_COUNT, MATERIAL_ID_SPACE,
     MAX_PBR_MAP_DIMENSION, MAX_PBR_TEXTURE_SETS, PBR_MAPS_PER_SET, PBR_MIP_LEVEL_COUNT,
     PBR_MIP_TEXEL_COUNT, RENDER_DIST,
 };

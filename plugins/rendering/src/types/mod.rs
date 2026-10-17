@@ -9,7 +9,7 @@ pub mod texture;
 pub use material::{
     BaseAlbedoRule, Material, MaterialTable, TextureAtlas, TextureKind, MATERIAL_ID_SPACE,
 };
-pub use scene::{Camera, LightingParams, Scene};
+pub use scene::{Camera, LightingParams, RenderScene, Scene};
 pub use style::{Palette, RenderStyle, Tonemap, LEVEL_COUNT};
 pub use texture::{
     PbrTextureSet, RgbaMipChain, RgbaMipLevel, TextureColorSpace, TextureId, MAX_PBR_MAP_DIMENSION,
