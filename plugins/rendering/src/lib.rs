@@ -10,6 +10,7 @@ pub mod types;
 
 #[cfg(feature = "cpu")]
 pub use cpu::{canvas, render, renderer};
+pub use plugin_voxel::VoxelWorldRes;
 pub use types::{entities, material, scene, style, texture};
 
 #[cfg(feature = "gpu")]

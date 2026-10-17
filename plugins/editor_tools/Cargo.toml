@@ -2,3 +2,14 @@
 name = "plugin_editor_tools"
 version = "0.1.0"
 edition = "2021"
+
+[dependencies]
+engine_editor = { path = "../../crates/engine_editor" }
+engine_commands = { path = "../../crates/engine_commands" }
+engine_reflect = { path = "../../crates/engine_reflect" }
+engine_scene = { path = "../../crates/engine_scene" }
+engine_ecs = { path = "../../crates/engine_ecs" }
+engine_app = { path = "../../crates/engine_app" }
+engine_plugins = { path = "../../crates/engine_plugins" }
+engine_render = { path = "../../crates/engine_render" }
+engine_math = { path = "../../crates/engine_math" }

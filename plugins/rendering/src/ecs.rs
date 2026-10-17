@@ -162,6 +162,29 @@ pub fn render_frame_system<S: SurfaceShader + Send + Sync + 'static>(world: &mut
     };
     let _ = backend;
     world.resource_scope::<CpuBackend<S>, _>(|world, backend| {
+        let camera = world
+            .query::<(&Camera, &ActiveCamera, &GlobalTransform)>()
+            .iter()
+            .next()
+            .map(|(entity, (camera, _, transform))| (entity, *camera, *transform));
+        let Some((_camera_entity, camera, pose)) = camera else {
+            return;
+        };
+        let entities: Vec<_> = world
+            .query::<(&RenderEntity, &GlobalTransform)>()
+            .iter()
+            .map(|(_, (render, transform))| EntityInstance {
+                kind: render.kind,
+                pos: transform.translation,
+                yaw: transform.rotation.phi,
+                params: render.params,
+            })
+            .collect();
+        let mut ui_layer = world.remove_resource::<DrawList>().unwrap_or_else(|| {
+            DrawList::new(backend.framebuffer.width, backend.framebuffer.height)
+        });
+        ui_layer.width = backend.framebuffer.width;
+        ui_layer.height = backend.framebuffer.height;
         let Some(voxels) = world.try_resource::<VoxelWorldRes>() else {
             return;
         };
@@ -184,24 +207,6 @@ pub fn render_frame_system<S: SurfaceShader + Send + Sync + 'static>(world: &mut
         lighting.style = world
             .try_resource::<RenderStyleRes>()
             .map_or_else(RenderStyle::default, |style| style.0);
-        let camera = world
-            .query::<(&Camera, &ActiveCamera, &GlobalTransform)>()
-            .iter()
-            .next()
-            .map(|(entity, (camera, _, transform))| (entity, *camera, *transform));
-        let Some((_camera_entity, camera, pose)) = camera else {
-            return;
-        };
-        let entities: Vec<_> = world
-            .query::<(&RenderEntity, &GlobalTransform)>()
-            .iter()
-            .map(|(_, (render, transform))| EntityInstance {
-                kind: render.kind,
-                pos: transform.translation,
-                yaw: transform.rotation.phi,
-                params: render.params,
-            })
-            .collect();
         let scene = RenderScene {
             world: &voxels.0,
             empty_voxel: voxels.1,
@@ -229,7 +234,7 @@ pub fn render_frame_system<S: SurfaceShader + Send + Sync + 'static>(world: &mut
             scene: Some(scene),
             world_layer: DrawList::new(width, height),
             brightness: 1.0,
-            ui_layer: DrawList::new(width, height),
+            ui_layer,
         };
         backend.renderer.render_frame(&plan, materials.0);
         backend.renderer.present(&mut backend.framebuffer);
