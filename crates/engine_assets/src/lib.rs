@@ -12,7 +12,9 @@ use std::io;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#[cfg(any(feature = "hot_reload", debug_assertions))]
+use std::time::Instant;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Typed error kind for asset lookup, source access, routing, and decoding failures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,6 +298,7 @@ trait ErasedLoader: Send + Sync {
         bytes: &[u8],
         context: &mut LoadContext,
     ) -> Result<Box<dyn Any + Send + Sync>, LoadError>;
+    #[cfg(any(feature = "hot_reload", debug_assertions))]
     fn store(
         &self,
         assets: &mut HashMap<TypeId, Box<dyn Any + Send + Sync>>,
@@ -322,6 +325,7 @@ impl<L: AssetLoader> ErasedLoader for LoaderAdapter<L> {
             .map(|asset| Box::new(asset) as Box<dyn Any + Send + Sync>)
     }
 
+    #[cfg(any(feature = "hot_reload", debug_assertions))]
     fn store(
         &self,
         assets: &mut HashMap<TypeId, Box<dyn Any + Send + Sync>>,
@@ -361,6 +365,7 @@ struct PathEntry {
     generation: u32,
     source_index: Option<usize>,
     modified: Option<SystemTime>,
+    #[cfg(any(feature = "hot_reload", debug_assertions))]
     extension: String,
     state: LoadState,
 }
@@ -379,6 +384,7 @@ pub struct AssetServer {
     assets: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     paths: HashMap<(TypeId, String), PathEntry>,
     next_id: u64,
+    #[cfg(any(feature = "hot_reload", debug_assertions))]
     last_poll: Instant,
     poll_interval: Duration,
 }
@@ -391,6 +397,7 @@ impl Default for AssetServer {
             assets: HashMap::new(),
             paths: HashMap::new(),
             next_id: 1,
+            #[cfg(any(feature = "hot_reload", debug_assertions))]
             last_poll: Instant::now(),
             poll_interval: Duration::from_millis(500),
         };
@@ -465,6 +472,7 @@ impl AssetServer {
                 generation: 1,
                 source_index: None,
                 modified: None,
+                #[cfg(any(feature = "hot_reload", debug_assertions))]
                 extension: extension.clone(),
                 state: LoadState::Loading,
             },
