@@ -80,7 +80,7 @@ external = []
 [allowed.legacy]
 
 [allowed.legacy."voxelworks-core"]
-workspace = ["engine_math", "plugin_physics", "plugin_voxel"]
+workspace = ["engine_app", "engine_math", "plugin_physics", "plugin_voxel"]
 external = []
 
 [allowed.legacy."voxelworks-scene"]

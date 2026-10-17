@@ -2,7 +2,7 @@
 
 pub mod audio;
 pub mod input;
-pub mod time;
+pub use engine_app::time;
 
 // Temporary compatibility shims. Remove in phase 9.
 pub use engine_math as math;

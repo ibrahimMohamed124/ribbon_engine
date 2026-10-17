@@ -1,4 +1,5 @@
 # engine_app
-Purpose: Application lifecycle, time, and runners.
-Allowed dependencies: see `tools/allowed_deps.toml`.
-Does not yet implement runtime behavior; code moves in its assigned phase.
+Provides the application lifecycle, deterministic headless runner, time resources, and stage driving.
+It owns the ECS world and schedule but has no window or renderer implementation.
+Allowed workspace dependencies: `engine_ecs`, `engine_events`, `engine_schedule`, and `engine_math`.
+It does not register platform or rendering plugins itself.

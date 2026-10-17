@@ -1,4 +1,5 @@
 # engine_plugins
-Purpose: Plugin registration and dependency checks.
-Allowed dependencies: see `tools/allowed_deps.toml`.
-Does not yet implement runtime behavior; code moves in its assigned phase.
+Provides plugins, ordered plugin groups, dependency checks, and deferred finish hooks.
+Plugins configure an `engine_app::App` synchronously when added.
+Allowed workspace dependency: `engine_app`.
+It does not provide dynamic loading or parallel plugin initialization.

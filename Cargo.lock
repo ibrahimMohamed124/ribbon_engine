@@ -570,6 +570,12 @@ dependencies = [
 [[package]]
 name = "engine_app"
 version = "0.1.0"
+dependencies = [
+ "engine_ecs",
+ "engine_events",
+ "engine_math",
+ "engine_schedule",
+]
 
 [[package]]
 name = "engine_assets"
@@ -608,6 +614,9 @@ version = "0.1.0"
 [[package]]
 name = "engine_plugins"
 version = "0.1.0"
+dependencies = [
+ "engine_app",
+]
 
 [[package]]
 name = "engine_reflect"
@@ -2566,6 +2575,7 @@ dependencies = [
 name = "voxelworks-core"
 version = "0.1.0"
 dependencies = [
+ "engine_app",
  "engine_math",
  "plugin_physics",
  "plugin_voxel",
