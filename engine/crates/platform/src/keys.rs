@@ -1,3 +1,2 @@
-//! Physical-key mapping retained under the previous module name for callers.
-
-pub use crate::keyboard::from_winit;
+//! Temporary compatibility re-exports for physical key mappings.
+pub use engine_platform::keys::*;

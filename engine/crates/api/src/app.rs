@@ -1,5 +1,6 @@
 //! Minimal application contract and per-frame input/request context.
 
+pub use engine_platform::config::{MouseButtons, MouseInput, WindowConfig};
 use voxelworks_core::input::{Key, KeyState};
 use voxelworks_scene::material::MaterialTable;
 use voxelworks_scene::scene::Scene;
@@ -13,30 +14,11 @@ pub enum Flow {
     Quit,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct MouseButtons {
-    pub left: bool,
-    pub right: bool,
-    pub middle: bool,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct WindowRequest {
     pub width: usize,
     pub height: usize,
     pub scale: u32,
-}
-
-#[derive(Clone, Debug)]
-pub struct WindowConfig {
-    pub title: String,
-    pub width: usize,
-    pub height: usize,
-    pub scale: u32,
-    /// Fixed simulation frequency in Hertz.
-    pub fixed_hz: u32,
-    /// Maximum simulation steps to process in one rendered frame.
-    pub max_steps: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -47,14 +29,6 @@ pub struct FrameInfo {
     pub fixed_dt: f32,
     pub fixed_steps: u32,
     pub alpha: f32,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct MouseInput {
-    pub delta: (f32, f32),
-    pub position: Option<(f32, f32)>,
-    pub scroll: f32,
-    pub buttons: MouseButtons,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -4,11 +4,12 @@
 
 pub mod time;
 
-use engine_ecs::World;
 use engine_events::{EventCursor, Events, WorldEventsExt};
-use engine_schedule::{Schedule, ScheduleError, Stage, SystemConfig};
+use engine_schedule::Schedule;
 use std::time::Duration;
 
+pub use engine_ecs::World;
+pub use engine_schedule::{ScheduleError, Stage, SystemConfig};
 pub use time::{FixedTime, LogBuffer, LogLevel, Time};
 
 /// Event emitted to ask the active runner to stop.

@@ -1,4 +1,5 @@
 # engine_platform
-Purpose: Windowing, input, timing, and platform events.
-Allowed dependencies: see `tools/allowed_deps.toml`.
-Does not yet implement runtime behavior; code moves in its assigned phase.
+Provides winit window events, keyboard and mouse input, cursor control, timing, and desktop runners.
+It also supports deterministic scripted input through `VirtualInput`.
+Allowed workspace dependencies: `engine_app`, `engine_plugins`, `engine_events`, and `engine_math`.
+It does not own rendering or audio playback.

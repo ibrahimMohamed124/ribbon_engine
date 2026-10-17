@@ -610,6 +610,14 @@ version = "0.1.0"
 [[package]]
 name = "engine_platform"
 version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_events",
+ "engine_math",
+ "engine_plugins",
+ "softbuffer",
+ "winit",
+]
 
 [[package]]
 name = "engine_plugins"
@@ -2567,6 +2575,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voxelworks-api"
 version = "0.1.0"
 dependencies = [
+ "engine_platform",
  "voxelworks-core",
  "voxelworks-scene",
 ]
@@ -2577,6 +2586,7 @@ version = "0.1.0"
 dependencies = [
  "engine_app",
  "engine_math",
+ "engine_platform",
  "plugin_physics",
  "plugin_voxel",
 ]
@@ -2597,6 +2607,7 @@ dependencies = [
 name = "voxelworks-platform"
 version = "0.1.0"
 dependencies = [
+ "engine_platform",
  "rodio",
  "softbuffer",
  "voxelworks-api",

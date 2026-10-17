@@ -6,5 +6,6 @@ edition = "2021"
 [dependencies]
 engine_math = { path = "../../../crates/engine_math" }
 engine_app = { path = "../../../crates/engine_app" }
+engine_platform = { path = "../../../crates/engine_platform" }
 plugin_physics = { path = "../../../plugins/physics" }
 plugin_voxel = { path = "../../../plugins/voxel" }
