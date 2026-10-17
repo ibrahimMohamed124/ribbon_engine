@@ -6,7 +6,8 @@ use voxelworks_scene::material::MaterialTable;
 use voxelworks_scene::scene::Scene;
 use voxelworks_scene::EMPTY_MATERIAL_TABLE;
 
-use crate::gfx::DrawList;
+/// Compatibility alias for the legacy scene-specific frame plan.
+pub type FramePlan<'a> = engine_render::frame::FramePlan<Scene<'a>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Flow {
@@ -103,14 +104,6 @@ impl<'a> Ctx<'a> {
     pub fn release_cursor(&mut self) {
         self.requests.cursor = CursorRequest::Release;
     }
-}
-
-/// Ordered inputs for rendering one complete frame.
-pub struct FramePlan<'a> {
-    pub scene: Option<Scene<'a>>,
-    pub world_layer: DrawList,
-    pub brightness: f32,
-    pub ui_layer: DrawList,
 }
 
 /// Application boundary consumed by a platform runner and renderer backend.

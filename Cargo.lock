@@ -633,6 +633,14 @@ version = "0.1.0"
 [[package]]
 name = "engine_render"
 version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_assets",
+ "engine_math",
+ "engine_platform",
+ "engine_plugins",
+ "wgpu",
+]
 
 [[package]]
 name = "engine_scene"
@@ -2576,6 +2584,7 @@ name = "voxelworks-api"
 version = "0.1.0"
 dependencies = [
  "engine_platform",
+ "engine_render",
  "voxelworks-core",
  "voxelworks-scene",
 ]
@@ -2608,6 +2617,7 @@ name = "voxelworks-platform"
 version = "0.1.0"
 dependencies = [
  "engine_platform",
+ "engine_render",
  "rodio",
  "softbuffer",
  "voxelworks-api",

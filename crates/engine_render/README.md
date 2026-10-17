@@ -1,4 +1,5 @@
 # engine_render
-Purpose: Renderer contracts, render graph, and presenters.
-Allowed dependencies: see `tools/allowed_deps.toml`.
-Does not yet implement runtime behavior; code moves in its assigned phase.
+Provides backend-neutral draw data, a validated render graph, CPU presentation, and an optional wgpu context.
+Frame plans are generic so rendering plugins can supply their own scene and material types.
+Allowed workspace dependencies: `engine_app`, `engine_plugins`, `engine_platform`, `engine_assets`, and `engine_math`; `wgpu` is optional behind `gpu`.
+It does not own scene extraction or game-specific rendering policy.

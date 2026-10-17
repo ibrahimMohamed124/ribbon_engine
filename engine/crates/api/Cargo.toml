@@ -7,3 +7,4 @@ edition = "2021"
 voxelworks-core = { path = "../core" }
 voxelworks-scene = { path = "../scene" }
 engine_platform = { path = "../../../crates/engine_platform" }
+engine_render = { path = "../../../crates/engine_render" }

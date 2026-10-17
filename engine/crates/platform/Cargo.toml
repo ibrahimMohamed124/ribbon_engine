@@ -13,6 +13,7 @@ voxelworks-core = { path = "../core" }
 voxelworks-scene = { path = "../scene" }
 voxelworks-api = { path = "../api" }
 engine_platform = { path = "../../../crates/engine_platform" }
+engine_render = { path = "../../../crates/engine_render" }
 winit = "0.30.13"
 softbuffer = "0.4.6"
 voxelworks-render-gpu = { path = "../render-gpu", optional = true }
