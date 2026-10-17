@@ -2,3 +2,18 @@
 name = "engine_editor"
 version = "0.1.0"
 edition = "2021"
+
+[features]
+default = []
+editor = []
+
+[dependencies]
+engine_app = { path = "../engine_app" }
+engine_plugins = { path = "../engine_plugins" }
+engine_platform = { path = "../engine_platform" }
+engine_render = { path = "../engine_render" }
+engine_reflect = { path = "../engine_reflect" }
+engine_commands = { path = "../engine_commands" }
+engine_scene = { path = "../engine_scene" }
+engine_ecs = { path = "../engine_ecs" }
+engine_math = { path = "../engine_math" }

@@ -1,4 +1,5 @@
 # engine_commands
-Purpose: Undoable world editing commands.
-Allowed dependencies: see `tools/allowed_deps.toml`.
-Does not yet implement runtime behavior; code moves in its assigned phase.
+Purpose: Reversible component edits and bounded undo/redo history.
+Allowed dependencies: `engine_ecs`, `engine_reflect`, and `engine_scene`.
+Provides grouped commands, reflected field editing, and component add/remove.
+Does not own editor UI or persist scenes.

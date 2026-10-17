@@ -2,3 +2,8 @@
 name = "engine_commands"
 version = "0.1.0"
 edition = "2021"
+
+[dependencies]
+engine_ecs = { path = "../engine_ecs" }
+engine_reflect = { path = "../engine_reflect" }
+engine_scene = { path = "../engine_scene" }

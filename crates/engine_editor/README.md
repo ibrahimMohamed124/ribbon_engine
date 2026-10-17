@@ -1,4 +1,5 @@
 # engine_editor
-Purpose: Immediate-mode editor shell and UI.
-Allowed dependencies: see `tools/allowed_deps.toml`.
-Does not yet implement runtime behavior; code moves in its assigned phase.
+Purpose: Immediate-mode panels drawn through `engine_render::DrawList`.
+Allowed dependencies: app, plugins, platform, render, reflect, commands, scene, ECS, and math.
+Provides layout, basic widgets, hit testing, selection, and the editor plugin shell.
+Does not use egui or provide text input in v1.
