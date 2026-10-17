@@ -77,6 +77,18 @@ external = ["rodio"]
 workspace = ["engine_editor", "engine_commands", "engine_reflect", "engine_scene", "engine_ecs", "engine_app", "engine_plugins", "engine_render", "engine_math"]
 external = []
 
+[allowed."hello_ecs"]
+workspace = ["engine_app", "engine_ecs", "engine_schedule"]
+external = []
+
+[allowed."voxel_room"]
+workspace = ["engine_app", "engine_assets", "engine_ecs", "engine_math", "engine_platform", "engine_plugins", "engine_scene", "engine_render", "engine_reflect", "plugin_rendering", "plugin_voxel"]
+external = ["ron"]
+
+[allowed."editor_demo"]
+workspace = ["engine_app", "engine_ecs", "engine_editor", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_rendering", "plugin_editor_tools"]
+external = []
+
 [allowed.legacy]
 
 [allowed.legacy."voxelworks-core"]
