@@ -2,3 +2,12 @@
 name = "engine_scene"
 version = "0.1.0"
 edition = "2021"
+
+[dependencies]
+engine_ecs = { path = "../engine_ecs" }
+engine_reflect = { path = "../engine_reflect" }
+engine_math = { path = "../engine_math" }
+engine_app = { path = "../engine_app" }
+engine_plugins = { path = "../engine_plugins" }
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.10"

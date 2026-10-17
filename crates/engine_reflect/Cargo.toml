@@ -2,3 +2,7 @@
 name = "engine_reflect"
 version = "0.1.0"
 edition = "2021"
+
+[dependencies]
+engine_ecs = { path = "../engine_ecs" }
+serde = { version = "1.0", features = ["derive"] }
