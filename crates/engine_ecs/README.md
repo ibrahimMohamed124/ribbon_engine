@@ -1,4 +1,5 @@
 # engine_ecs
-Purpose: The engine-owned entity and component world.
-Allowed dependencies: see `tools/allowed_deps.toml`.
-Does not yet implement runtime behavior; code moves in its assigned phase.
+Provides the engine-owned entity/component world, typed resources, and deferred commands.
+It wraps `hecs` so other engine crates depend only on this API.
+Allowed dependency: `hecs` only; see `tools/allowed_deps.toml`.
+It does not provide scheduling, reflection, or parallel system execution.
