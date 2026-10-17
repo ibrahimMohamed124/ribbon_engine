@@ -1,0 +1,4 @@
+(prefab:(format_version:1,name:"Voxel Room",entities:[
+  (local_id:0,parent:None,components:[("Name",Struct([("value",Str("Camera"))]))]),
+  (local_id:1,parent:None,components:[("Name",Struct([("value",Str("Marker"))]))])
+]),metadata:{"example":"voxel_room"})

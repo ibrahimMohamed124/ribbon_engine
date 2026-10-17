@@ -1,3 +1,3 @@
 # Engine sample assets
 
-This directory is reserved for sample data used only by engine examples. Game assets remain under their game directory.
+This directory contains only assets shared by engine examples. Game content stays under `games/<game>/assets`.
