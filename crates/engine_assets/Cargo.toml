@@ -2,3 +2,11 @@
 name = "engine_assets"
 version = "0.1.0"
 edition = "2021"
+
+[features]
+hot_reload = []
+
+[dependencies]
+engine_app = { path = "../engine_app" }
+engine_plugins = { path = "../engine_plugins" }
+engine_events = { path = "../engine_events" }

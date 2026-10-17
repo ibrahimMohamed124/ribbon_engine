@@ -1,5 +1,5 @@
 use super::lighting::light_with_style;
-use voxelworks_scene::RenderStyle;
+use crate::RenderStyle;
 
 #[test]
 fn generic_lighting_response_stays_finite_and_fades_with_distance() {

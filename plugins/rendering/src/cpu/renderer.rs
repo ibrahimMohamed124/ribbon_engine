@@ -1,6 +1,7 @@
 use crate::canvas::Canvas;
-use voxelworks_api::{DrawCommand, DrawList, FramePlan, Framebuffer, Renderer};
-use voxelworks_scene::material::MaterialTable;
+use crate::material::MaterialTable;
+use crate::scene::Scene as RenderScene;
+use engine_render::{DrawCommand, DrawList, FramePlan, Framebuffer, Renderer};
 
 use crate::render::lighting::SurfaceShader;
 use crate::render::post::adjust_brightness;
@@ -21,23 +22,21 @@ impl<S> CpuRenderer<S> {
     }
 }
 
-impl<S: SurfaceShader + Sync> Renderer for CpuRenderer<S> {
+impl<S: SurfaceShader + Sync> Renderer<MaterialTable> for CpuRenderer<S> {
+    type Scene<'a> = RenderScene<'a>;
+
     fn resize(&mut self, width: u32, height: u32) {
         self.framebuffer = Framebuffer::new(width as usize, height as usize);
     }
 
-    fn render_scene(
-        &mut self,
-        scene: Option<&voxelworks_scene::scene::Scene<'_>>,
-        materials: &MaterialTable,
-    ) {
+    fn render_scene<'a>(&mut self, scene: Option<&RenderScene<'a>>, materials: &MaterialTable) {
         self.framebuffer.pixels.fill(0);
         if let Some(scene) = scene {
             render_with_materials(&mut self.framebuffer, scene, &self.shader, materials);
         }
     }
 
-    fn render_frame(&mut self, plan: &FramePlan<'_>, materials: &MaterialTable) {
+    fn render_frame<'a>(&mut self, plan: &FramePlan<RenderScene<'a>>, materials: &MaterialTable) {
         if self.framebuffer.width != plan.world_layer.width
             || self.framebuffer.height != plan.world_layer.height
         {
@@ -82,8 +81,8 @@ pub fn apply_draw_list(framebuffer: &mut Framebuffer, draw_list: &DrawList) {
 #[cfg(test)]
 mod tests {
     use super::{CpuRenderer, FramePlan};
-    use voxelworks_api::Renderer;
-    use voxelworks_api::{DrawCommand, DrawList, Framebuffer};
+    use engine_render::Renderer;
+    use engine_render::{DrawCommand, DrawList, Framebuffer};
 
     struct NoopShader;
 
@@ -91,9 +90,9 @@ mod tests {
         fn albedo(
             &self,
             _block: u8,
-            _hit: &voxelworks_core::voxel::Hit,
-            _direction: voxelworks_core::math::Vect,
-            _style: &voxelworks_scene::RenderStyle,
+            _hit: &plugin_voxel::Hit,
+            _direction: engine_math::Vect,
+            _style: &crate::RenderStyle,
         ) -> f32 {
             0.0
         }
@@ -124,7 +123,7 @@ mod tests {
             brightness: 0.5,
             ui_layer,
         };
-        renderer.render_frame(&plan, &voxelworks_scene::EMPTY_MATERIAL_TABLE);
+        renderer.render_frame(&plan, &crate::EMPTY_MATERIAL_TABLE);
         let mut output = Framebuffer::new(2, 1);
         renderer.present(&mut output);
         assert_eq!(output.pixels, vec![0x00ff_ffff, 0x0064_6464]);

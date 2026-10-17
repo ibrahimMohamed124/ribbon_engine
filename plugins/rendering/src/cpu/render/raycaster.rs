@@ -7,12 +7,12 @@ use super::lighting::{
     cone_factor, light_with_style, shade_surface, SurfaceContext, SurfaceShader,
 };
 use super::post::{finish_pixel_styled_with_lut, PixelSample};
-use voxelworks_api::Framebuffer;
-use voxelworks_core::math::{forward_vec, Vect};
-use voxelworks_scene::entities::EntityRenderMode;
-use voxelworks_scene::material::MaterialTable;
-use voxelworks_scene::scene::Scene;
-use voxelworks_scene::RENDER_DIST;
+use crate::entities::EntityRenderMode;
+use crate::material::MaterialTable;
+use crate::scene::Scene;
+use crate::RENDER_DIST;
+use engine_math::{forward_vec, Vect};
+use engine_render::Framebuffer;
 
 const EMPTY_MATERIALS: MaterialTable = MaterialTable::new(&[]);
 
@@ -208,7 +208,7 @@ pub fn render_with_materials_checked<S: SurfaceShader + Sync>(
             let v = 1.0 - ((y as f32 + 0.5) / height as f32) * 2.0;
             for (x, pixel) in row.iter_mut().enumerate() {
                 let u = ((x as f32 + 0.5) / width as f32) * 2.0 - 1.0;
-                let warp = voxelworks_scene::style::screen_warp(
+                let warp = crate::style::screen_warp(
                     u,
                     v,
                     frame.lighting.frame as f32 * 0.016,
@@ -246,19 +246,19 @@ pub fn render_with_materials_checked<S: SurfaceShader + Sync>(
 #[cfg(test)]
 mod data_driven_entity_tests {
     use super::render_with_materials_checked;
-    use crate::render::lighting::SurfaceShader;
-    use std::sync::OnceLock;
-    use voxelworks_api::Framebuffer;
-    use voxelworks_core::math::{Angles, Vect};
-    use voxelworks_core::voxel::{Hit, VoxelWorld};
-    use voxelworks_scene::entities::{
+    use crate::entities::{
         EntityAnimation, EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
         EntityRenderMode, EntityShadow,
     };
-    use voxelworks_scene::material::MaterialTable;
-    use voxelworks_scene::scene::{Camera, LightingParams, Scene};
-    use voxelworks_scene::style::RenderStyle;
-    use voxelworks_scene::texture::SpriteAtlas;
+    use crate::material::MaterialTable;
+    use crate::render::lighting::SurfaceShader;
+    use crate::scene::{Camera, LightingParams, Scene};
+    use crate::style::RenderStyle;
+    use crate::texture::SpriteAtlas;
+    use engine_math::{Angles, Vect};
+    use engine_render::Framebuffer;
+    use plugin_voxel::{Hit, VoxelWorld};
+    use std::sync::OnceLock;
 
     const BOX_KIND: EntityKind = EntityKind(71);
     const BILLBOARD_KIND: EntityKind = EntityKind(72);

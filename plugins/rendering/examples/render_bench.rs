@@ -3,9 +3,9 @@ mod shared;
 
 use std::time::Instant;
 
+use engine_render::Framebuffer;
+use plugin_rendering::cpu::render::{render, RenderStyle};
 use shared::{graded_style, Scene, SceneShader, HEIGHT, WIDTH};
-use voxelworks_api::Framebuffer;
-use voxelworks_render_cpu::render::{render, RenderStyle};
 
 fn main() {
     let frames = std::env::args()

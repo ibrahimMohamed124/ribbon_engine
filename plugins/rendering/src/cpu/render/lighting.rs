@@ -1,10 +1,10 @@
 //! Distance falloff and surface shading interface.
 
-use voxelworks_core::math::Vect;
-use voxelworks_core::voxel::{face_ao, face_uv, Hit, VoxelWorld};
-use voxelworks_scene::entities::EntityKind;
-use voxelworks_scene::material::MaterialTable;
-use voxelworks_scene::style::RenderStyle;
+use crate::entities::EntityKind;
+use crate::material::MaterialTable;
+use crate::style::RenderStyle;
+use engine_math::Vect;
+use plugin_voxel::{face_ao, face_uv, Hit, VoxelWorld};
 
 pub const CONE_INNER: f32 = 0.985;
 pub const CONE_OUTER: f32 = 0.86;
@@ -60,7 +60,7 @@ pub fn cone_factor(cosang: f32) -> f32 {
 }
 
 pub fn light(light_level: f32, distance: f32, ndotl: f32, cone: f32) -> f32 {
-    let fog = (1.0 - distance / voxelworks_scene::RENDER_DIST).clamp(0.0, 1.0);
+    let fog = (1.0 - distance / crate::RENDER_DIST).clamp(0.0, 1.0);
     let ambient = 0.035;
     let lamp = 0.12 / (1.0 + 0.7 * distance * distance);
     let beam =
@@ -78,7 +78,7 @@ pub fn light_with_style(
     let fog_distance = if style.fog_distance.is_finite() && style.fog_distance > 0.0 {
         style.fog_distance
     } else {
-        voxelworks_scene::RENDER_DIST
+        crate::RENDER_DIST
     };
     let fog = (1.0 - distance / fog_distance).clamp(0.0, 1.0);
     let ambient = style.ambient;
@@ -145,10 +145,9 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
             .get(block)
             .and_then(|material| {
                 material.pbr_texture.and_then(|id| {
-                    let (_, _, _, alternate) =
-                        voxelworks_scene::material::cell_uv(hit.cell, (0.0, 0.0));
+                    let (_, _, _, alternate) = crate::material::cell_uv(hit.cell, (0.0, 0.0));
                     let id = if material.cell_variation && alternate && id.0 == 1 {
-                        voxelworks_scene::texture::TextureId(2)
+                        crate::texture::TextureId(2)
                     } else {
                         id
                     };
@@ -158,7 +157,7 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
             .map(|(material, set)| {
                 let (mut u, mut v) = face_uv(hit);
                 if material.cell_variation {
-                    let transformed = voxelworks_scene::material::cell_uv(hit.cell, (u, v));
+                    let transformed = crate::material::cell_uv(hit.cell, (u, v));
                     u = transformed.0;
                     v = transformed.1;
                 }
@@ -239,7 +238,8 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
 #[cfg(test)]
 mod shadow_tests {
     use super::{light_with_style, spot_light_visibility};
-    use voxelworks_core::{math::Vect, voxel::VoxelWorld};
+    use engine_math::Vect;
+    use plugin_voxel::VoxelWorld;
 
     #[test]
     fn voxel_between_source_and_surface_blocks_the_beam() {
@@ -264,7 +264,7 @@ mod shadow_tests {
 
     #[test]
     fn realistic_light_falloff_is_finite_and_monotonic() {
-        let style = voxelworks_scene::RenderStyle::default();
+        let style = crate::RenderStyle::default();
         let values: Vec<_> = (1..=12)
             .map(|distance| light_with_style(1.0, distance as f32, 1.0, 1.0, &style))
             .collect();

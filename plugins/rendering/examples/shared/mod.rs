@@ -1,15 +1,15 @@
-use voxelworks_core::math::{forward_vec, hash4, Angles, Rng, Vect};
-use voxelworks_core::voxel::{face_uv, Hit, VoxelWorld};
-use voxelworks_render_cpu::render::entities::EntitySurface;
-use voxelworks_render_cpu::render::lighting::SurfaceShader;
-use voxelworks_render_cpu::render::RenderStyle;
-use voxelworks_render_cpu::render::Scene as RenderScene;
-use voxelworks_scene::entities::{
+use engine_math::{forward_vec, hash4, Angles, Rng, Vect};
+use plugin_rendering::cpu::render::entities::EntitySurface;
+use plugin_rendering::cpu::render::lighting::SurfaceShader;
+use plugin_rendering::cpu::render::RenderStyle;
+use plugin_rendering::cpu::render::Scene as RenderScene;
+use plugin_rendering::entities::{
     EntityAnimation, EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
     EntityRenderMode, EntityShadow,
 };
-use voxelworks_scene::texture::Texture;
-use voxelworks_scene::{Palette, Tonemap};
+use plugin_rendering::texture::Texture;
+use plugin_rendering::{Palette, Tonemap};
+use plugin_voxel::{face_uv, Hit, VoxelWorld};
 
 pub fn graded_style() -> RenderStyle {
     RenderStyle {
@@ -235,12 +235,12 @@ impl Scene {
         RenderScene {
             world: &self.world,
             empty_voxel: EMPTY,
-            camera: voxelworks_scene::Camera {
+            camera: plugin_rendering::Camera {
                 eye: view.eye,
                 view: view.angles,
                 hfov: 1.35,
             },
-            lighting: voxelworks_scene::LightingParams {
+            lighting: plugin_rendering::LightingParams {
                 light_level: view.light_level,
                 intensity: 0.0,
                 frame,
@@ -304,7 +304,7 @@ impl SurfaceShader for SceneShader {
 
     fn entity_surface(
         &self,
-        _kind: voxelworks_scene::entities::EntityKind,
+        _kind: plugin_rendering::entities::EntityKind,
         _point: [f32; 3],
         _axis: usize,
         _sign: f32,

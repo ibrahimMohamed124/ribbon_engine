@@ -1,12 +1,12 @@
 //! CPU-side rotated-box intersection for data-only scene entities.
 
 pub use super::lighting::EntitySurface;
-use voxelworks_core::math::Vect;
-pub use voxelworks_scene::entities::{Bounds3, Box3};
-use voxelworks_scene::entities::{
+pub use crate::entities::{Bounds3, Box3};
+use crate::entities::{
     EntityAnimation, EntityDefinition, EntityInstance, EntityKind, EntityRegistry, EntityShadow,
 };
-use voxelworks_scene::texture::SpriteAtlas;
+use crate::texture::SpriteAtlas;
+use engine_math::Vect;
 
 pub fn ray_box(o: [f32; 3], d: [f32; 3], mn: [f32; 3], mx: [f32; 3]) -> Option<(f32, usize, f32)> {
     let mut tmin = f32::NEG_INFINITY;
@@ -105,12 +105,12 @@ impl SpriteView {
             camera_angle: dy.atan2(dx) - instance.yaw,
             plane_distance: length,
             width: match definition.render_mode {
-                voxelworks_scene::entities::EntityRenderMode::Billboard { width, .. } => width,
-                voxelworks_scene::entities::EntityRenderMode::Boxes => 0.92,
+                crate::entities::EntityRenderMode::Billboard { width, .. } => width,
+                crate::entities::EntityRenderMode::Boxes => 0.92,
             },
             height: match definition.render_mode {
-                voxelworks_scene::entities::EntityRenderMode::Billboard { height, .. } => height,
-                voxelworks_scene::entities::EntityRenderMode::Boxes => 2.2,
+                crate::entities::EntityRenderMode::Billboard { height, .. } => height,
+                crate::entities::EntityRenderMode::Boxes => 2.2,
             },
             shadow: definition.shadow,
         }
@@ -255,14 +255,15 @@ impl<'a> EntView<'a> {
 #[cfg(test)]
 mod sprite_tests {
     use super::SpriteView;
-    use voxelworks_core::{math::Vect, voxel::VoxelWorld};
-    use voxelworks_scene::{
+    use crate::{
         entities::{
             EntityAnimation, EntityBox, EntityDefinition, EntityInstance, EntityKind,
             EntityRenderMode, EntityShadow,
         },
         texture::SpriteAtlas,
     };
+    use engine_math::Vect;
+    use plugin_voxel::VoxelWorld;
 
     const KIND: EntityKind = EntityKind(1);
     const BOXES: [EntityBox; 0] = [];

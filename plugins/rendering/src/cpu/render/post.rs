@@ -1,8 +1,8 @@
 //! Screen-space vignette, grain, and ordered dithering.
 
-use voxelworks_api::Framebuffer;
-use voxelworks_core::math::hash4;
-use voxelworks_scene::style::{LevelLut, RenderStyle, LEVEL_COUNT};
+use crate::style::{LevelLut, RenderStyle, LEVEL_COUNT};
+use engine_math::hash4;
+use engine_render::Framebuffer;
 
 pub fn adjust_brightness(fb: &mut Framebuffer, brightness: f32) {
     let brightness = if brightness.is_finite() {
@@ -84,7 +84,7 @@ pub(crate) fn finish_pixel_styled_with_lut(
 #[cfg(test)]
 mod tests {
     use super::{finish_pixel, finish_pixel_styled};
-    use voxelworks_scene::style::RenderStyle;
+    use crate::style::RenderStyle;
 
     #[test]
     fn classic_wrapper_matches_styled_classic() {

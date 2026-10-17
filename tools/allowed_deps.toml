@@ -84,7 +84,7 @@ workspace = ["engine_app", "engine_math", "engine_platform", "plugin_physics", "
 external = []
 
 [allowed.legacy."voxelworks-scene"]
-workspace = ["voxelworks-core"]
+workspace = ["plugin_rendering"]
 external = []
 
 [allowed.legacy."voxelworks-api"]
@@ -92,7 +92,7 @@ workspace = ["engine_platform", "engine_render", "voxelworks-core", "voxelworks-
 external = []
 
 [allowed.legacy."voxelworks-render-cpu"]
-workspace = ["voxelworks-api", "voxelworks-core", "voxelworks-scene", "voxelworks-testkit"]
+workspace = ["plugin_rendering", "voxelworks-api", "voxelworks-core", "voxelworks-scene", "voxelworks-testkit"]
 external = ["rayon"]
 
 [allowed.legacy."voxelworks-testkit"]

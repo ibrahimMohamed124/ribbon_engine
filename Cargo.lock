@@ -580,6 +580,11 @@ dependencies = [
 [[package]]
 name = "engine_assets"
 version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_events",
+ "engine_plugins",
+]
 
 [[package]]
 name = "engine_commands"
@@ -1824,6 +1829,12 @@ dependencies = [
 [[package]]
 name = "plugin_rendering"
 version = "0.1.0"
+dependencies = [
+ "engine_math",
+ "engine_render",
+ "plugin_voxel",
+ "rayon",
+]
 
 [[package]]
 name = "plugin_voxel"
@@ -2632,6 +2643,7 @@ dependencies = [
 name = "voxelworks-render-cpu"
 version = "0.1.0"
 dependencies = [
+ "plugin_rendering",
  "rayon",
  "voxelworks-api",
  "voxelworks-core",
@@ -2659,7 +2671,7 @@ dependencies = [
 name = "voxelworks-scene"
 version = "0.1.0"
 dependencies = [
- "voxelworks-core",
+ "plugin_rendering",
 ]
 
 [[package]]
