@@ -3,8 +3,25 @@ name = "plugin_rendering"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["cpu", "gpu"]
+cpu = ["dep:rayon"]
+gpu = ["engine_render/gpu"]
+
 [dependencies]
 engine_math = { path = "../../crates/engine_math" }
 plugin_voxel = { path = "../voxel" }
-engine_render = { path = "../../crates/engine_render" }
-rayon = "1.10"
+engine_render = { path = "../../crates/engine_render", default-features = false }
+rayon = { version = "1.10", optional = true }
+
+[[example]]
+name = "level_probe"
+required-features = ["cpu"]
+
+[[example]]
+name = "render_bench"
+required-features = ["cpu"]
+
+[[example]]
+name = "screenshot"
+required-features = ["cpu"]

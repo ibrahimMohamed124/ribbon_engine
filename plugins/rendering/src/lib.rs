@@ -2,11 +2,21 @@
 //!
 //! This crate owns rendering policy and scene extraction; platform and frame contracts are provided by engine crates.
 
+#[cfg(feature = "cpu")]
 pub mod cpu;
 pub mod types;
 
+#[cfg(feature = "cpu")]
 pub use cpu::{canvas, render, renderer};
 pub use types::{entities, material, scene, style, texture};
+
+#[cfg(feature = "gpu")]
+pub mod gpu {
+    //! GPU context and offscreen target supplied by `engine_render`.
+
+    pub use engine_render::gpu::{GpuContext, OffscreenTarget};
+    pub use engine_render::graph::RenderError;
+}
 pub use types::{
     BaseAlbedoRule, Camera, LightingParams, Material, MaterialTable, Palette, PbrTextureSet,
     RenderScene, RenderStyle, RgbaMipChain, RgbaMipLevel, Scene, TextureAtlas, TextureColorSpace,
