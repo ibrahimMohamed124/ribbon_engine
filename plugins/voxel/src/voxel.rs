@@ -1,6 +1,6 @@
 //! Runtime-sized voxel storage and grid queries.
 
-use crate::math::Vect;
+use engine_math::Vect;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Hit {
@@ -211,7 +211,7 @@ impl VoxelWorld {
 #[cfg(test)]
 mod tests {
     use super::{face_ao, face_uv, Hit, VoxelWorld};
-    use crate::math::Vect;
+    use engine_math::Vect;
 
     const EMPTY: u8 = 0;
     const SOLID: u8 = 1;

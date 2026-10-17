@@ -1,4 +1,4 @@
 # engine_math
-Purpose: Portable vector, angle, and rendering math.
-Allowed dependencies: see `tools/allowed_deps.toml`.
-Does not yet implement runtime behavior; code moves in its assigned phase.
+Purpose: portable vector, angle, ray, and color math.
+Allowed dependencies: none.
+Does not: contain engine state, rendering backends, or platform code.

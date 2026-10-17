@@ -2,3 +2,6 @@
 name = "plugin_voxel"
 version = "0.1.0"
 edition = "2021"
+
+[dependencies]
+engine_math = { path = "../../crates/engine_math" }

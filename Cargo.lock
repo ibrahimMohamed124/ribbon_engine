@@ -1763,6 +1763,10 @@ version = "0.1.0"
 [[package]]
 name = "plugin_physics"
 version = "0.1.0"
+dependencies = [
+ "engine_math",
+ "plugin_voxel",
+]
 
 [[package]]
 name = "plugin_rendering"
@@ -1771,6 +1775,9 @@ version = "0.1.0"
 [[package]]
 name = "plugin_voxel"
 version = "0.1.0"
+dependencies = [
+ "engine_math",
+]
 
 [[package]]
 name = "png"
@@ -2524,6 +2531,11 @@ dependencies = [
 [[package]]
 name = "voxelworks-core"
 version = "0.1.0"
+dependencies = [
+ "engine_math",
+ "plugin_physics",
+ "plugin_voxel",
+]
 
 [[package]]
 name = "voxelworks-minimal"

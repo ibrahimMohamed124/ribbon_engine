@@ -2,7 +2,9 @@
 
 pub mod audio;
 pub mod input;
-pub mod math;
-pub mod physics;
 pub mod time;
-pub mod voxel;
+
+// Temporary compatibility shims. Remove in phase 9.
+pub use engine_math as math;
+pub use plugin_physics as physics;
+pub use plugin_voxel::voxel;

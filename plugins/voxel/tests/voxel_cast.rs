@@ -1,5 +1,5 @@
-use voxelworks_core::math::{Rng, Vect};
-use voxelworks_core::voxel::{Hit, VoxelWorld};
+use engine_math::{Rng, Vect};
+use plugin_voxel::{Hit, VoxelWorld};
 
 const EMPTY: u8 = 0;
 const SOLID: u8 = 1;

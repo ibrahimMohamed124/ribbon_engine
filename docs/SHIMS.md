@@ -1,3 +1,3 @@
 # Temporary compatibility shims
 
-No new-layout re-export shims exist yet. The existing `voxelworks-*` crates continue to provide the current implementation until each phase moves its code. Add each temporary shim here when introduced, then remove the entry when Phase 9 deletes it.
+The legacy `voxelworks-core` crate temporarily re-exports `engine_math` as `math`, `plugin_voxel::voxel` as `voxel`, and `plugin_physics` as `physics`. These preserve the old import paths for games and remaining crates while leaf code moves. Phase 9 removes them when the legacy crate is deleted.
