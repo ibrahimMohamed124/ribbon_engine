@@ -106,11 +106,14 @@ jobs:
             fi
           done
 
+      - name: New workspace dependency policy
+        run: python tools/check_deps.py
+
       - name: Engine game-content boundary
         shell: bash
         run: |
           if grep -riE 'studs|warden|page|enemy|monster|crawl|flashlight|maze|jumpscare' \
-            engine/crates/core engine/crates/scene engine/crates/api engine/crates/render-cpu engine/crates/render-gpu engine/crates/platform engine/crates/testkit; then
+            crates plugins engine/crates/core engine/crates/scene engine/crates/api engine/crates/render-cpu engine/crates/render-gpu engine/crates/platform engine/crates/testkit; then
             echo "Engine crates contain game-specific vocabulary"
             exit 1
           fi

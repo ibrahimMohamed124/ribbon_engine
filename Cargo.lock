@@ -568,6 +568,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_app"
+version = "0.1.0"
+
+[[package]]
+name = "engine_assets"
+version = "0.1.0"
+
+[[package]]
+name = "engine_commands"
+version = "0.1.0"
+
+[[package]]
+name = "engine_ecs"
+version = "0.1.0"
+
+[[package]]
+name = "engine_editor"
+version = "0.1.0"
+
+[[package]]
+name = "engine_events"
+version = "0.1.0"
+
+[[package]]
+name = "engine_math"
+version = "0.1.0"
+
+[[package]]
+name = "engine_platform"
+version = "0.1.0"
+
+[[package]]
+name = "engine_plugins"
+version = "0.1.0"
+
+[[package]]
+name = "engine_reflect"
+version = "0.1.0"
+
+[[package]]
+name = "engine_render"
+version = "0.1.0"
+
+[[package]]
+name = "engine_scene"
+version = "0.1.0"
+
+[[package]]
+name = "engine_schedule"
+version = "0.1.0"
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1695,6 +1747,30 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "plugin_animation"
+version = "0.1.0"
+
+[[package]]
+name = "plugin_audio"
+version = "0.1.0"
+
+[[package]]
+name = "plugin_editor_tools"
+version = "0.1.0"
+
+[[package]]
+name = "plugin_physics"
+version = "0.1.0"
+
+[[package]]
+name = "plugin_rendering"
+version = "0.1.0"
+
+[[package]]
+name = "plugin_voxel"
+version = "0.1.0"
 
 [[package]]
 name = "png"

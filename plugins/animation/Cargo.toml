@@ -1,0 +1,4 @@
+[package]
+name = "plugin_animation"
+version = "0.1.0"
+edition = "2021"
