@@ -41,9 +41,10 @@ pub enum Key {
     Escape,
     Enter,
     Tab,
+    F1,
 }
 
-pub const ALL_KEYS: [Key; 36] = [
+pub const ALL_KEYS: [Key; 37] = [
     Key::A,
     Key::B,
     Key::C,
@@ -80,6 +81,7 @@ pub const ALL_KEYS: [Key; 36] = [
     Key::Escape,
     Key::Enter,
     Key::Tab,
+    Key::F1,
 ];
 
 pub trait KeyState {
@@ -165,6 +167,7 @@ const KEY_NAMES: &[(&str, Key)] = &[
     ("Escape", Key::Escape),
     ("Enter", Key::Enter),
     ("Tab", Key::Tab),
+    ("F1", Key::F1),
 ];
 
 pub fn key_name(key: Key) -> Option<&'static str> {

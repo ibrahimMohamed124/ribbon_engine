@@ -92,6 +92,7 @@ pub fn from_winit(code: KeyCode) -> Option<Key> {
         KeyCode::Escape => Key::Escape,
         KeyCode::Enter => Key::Enter,
         KeyCode::Tab => Key::Tab,
+        KeyCode::F1 => Key::F1,
         _ => return None,
     })
 }
@@ -135,7 +136,7 @@ impl MouseState {
     }
 }
 
-pub const fn key_mapping() -> [(KeyCode, Key); 36] {
+pub const fn key_mapping() -> [(KeyCode, Key); 37] {
     use crate::input::Key as K;
     use KeyCode as C;
     [
@@ -175,6 +176,7 @@ pub const fn key_mapping() -> [(KeyCode, Key); 36] {
         (C::Escape, K::Escape),
         (C::Enter, K::Enter),
         (C::Tab, K::Tab),
+        (C::F1, K::F1),
     ]
 }
 
@@ -198,7 +200,7 @@ mod tests {
                 .map(|(_, key)| *key)
                 .collect::<std::collections::HashSet<_>>()
                 .len(),
-            36
+            ALL_KEYS.len()
         );
     }
 
