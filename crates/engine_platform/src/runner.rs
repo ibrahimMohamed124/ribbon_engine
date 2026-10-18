@@ -2,13 +2,16 @@
 
 use crate::runtime::{
     CursorGrabState, InputMouseButton, KeyboardEvent, MouseButtonEvent, MouseMotion, PendingInput,
-    PlatformConfig, PlatformEvent, WindowResized,
+    PlatformConfig, PlatformEvent, WindowFrame, WindowResized,
 };
 use crate::{cursor, keyboard, window};
 use engine_app::{App, AppExit, LogBuffer, LogLevel, Runner, Time};
 use engine_events::{EventCursor, WorldEventsExt};
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Instant;
+
+use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -49,6 +52,10 @@ struct DesktopDriver {
     exit_cursor: EventCursor<AppExit>,
     last_frame: Instant,
     cursor_state_applied: CursorGrabState,
+    presenter: Option<SoftwarePresenter>,
+    requested_window_size: (u32, u32),
+    applied_title: String,
+    presentation_failed: bool,
 }
 
 impl DesktopDriver {
@@ -60,6 +67,10 @@ impl DesktopDriver {
             exit_cursor: EventCursor::default(),
             last_frame: Instant::now(),
             cursor_state_applied: CursorGrabState::Released,
+            presenter: None,
+            requested_window_size: (0, 0),
+            applied_title: String::new(),
+            presentation_failed: false,
         }
     }
 
@@ -85,6 +96,132 @@ impl DesktopDriver {
             scroll: 0.0,
         }));
     }
+
+    fn present_frame(&mut self) {
+        let Some(app) = self.app.as_mut() else {
+            return;
+        };
+        let presentation_error = if !self.presentation_failed {
+            match (
+                self.window.as_ref(),
+                self.presenter.as_mut(),
+                app.world.try_resource::<WindowFrame>(),
+            ) {
+                (Some(window), Some(presenter), Some(frame)) => {
+                    presenter.present(window, frame).err()
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(error) = presentation_error {
+            app.world.resource_mut::<LogBuffer>().push(
+                LogLevel::Warn,
+                format!("CPU window presentation stopped: {error}"),
+            );
+            self.presentation_failed = true;
+            self.presenter = None;
+        }
+    }
+}
+
+/// CPU framebuffer presenter used by rendering plugins that target the platform's
+/// renderer-neutral [`WindowFrame`] contract.
+struct SoftwarePresenter {
+    _context: Context<Arc<Window>>,
+    surface: Surface<Arc<Window>, Arc<Window>>,
+    dimensions: (u32, u32),
+    pixels: Vec<u32>,
+}
+
+impl SoftwarePresenter {
+    fn new(window: Arc<Window>) -> Result<Self, String> {
+        let context = Context::new(window.clone()).map_err(|error| error.to_string())?;
+        let surface = Surface::new(&context, window).map_err(|error| error.to_string())?;
+        Ok(Self {
+            _context: context,
+            surface,
+            dimensions: (0, 0),
+            pixels: Vec::new(),
+        })
+    }
+
+    fn present(&mut self, window: &Window, frame: &WindowFrame) -> Result<(), String> {
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 || frame.width == 0 || frame.height == 0 {
+            return Ok(());
+        }
+        let required = frame.width.saturating_mul(frame.height);
+        if frame.pixels.len() < required {
+            return Err("submitted frame has fewer pixels than its dimensions require".to_owned());
+        }
+        if self.dimensions != (size.width, size.height) {
+            self.surface
+                .resize(
+                    NonZeroU32::new(size.width).ok_or("zero width surface")?,
+                    NonZeroU32::new(size.height).ok_or("zero height surface")?,
+                )
+                .map_err(|error| error.to_string())?;
+            self.dimensions = (size.width, size.height);
+            self.pixels.resize(size.width as usize * size.height as usize, 0);
+        }
+        scale_frame(
+            frame.width,
+            frame.height,
+            &frame.pixels[..required],
+            size.width,
+            size.height,
+            &mut self.pixels,
+        );
+        let mut buffer = self.surface.buffer_mut().map_err(|error| error.to_string())?;
+        buffer.copy_from_slice(&self.pixels);
+        buffer.present().map_err(|error| error.to_string())
+    }
+}
+
+fn scale_frame(
+    source_width: usize,
+    source_height: usize,
+    source: &[u32],
+    destination_width: u32,
+    destination_height: u32,
+    destination: &mut [u32],
+) {
+    destination.fill(0);
+    if source_width == 0 || source_height == 0 || destination_width == 0 || destination_height == 0 {
+        return;
+    }
+    let scale = (destination_width as f32 / source_width as f32)
+        .min(destination_height as f32 / source_height as f32);
+    if !scale.is_finite() || scale <= 0.0 {
+        return;
+    }
+    let offset_x = (destination_width as f32 - source_width as f32 * scale) * 0.5;
+    let offset_y = (destination_height as f32 - source_height as f32 * scale) * 0.5;
+    let image_right = offset_x + source_width as f32 * scale;
+    let image_bottom = offset_y + source_height as f32 * scale;
+    for y in 0..destination_height {
+        let py = y as f32 + 0.5;
+        if py < offset_y || py >= image_bottom {
+            continue;
+        }
+        let sy = (((py - offset_y) / scale).floor() as usize).min(source_height - 1);
+        for x in 0..destination_width {
+            let px = x as f32 + 0.5;
+            if px < offset_x || px >= image_right {
+                continue;
+            }
+            let sx = (((px - offset_x) / scale).floor() as usize).min(source_width - 1);
+            let source_index = sy * source_width + sx;
+            let destination_index = y as usize * destination_width as usize + x as usize;
+            if let (Some(&pixel), Some(output)) =
+                (source.get(source_index), destination.get_mut(destination_index))
+            {
+                *output = pixel & 0x00ff_ffff;
+            }
+        }
+    }
 }
 
 impl ApplicationHandler for DesktopDriver {
@@ -99,7 +236,7 @@ impl ApplicationHandler for DesktopDriver {
             .cloned()
             .unwrap_or_default();
         let attributes = Window::default_attributes()
-            .with_title(config.title)
+            .with_title(config.title.clone())
             .with_inner_size(PhysicalSize::new(config.width.max(1), config.height.max(1)));
         match event_loop.create_window(attributes) {
             Ok(window) => {
@@ -108,6 +245,22 @@ impl ApplicationHandler for DesktopDriver {
                 if let Some(app) = self.app.as_mut() {
                     app.world
                         .insert_resource(crate::runtime::WindowHandle(window.clone()));
+                    app.world.resource_mut::<crate::runtime::Input>().focused = true;
+                    app.world.resource_mut::<PendingInput>().events.push(PlatformEvent::Focused(true));
+                }
+                self.requested_window_size = (config.width.max(1), config.height.max(1));
+                self.applied_title = config.title.clone();
+                match SoftwarePresenter::new(window.clone()) {
+                    Ok(presenter) => self.presenter = Some(presenter),
+                    Err(error) => {
+                        if let Some(app) = self.app.as_mut() {
+                            app.world.resource_mut::<LogBuffer>().push(
+                                LogLevel::Warn,
+                                format!("CPU window presentation unavailable: {error}"),
+                            );
+                        }
+                        self.presentation_failed = true;
+                    }
                 }
                 self.window = Some(window);
                 self.last_frame = Instant::now();
@@ -134,6 +287,7 @@ impl ApplicationHandler for DesktopDriver {
             return;
         }
         match event {
+            WindowEvent::RedrawRequested => self.present_frame(),
             WindowEvent::CloseRequested => self.queue(PlatformEvent::CloseRequested),
             WindowEvent::Focused(focused) => self.queue(PlatformEvent::Focused(focused)),
             WindowEvent::Resized(size) => {
@@ -201,6 +355,28 @@ impl ApplicationHandler for DesktopDriver {
         app.world.resource_mut::<Time>().delta = now.saturating_duration_since(self.last_frame);
         self.last_frame = now;
         app.update();
+
+        // Keep native window metadata under platform configuration control. Game and editor
+        // plugins change resources; they do not call winit directly.
+        if let Some(config) = app.world.try_resource::<PlatformConfig>().cloned() {
+            if config.title != self.applied_title {
+                if let Some(window) = self.window.as_ref() {
+                    window.set_title(&config.title);
+                }
+                self.applied_title = config.title.clone();
+            }
+            let requested_size = (config.width.max(1), config.height.max(1));
+            if requested_size != self.requested_window_size {
+                if let Some(window) = self.window.as_ref() {
+                    let _ = window.request_inner_size(PhysicalSize::new(
+                        requested_size.0,
+                        requested_size.1,
+                    ));
+                }
+                self.requested_window_size = requested_size;
+            }
+        }
+
         let requested_cursor = app.world.resource::<crate::runtime::Input>().cursor_grab;
         if requested_cursor != self.cursor_state_applied {
             if let Some(window) = self.window.as_ref() {
@@ -210,6 +386,7 @@ impl ApplicationHandler for DesktopDriver {
                     .cursor_grab = self.cursor_state_applied;
             }
         }
+
         if self
             .exit_cursor
             .read(app.world.events::<AppExit>())
@@ -217,6 +394,8 @@ impl ApplicationHandler for DesktopDriver {
             .is_some()
         {
             event_loop.exit();
+        } else if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
         }
     }
 

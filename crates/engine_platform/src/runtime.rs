@@ -70,6 +70,36 @@ pub struct Focused(pub bool);
 #[derive(Clone)]
 pub struct WindowHandle(pub std::sync::Arc<winit::window::Window>);
 
+/// Renderer-neutral CPU frame submitted for presentation by the platform runner.
+///
+/// Pixel values use `0x00RRGGBB`; zero dimensions mean that no frame is ready.
+#[derive(Clone, Debug, Default)]
+pub struct WindowFrame {
+    /// Frame width in pixels.
+    pub width: usize,
+    /// Frame height in pixels.
+    pub height: usize,
+    /// Row-major pixels in `0x00RRGGBB` format.
+    pub pixels: Vec<u32>,
+}
+
+impl WindowFrame {
+    /// Replace the current frame while reusing the pixel allocation where possible.
+    pub fn set_pixels(&mut self, width: usize, height: usize, pixels: &[u32]) {
+        let expected = width.saturating_mul(height);
+        if width == 0 || height == 0 || pixels.len() < expected {
+            self.width = 0;
+            self.height = 0;
+            self.pixels.clear();
+            return;
+        }
+        self.width = width;
+        self.height = height;
+        self.pixels.clear();
+        self.pixels.extend_from_slice(&pixels[..expected]);
+    }
+}
+
 /// The desktop window requested to close.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CloseRequested;
@@ -249,7 +279,8 @@ impl Plugin for PlatformPlugin {
         }
         app.insert_resource(Input::default())
             .insert_resource(VirtualInput::default())
-            .insert_resource(PendingInput::default());
+            .insert_resource(PendingInput::default())
+            .insert_resource(WindowFrame::default());
         app.add_event::<KeyboardEvent>()
             .add_event::<MouseMotion>()
             .add_event::<MouseButtonEvent>()
