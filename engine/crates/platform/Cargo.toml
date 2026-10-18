@@ -17,7 +17,7 @@ engine_render = { path = "../../../crates/engine_render" }
 winit = "0.30.13"
 softbuffer = "0.4.6"
 voxelworks-render-gpu = { path = "../render-gpu", optional = true }
-plugin_audio = { path = "../../../plugins/audio" }
+plugin_audio = { path = "../../../plugins/audio", default-features = false }
 
 [dev-dependencies]
 voxelworks-render-cpu = { path = "../render-cpu" }

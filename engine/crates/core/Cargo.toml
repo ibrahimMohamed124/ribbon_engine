@@ -9,4 +9,4 @@ engine_app = { path = "../../../crates/engine_app" }
 engine_platform = { path = "../../../crates/engine_platform" }
 plugin_physics = { path = "../../../plugins/physics" }
 plugin_voxel = { path = "../../../plugins/voxel" }
-plugin_audio = { path = "../../../plugins/audio" }
+plugin_audio = { path = "../../../plugins/audio", default-features = false }
