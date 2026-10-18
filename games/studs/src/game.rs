@@ -17,8 +17,8 @@ use engine_render::Framebuffer;
 use plugin_rendering::scene::Scene;
 use plugin_rendering::style::RenderStyle;
 use plugin_rendering::RENDER_DIST;
-use voxelworks_render_cpu::render::raycaster::render_with_materials;
-use voxelworks_render_cpu::Canvas;
+use plugin_rendering::cpu::render::raycaster::render_with_materials;
+use plugin_rendering::cpu::canvas::Canvas;
 
 pub const PAGES_TOTAL: usize = 6;
 const PAGE_PICKUP_RADIUS: f32 = 0.9;

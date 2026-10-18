@@ -12,8 +12,8 @@ use plugin_rendering::texture::{
 use plugin_rendering::RenderStyle;
 use plugin_rendering::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
 use plugin_voxel::{face_uv, Hit};
-use voxelworks_render_cpu::render::entities::EntitySurface;
-use voxelworks_render_cpu::render::lighting::SurfaceShader;
+use plugin_rendering::cpu::render::entities::EntitySurface;
+use plugin_rendering::cpu::render::lighting::SurfaceShader;
 
 use crate::level::{CEIL, FLOOR, WALL};
 

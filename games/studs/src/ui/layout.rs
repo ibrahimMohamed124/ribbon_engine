@@ -1,4 +1,4 @@
-use voxelworks_render_cpu::Canvas;
+use plugin_rendering::cpu::canvas::Canvas;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Rect {

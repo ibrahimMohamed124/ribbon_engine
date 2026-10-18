@@ -14,7 +14,7 @@ use crate::game::{Difficulty, Game, State};
 use crate::input::{key_name, Action, Key};
 use crate::settings::Settings;
 use crate::ui::hud::fill_rect;
-use voxelworks_render_cpu::Canvas;
+use plugin_rendering::cpu::canvas::Canvas;
 
 use self::theme::{ACCENT, MUTED, PANEL_EDGE, SELECTED, TEXT};
 
@@ -145,6 +145,13 @@ impl Ui {
     pub fn show_result(&mut self) {
         self.screen = Screen::Result;
         self.selected = 0;
+    }
+
+    /// Start directly in gameplay for rendering previews and example applications.
+    pub fn start_playing(&mut self) {
+        self.screen = Screen::Playing;
+        self.selected = 0;
+        self.rebinding = None;
     }
 
     pub fn update(&mut self, input: &UiInput, settings: &mut Settings) -> UiOutcome {

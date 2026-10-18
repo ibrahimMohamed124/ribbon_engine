@@ -1,7 +1,7 @@
 //! Game audio events translated to the reusable mixer and desktop sound bank.
 
 use plugin_audio::{AmbienceAsset, AmbienceId, SoundAsset, SoundBank, SoundId};
-use voxelworks_platform::mixer::{Audio as Mixer, AudioBackend as MixerBackend};
+use plugin_audio::mixer::{Audio as Mixer, AudioBackend as MixerBackend};
 
 /// Game-specific sound IDs. Numeric values remain stable for saved/debugged data.
 pub mod sounds {

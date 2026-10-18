@@ -12,12 +12,14 @@ name = "studs"
 path = "src/main.rs"
 
 [features]
-default = ["gpu", "audio"]
-gpu = ["voxelworks-platform/gpu"]
-audio = ["voxelworks-platform/audio"]
+default = ["audio"]
+audio = ["plugin_audio/audio"]
 
 [dependencies]
-voxelworks-api = { path = "../../engine/crates/api" }
+engine_app = { path = "../../crates/engine_app" }
+engine_events = { path = "../../crates/engine_events" }
+engine_plugins = { path = "../../crates/engine_plugins" }
+engine_scene = { path = "../../crates/engine_scene" }
 engine_math = { path = "../../crates/engine_math" }
 engine_platform = { path = "../../crates/engine_platform" }
 engine_render = { path = "../../crates/engine_render", default-features = false }
@@ -25,6 +27,10 @@ plugin_audio = { path = "../../plugins/audio", default-features = false }
 plugin_physics = { path = "../../plugins/physics" }
 plugin_voxel = { path = "../../plugins/voxel" }
 plugin_rendering = { path = "../../plugins/rendering", default-features = false, features = ["cpu"] }
-voxelworks-render-cpu = { path = "../../engine/crates/render-cpu" }
-voxelworks-platform = { path = "../../engine/crates/platform", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+# Existing audio decode integration coverage still reads this compatibility helper; runtime code
+# no longer depends on the immediate-mode platform runner.
+voxelworks-platform = { path = "../../engine/crates/platform", default-features = false, features = ["audio"] }
+voxelworks-render-cpu = { path = "../../engine/crates/render-cpu" }

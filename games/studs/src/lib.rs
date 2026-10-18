@@ -3,8 +3,9 @@
 //! Module map (dependencies flow downwards only):
 //!
 //! ```text
-//! main.rs      window + frame loop (the only place that touches the OS)
-//!   game.rs    game state machine, orchestrates everything below
+//! main.rs      executable entry point; assembles and runs the ECS App
+//!   app.rs       StudsPlugin and input/update/audio/render schedule systems
+//!   game.rs      game state machine, orchestrates the domain logic below
 //!     input.rs      keyboard / mouse -> Controls, key bindings
 //!     player.rs     movement + physics
 //!     enemy.rs      AI (pathfinding, "weeping angel" speed rule)

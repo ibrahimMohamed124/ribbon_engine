@@ -143,10 +143,10 @@ external = ["softbuffer", "winit"]
 workspace = ["voxelworks-api", "voxelworks-core", "voxelworks-platform", "voxelworks-render-cpu", "voxelworks-render-gpu", "voxelworks-scene"]
 external = []
 
-# The game is still on the legacy voxelworks-* crates (see docs/PHASE9.md).
-# Keep this list minimal; the target is an empty legacy section.
+# STUDS runtime now uses the ECS runner; legacy crates remain dev-dependencies
+# for existing compatibility tests/examples until Phase 9 steps 6-7 are completed.
 [allowed.legacy."studs"]
-workspace = ["engine_math", "engine_platform", "engine_render", "plugin_audio", "plugin_physics", "plugin_rendering", "plugin_voxel", "voxelworks-api", "voxelworks-platform", "voxelworks-render-cpu"]
+workspace = ["engine_app", "engine_events", "engine_math", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_audio", "plugin_physics", "plugin_rendering", "plugin_voxel", "voxelworks-platform", "voxelworks-render-cpu"]
 external = ["image"]
 
 [allowed.legacy."studs-bake-sprites"]
