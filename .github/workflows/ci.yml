@@ -42,6 +42,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           WGPU_BACKEND=vulkan cargo test --locked -p voxelworks-render-gpu --test parity -- --nocapture
+          WGPU_BACKEND=vulkan cargo test --locked -p plugin_rendering --lib gpu -- --nocapture
           cargo run --locked -p voxelworks-minimal -- --headless --renderer cpu
           WGPU_BACKEND=vulkan cargo run --locked -p voxelworks-minimal -- --headless --renderer gpu
 

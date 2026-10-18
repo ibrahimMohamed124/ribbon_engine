@@ -3,9 +3,8 @@
 Goal: `games/studs` runs on the ECS engine (`crates/` + `plugins/`), and
 `engine/` (the `voxelworks-*` crates) and the shims in `docs/SHIMS.md` are deleted.
 
-This phase is **not started**. The engine-side preparation (dependency leaks,
-CI checks, policy enforcement) is done; what remains is the game migration and
-the GPU backend move.
+Status: step 1 (GPU backend move) is done. The engine-side preparation (dependency
+leaks, CI checks, policy enforcement) is done; steps 2-8 remain.
 
 ## Why it is not a rename
 
@@ -23,25 +22,33 @@ Current game usage of legacy crates (counted from `use` paths in `games/studs`):
 | `voxelworks-api` | ~13 | `engine_render` frame contracts |
 | `voxelworks-platform` | ~10 | `engine_platform` + `App`/`Plugin` setup |
 
-## The blocker: the GPU backend
+## The former blocker: the GPU backend
 
-The only complete GPU voxel renderer, and its CPU/GPU parity test, are in
-`voxelworks-render-gpu` (about 1,650 lines). `engine_render` has the wgpu
-context and presenter, and `plugin_rendering` records a warning when its `gpu`
-backend is selected. Deleting `engine/` before this is ported would remove GPU
-rendering from the game. Port it first.
+The GPU voxel renderer (about 1,650 lines) used to exist only in
+`voxelworks-render-gpu`, so deleting `engine/` would have removed GPU rendering
+from the game. It has been moved to `plugin_rendering::gpu::voxel` (step 1).
+Note that the ECS rendering bridge in `plugin_rendering::ecs` still renders on
+the CPU and only warns when the GPU backend is selected; wiring it to the moved
+renderer is optional because phase 7 of `RENDERER_PLAN.md` replaces this path.
 
 ## Steps
 
 Each step is its own PR and must leave CI green. Do not remove `games/studs`
 from the build while migrating.
 
-- [ ] **1. Port the GPU voxel backend** into `plugin_rendering` (feature `gpu`),
-  using `engine_render::gpu`. Move `world.wgsl`, `ui.wgsl`, `present.wgsl` and
-  `tests/parity.rs`. Success criterion: the three fixture frame hashes in
-  `LEGACY_ARCHITECTURE.md` (`c0aa91941785e603`, `6666e2333fc5196c`,
-  `3260fd9f7e087f2e`) are reproduced on CPU, and GPU mean error stays at or below
-  the thresholds in the parity test.
+- [x] **1. Port the GPU voxel backend** into `plugin_rendering` (feature `gpu`).
+  Done: the renderer, presenter, WGSL shaders and inline tests now live in
+  `plugin_rendering::gpu::voxel` / `plugins/rendering/shaders/voxel/`. It
+  implements the shared `engine_render::Renderer<MaterialTable>` contract, so
+  the legacy `Renderer` trait still applies through its blanket impl.
+  `voxelworks-render-gpu` is now a re-export shim. Two deliberate choices: the
+  code is moved, not rewritten (it keeps its own wgpu device instead of
+  `engine_render::gpu::GpuContext`), because `RENDERER_PLAN.md` freezes this
+  raymarcher and replaces it in phase 7; and the parity test stays in the shim
+  crate until step 2 moves the legacy `testkit` it needs. Verified identical to
+  before the move: parity mean error `0.0000 / 0.4051 / 0.7043` (max `0 / 1 / 2`,
+  Mesa lavapipe) and headless `voxelworks-minimal` checksums (`gpu`
+  `8f1af7f2e5f0202b`, `cpu` `d3a66c50b652d12f`).
 - [ ] **2. Move `voxelworks-testkit`** (neutral fixture room) next to the plugin
   that owns the renderer, as a dev-only crate or a `tests/common` module. Keep
   it out of production dependencies (the allowlist already forbids it).

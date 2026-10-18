@@ -94,8 +94,9 @@ workspace.
 - Asset loading is synchronous and handles are weak.
 - The render graph is an ordered, validated pass list, not a resource allocator.
 - The ECS rendering bridge currently renders through its CPU backend. Selecting
-  its GPU backend only records a warning; the old standalone GPU renderer is
-  still under `engine/crates/render-gpu`.
+  its GPU backend only records a warning. The voxel GPU renderer itself lives in
+  `plugin_rendering::gpu::voxel` (frozen, replaced by the mesh renderer in
+  `docs/RENDERER_PLAN.md` phase 7) and is not yet wired into that bridge.
 - The editor has no text input and is compiled only with its `editor` feature
   in debug builds. The glyph table limits available UI characters.
 - Scene transforms are recomputed each frame; dirty tracking is not implemented.
@@ -103,8 +104,8 @@ workspace.
   migration and deletion of the old `engine/` tree are tracked in
   [`docs/PHASE9.md`](docs/PHASE9.md); the legacy design is documented in
   [`docs/LEGACY_ARCHITECTURE.md`](docs/LEGACY_ARCHITECTURE.md).
-- The only complete GPU voxel renderer is still the legacy `voxelworks-render-gpu`;
-  the CPU/GPU parity test lives there and must move with it.
+- The CPU/GPU parity test still lives in the legacy `voxelworks-render-gpu` shim
+  crate and moves with the legacy testkit (`docs/PHASE9.md` step 2).
 - The sample voxel room's `--renderer gpu` option currently falls back to CPU
   because the ECS GPU backend is pending.
 

@@ -34,7 +34,7 @@ graph TD
 
 `voxelworks-core` contains only math, voxel data and queries, physics, time, input, and audio IDs/bank descriptors. Originally dependency-free, it is now a compatibility facade that re-exports `engine_math`, `plugin_voxel`, `plugin_physics`, `engine_app::time`, `engine_platform::input` and the `plugin_audio` bank descriptors (see `SHIMS.md`). `voxelworks-scene` contains plain renderer-neutral world, camera, entity, material, texture, and style data. `voxelworks-api` is the sole owner of the app/frame/renderer contracts, draw lists, and plain framebuffer storage. No engine crate depends on a game.
 
-The platform enables `gpu` and `audio` by default. Both are optional features; `voxelworks-platform --no-default-features` uses the CPU renderer and omits audio playback. `voxelworks-render-gpu` is the primary rendering path. `voxelworks-render-cpu` owns software raycasting, rasterization, font drawing, and post-processing and serves as the reference and fallback.
+The platform enables `gpu` and `audio` by default. Both are optional features; `voxelworks-platform --no-default-features` uses the CPU renderer and omits audio playback. `voxelworks-render-gpu` is the primary rendering path (its implementation has since moved to `plugin_rendering::gpu::voxel`; the crate is now a re-export shim). `voxelworks-render-cpu` owns software raycasting, rasterization, font drawing, and post-processing and serves as the reference and fallback.
 
 ## Code placement rules
 
