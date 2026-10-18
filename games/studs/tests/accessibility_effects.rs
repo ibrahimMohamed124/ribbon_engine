@@ -1,8 +1,8 @@
+use plugin_rendering::style::RenderStyle;
 use studs::{
     game::Game,
     settings::{QualityPreset, VisualStyle},
 };
-use voxelworks_scene::style::RenderStyle;
 
 #[test]
 fn reduce_flashing_uses_steady_proximity_dimming_without_random_drops() {

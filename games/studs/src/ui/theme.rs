@@ -1,4 +1,4 @@
-use voxelworks_api::Effect;
+use engine_render::Effect;
 use voxelworks_render_cpu::{fill_rect, Canvas};
 
 pub const INK: u32 = 0x0008_0a0d;

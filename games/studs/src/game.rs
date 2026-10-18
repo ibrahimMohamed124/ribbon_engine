@@ -12,13 +12,13 @@ use crate::player::Player;
 use crate::surfaces::{enemy_view, page_view, StudsSurface};
 use crate::ui::hud::{draw_caught, draw_hud, draw_won};
 use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
-use voxelworks_api::Framebuffer;
+use engine_render::Framebuffer;
+use plugin_rendering::scene::Scene;
+use plugin_rendering::style::RenderStyle;
+use plugin_rendering::RENDER_DIST;
 use voxelworks_core::math::{forward_vec, hash4, Angles, Rng, Vect};
 use voxelworks_render_cpu::render::raycaster::render_with_materials;
 use voxelworks_render_cpu::Canvas;
-use voxelworks_scene::scene::Scene;
-use voxelworks_scene::style::RenderStyle;
-use voxelworks_scene::RENDER_DIST;
 
 pub const PAGES_TOTAL: usize = 6;
 const PAGE_PICKUP_RADIUS: f32 = 0.9;
@@ -375,12 +375,12 @@ impl Game {
                 Some(Scene {
                     world: &self.world,
                     empty_voxel: AIR,
-                    camera: voxelworks_scene::Camera {
+                    camera: plugin_rendering::Camera {
                         eye,
                         view,
                         hfov: hfov * (1.0 - jumpscare * 0.12),
                     },
-                    lighting: voxelworks_scene::LightingParams {
+                    lighting: plugin_rendering::LightingParams {
                         light_level: flash,
                         intensity: if style.billboards_enabled {
                             (prox * if enemy_seen { 1.15 } else { 1.0 }).clamp(0.0, 1.0)

@@ -142,7 +142,7 @@ external = []
 # The game is still on the legacy voxelworks-* crates (see docs/PHASE9.md).
 # Keep this list minimal; the target is an empty legacy section.
 [allowed.legacy."studs"]
-workspace = ["voxelworks-api", "voxelworks-core", "voxelworks-platform", "voxelworks-render-cpu", "voxelworks-scene"]
+workspace = ["engine_render", "plugin_rendering", "voxelworks-api", "voxelworks-core", "voxelworks-platform", "voxelworks-render-cpu"]
 external = ["image"]
 
 [allowed.legacy."studs-bake-sprites"]

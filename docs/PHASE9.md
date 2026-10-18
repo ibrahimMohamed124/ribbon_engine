@@ -3,9 +3,9 @@
 Goal: `games/studs` runs on the ECS engine (`crates/` + `plugins/`), and
 `engine/` (the `voxelworks-*` crates) and the shims in `docs/SHIMS.md` are deleted.
 
-Status: steps 1 (GPU backend move) and 2 (testkit move) are done. The engine-side
-preparation (dependency leaks, CI checks, policy enforcement) is done; steps 3-8
-remain.
+Status: steps 1 (GPU backend move), 2 (testkit move) and 3 (scene/api imports) are
+done. The engine-side preparation (dependency leaks, CI checks, policy
+enforcement) is done; steps 4-8 remain.
 
 ## Why it is not a rename
 
@@ -62,9 +62,18 @@ from the build while migrating.
   member, lockfile entry, allowlist entry and CI references are gone, and the
   `render-cpu`/`render-gpu` shims no longer have dev-dependencies or tests. The
   Linux CI step now runs `cargo test -p plugin_rendering --test parity`.
-- [ ] **3. Switch scene/api imports** in `games/studs` to `plugin_rendering` /
-  `engine_render` paths (`RenderStyle`, `MaterialTable`, `Camera`, `DrawList`,
-  `Framebuffer`, `Effect`). Mostly mechanical.
+- [x] **3. Switch scene/api imports** in `games/studs` to `plugin_rendering` /
+  `engine_render` paths. Done: every `voxelworks_scene::` path (`RenderStyle`,
+  `MaterialTable`, `Material`, `Camera`, `LightingParams`, `Scene`, `entities`,
+  `texture`, ...) now points at `plugin_rendering`, and `Effect`, `DrawList` and
+  `Framebuffer` come from `engine_render`, in `src/`, `examples/` and `tests/`.
+  The re-exports are the same types, so only imports changed: no test
+  expectation or golden value was touched. `games/studs` drops
+  `voxelworks-scene` and depends on `plugin_rendering` (feature `cpu` only, so
+  the game's `gpu` feature still controls wgpu) and `engine_render`; the
+  allowlist entry follows. `voxelworks-api` stays for the immediate-mode
+  contract (`App`, `Ctx`, `Flow`, `WindowConfig`, `WindowRequest`) and the
+  `FramePlan` alias, which go away with the runner in step 5.
 - [ ] **4. Switch core imports** (`math`, `voxel`, `physics`, `input`, `audio`) to
   `engine_math`, `plugin_voxel`, `plugin_physics`, `engine_platform::input`,
   `plugin_audio`. Delete the matching re-exports from `voxelworks-core` as

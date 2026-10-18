@@ -5,11 +5,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use voxelworks_api::DrawList;
+use engine_render::DrawList;
+use plugin_rendering::material::MaterialTable;
 use voxelworks_api::{App, FramePlan};
 use voxelworks_api::{Ctx, Flow, WindowConfig, WindowRequest};
 use voxelworks_core::input::MouseSource;
-use voxelworks_scene::material::MaterialTable;
 
 use crate::audio::{Audio, AudioAmbience};
 use crate::game::{Game, State, PAGES_TOTAL};

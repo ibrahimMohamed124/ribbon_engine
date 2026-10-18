@@ -1,4 +1,4 @@
-use voxelworks_scene::{Palette, RenderStyle, Tonemap, RENDER_DIST};
+use plugin_rendering::{Palette, RenderStyle, Tonemap, RENDER_DIST};
 
 pub fn classic() -> RenderStyle {
     RenderStyle::default()

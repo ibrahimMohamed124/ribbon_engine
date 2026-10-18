@@ -2566,12 +2566,13 @@ dependencies = [
 name = "studs"
 version = "0.3.0"
 dependencies = [
+ "engine_render",
  "image",
+ "plugin_rendering",
  "voxelworks-api",
  "voxelworks-core",
  "voxelworks-platform",
  "voxelworks-render-cpu",
- "voxelworks-scene",
 ]
 
 [[package]]

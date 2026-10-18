@@ -1,4 +1,4 @@
-use voxelworks_scene::entities::{
+use plugin_rendering::entities::{
     EntityAnimation, EntityBox, EntityDefinition, EntityKind, EntityRegistry, EntityRenderMode,
     EntityShadow,
 };
