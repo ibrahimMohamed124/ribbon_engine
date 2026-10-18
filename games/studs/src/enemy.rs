@@ -200,7 +200,7 @@ impl Enemy {
         let chest = Vect::new(player.x, player.y, player.z + 1.2);
         let to = Vect::new(chest.x - eye.x, chest.y - eye.y, chest.z - eye.z);
         let dist = (to.x * to.x + to.y * to.y + to.z * to.z).sqrt();
-        if dist > ENEMY_SIGHT_RANGE || dist < 1e-3 {
+        if !(1e-3..=ENEMY_SIGHT_RANGE).contains(&dist) {
             return false;
         }
         let direction = to.scale(1.0 / dist);

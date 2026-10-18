@@ -332,7 +332,7 @@ fn procedural_albedo(block: u8, hit: &Hit) -> f32 {
         } else if distance < 0.34 {
             base *= 0.6;
         }
-        if fx < 0.025 || fx > 0.975 || fy < 0.025 || fy > 0.975 {
+        if !(0.025..=0.975).contains(&fx) || !(0.025..=0.975).contains(&fy) {
             base *= 0.65;
         }
         base * (1.0 + 0.05 * hash4(hit.cell.0, hit.cell.1, hit.cell.2, 7))
