@@ -1,58 +1,113 @@
-# Architecture
+# Voxelworks Engine Architecture
 
-## Dependency layers
+The workspace is organized as a small engine core, optional plugins, sample
+applications, and the STUDS game. Engine crates do not depend on game code.
+`tools/allowed_deps.toml` is the machine-checked source for direct dependency
+policy; run `python tools/check_deps.py` after changing a manifest.
 
-The engine code follows a strict downward dependency direction. Arrows point from a consumer to its dependency.
+## Repository layout
+
+| Path | Contents | Package prefix |
+| --- | --- | --- |
+| `crates/` | Engine core: foundations, runtime, scene and rendering contracts, editor | `engine_*` |
+| `plugins/` | Optional domain behavior installed into an `App` | `plugin_*` (folder name omits the prefix: `plugins/physics` is `plugin_physics`) |
+| `examples/` | Small engine-only applications built on the ECS engine | none |
+| `games/` | Games composed from the engine and plugins | none |
+| `engine/` | **Legacy** `voxelworks-*` crates, kept only for `games/studs`; scheduled for deletion | `voxelworks-*` |
+| `docs/`, `tools/`, `assets/` | Plans and decisions, dependency policy tooling, engine sample assets | |
+
+New code never goes into `engine/`. Nothing outside `engine/` and `games/studs`
+may depend on a `voxelworks-*` crate, and `tools/check_deps.py` fails the build if it does.
+
+## Dependency graph
+
+Arrows point from a crate to what it may depend on (the full allowlist is in
+`tools/allowed_deps.toml`). Plugins and examples sit above this graph and
+depend only on `engine_*` crates and, where listed, on other plugins.
 
 ```mermaid
 graph TD
-  scene --> core
-  api --> scene
-  api --> core
-  cpu --> api
-  cpu --> scene
-  cpu --> core
-  gpu --> api
-  gpu --> scene
-  gpu --> core
-  platform --> api
-  platform --> scene
-  platform --> core
-  studs --> platform
-  studs --> gpu
-  studs --> cpu
-  studs --> api
+  math[engine_math]
+  ecs[engine_ecs]
+  events[engine_events] --> ecs
+  schedule[engine_schedule] --> ecs
+  reflect[engine_reflect] --> ecs
+  app[engine_app] --> ecs & events & schedule & math
+  plugins[engine_plugins] --> app
+  platform[engine_platform] --> app & plugins & events & math
+  assets[engine_assets] --> app & plugins & ecs & events
+  scene[engine_scene] --> ecs & reflect & math & app & plugins
+  render[engine_render] --> app & plugins & platform & assets & math
+  commands[engine_commands] --> ecs & reflect & scene
+  editor[engine_editor] --> app & plugins & platform & render & reflect & commands & scene
 ```
 
-`voxelworks-core` contains only math, voxel data and queries, physics, time, input, and audio IDs/bank descriptors. It has no dependencies. `voxelworks-scene` contains plain renderer-neutral world, camera, entity, material, texture, and style data. `voxelworks-api` is the sole owner of the app/frame/renderer contracts, draw lists, and plain framebuffer storage. No engine crate depends on a game.
+## Which rendering crate is which
 
-The platform enables `gpu` and `audio` by default. Both are optional features; `voxelworks-platform --no-default-features` uses the CPU renderer and omits audio playback. `voxelworks-render-gpu` is the primary rendering path. `voxelworks-render-cpu` owns software raycasting, rasterization, font drawing, and post-processing and serves as the reference and fallback.
+The names are close, so for the record:
 
-## Code placement rules
+| Package | Role |
+| --- | --- |
+| `engine_render` | Backend-neutral frame/draw contracts, render graph, CPU presenter and the optional wgpu context. Owns no scene knowledge. |
+| `plugin_rendering` | Voxel scene/material data, voxel extraction, the CPU raycaster and its ECS bridge. Its `cpu` and `gpu` features are independent; the `gpu` feature only enables `engine_render/gpu`. |
+| `plugin_render3d` | Instanced mesh renderer on wgpu with depth buffer, glTF models via `plugin_gltf`. |
 
-- Put portable math, voxel storage/queries, physics, input/time primitives, and audio identifiers in `core`.
-- Put scene and material descriptions in `scene`; do not place callbacks, OS/GPU handles, or renderer caches there.
-- Put app, frame, draw, and renderer contracts in `api`, with one definition per contract.
-- Put software drawing and CPU-only shading in `render-cpu`; GPU pipelines and buffers belong in `render-gpu`.
-- Put windows, device input, audio playback, and app lifecycle in `platform`.
-- Put game rules, levels, assets, and content-specific presets in `games/studs`.
+## Layers and responsibilities
 
-CI checks the dependency boundary: core has no dependencies; scene uses only core; no engine crate depends on a game; and core/scene/api do not depend on Rayon, winit, wgpu, or Rodio. It also scans engine source for game-specific vocabulary.
+| Layer | Packages | Does not do |
+| --- | --- | --- |
+| Foundations | `engine_math`, `engine_ecs`, `engine_events`, `engine_schedule` | Platform I/O, rendering, or gameplay |
+| Runtime | `engine_app`, `engine_plugins`, `engine_platform`, `engine_assets` | Game-specific rules or GPU scene extraction |
+| Scene and rendering contracts | `engine_reflect`, `engine_scene`, `engine_render`, `engine_commands`, `engine_editor` | Game assets, gameplay, or automatic parallelism |
+| Plugins | `plugin_voxel`, `plugin_physics`, `plugin_animation`, `plugin_audio`, `plugin_rendering`, `plugin_editor_tools` | Owning the app loop or game state |
+| Applications | `examples/*`, `games/studs` | Being dependencies of engine crates |
 
-## Assets
+The permitted package edges are listed in `tools/allowed_deps.toml`. Math and
+ECS are leaves; schedule/events build on ECS; app builds on those foundations;
+platform, assets, scene, and rendering build on app contracts; plugins add
+reusable domain behavior; games compose plugins.
 
-Only processed runtime assets and their credits/licenses are committed. Raw third-party archives and authoring sources are fetched on demand from URLs with SHA-256 checks in the game manifest and stay ignored under `games/studs/assets/source/`. `python games/studs/tools/fetch_assets.py --check` verifies the manifest, hashes, archive/source policy, and size limits.
+## Frame order and plugins
 
-## Renderer verification
+`App::update` advances `Time`, then runs `First`, `PreUpdate`, zero or more
+`FixedUpdate` steps, `Update`, `PostUpdate`, `Render`, and `Last`, in that
+order. The fixed-step loop is capped at eight steps per frame. `Startup` and
+`Shutdown` run once. Headless runs use a virtual 60 Hz delta.
 
-`voxelworks-testkit` provides a small engine-owned room with two materials, one box entity, one billboard entity, and a generated sprite atlas. It has no dependency on game assets. CPU goldens cover three styles plus draw layers, a fullscreen effect, brightness, entity rendering, and UI text. Their FNV-1a frame hashes are `c0aa91941785e603`, `6666e2333fc5196c`, and `3260fd9f7e087f2e`.
+Plugins are added in dependency order. Adding a plugin validates its declared
+dependencies and unique name, calls `build`, and records it in `Plugins`;
+`finish` hooks run when the app is built. Systems run serially in deterministic
+stage order. A plugin should declare its dependencies, install resources, and
+register systems in the appropriate stages.
 
-The CPU/GPU parity integration test renders those same three frame plans through `GpuRenderer` readback. On the local Windows adapter, the measured mean absolute RGB-channel errors were 0.0000, 0.3841, and 0.6895 (8-bit channel units); maximum channel errors were 0, 1, and 2. The assertions allow mean error up to 1.0 and maximum error up to 3 to tolerate small backend floating-point differences. The test prints `SKIP` and its reason when no adapter exists. Linux CI installs Mesa Vulkan software drivers and runs the parity test explicitly.
+## Writing a plugin or game
 
-The minimal example runs CPU or GPU interactively or headlessly, and prints an image checksum in headless mode. CPU and GPU checksums are expected to differ slightly due to backend arithmetic.
+A plugin implements `engine_plugins::Plugin`, names its required plugins, and
+adds reusable engine behavior. A game owns its content and gameplay, installs
+the needed plugins, and adds game-specific systems or a compatibility bridge.
+Keep dependencies from engine/plugin packages to game packages out of the
+workspace.
 
-## Known limitations
+## Current limits and migration state
 
-- `SurfaceShader::albedo` and `SurfaceShader::entity_surface` are CPU-only extension hooks. GPU appearance must be expressed through `MaterialTable` and shared sprite/PBR data. An ignored test in the GPU crate explicitly names the unsupported CPU-only callback appearance.
-- Parity is measured only on the neutral fixture and the current adapter/software Vulkan CI path. It does not guarantee pixel identity for every game-specific style/material combination or establish 1080p performance.
-- The GPU renderer currently enforces the exported limits for draw quads, render passes, PBR texture sets/maps, entities, and entity boxes; scenes exceeding them return descriptive errors.
+- Systems run serially; system parameter injection is not implemented.
+- Asset loading is synchronous and handles are weak.
+- The render graph is an ordered, validated pass list, not a resource allocator.
+- The ECS rendering bridge currently renders through its CPU backend. Selecting
+  its GPU backend only records a warning; the old standalone GPU renderer is
+  still under `engine/crates/render-gpu`.
+- The editor has no text input and is compiled only with its `editor` feature
+  in debug builds. The glyph table limits available UI characters.
+- Scene transforms are recomputed each frame; dirty tracking is not implemented.
+- STUDS still uses the old trait-based runner and compatibility shims. The
+  migration and deletion of the old `engine/` tree are tracked in
+  [`docs/PHASE9.md`](docs/PHASE9.md); the legacy design is documented in
+  [`docs/LEGACY_ARCHITECTURE.md`](docs/LEGACY_ARCHITECTURE.md).
+- The only complete GPU voxel renderer is still the legacy `voxelworks-render-gpu`;
+  the CPU/GPU parity test lives there and must move with it.
+- The sample voxel room's `--renderer gpu` option currently falls back to CPU
+  because the ECS GPU backend is pending.
+
+See `docs/SHIMS.md` for transitional imports, `docs/DECISIONS.md` for
+choices made where the refactor plan left behavior unspecified, and
+`docs/LEGACY_ARCHITECTURE.md` for renderer verification results.
