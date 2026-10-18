@@ -187,12 +187,12 @@ jobs:
           mkdir dist
           cp -r games/studs/assets dist/assets
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cp target/release/raycast_blocks.exe dist/
+            cp target/release/studs.exe dist/
           else
-            cp target/release/raycast_blocks dist/
+            cp target/release/studs dist/
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: raycast_blocks-${{ runner.os }}
+          name: studs-${{ runner.os }}
           path: dist
