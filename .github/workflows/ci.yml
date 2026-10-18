@@ -97,20 +97,15 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
 
-      - name: Core and scene dependency boundary
+      - name: Legacy crates do not pull optional backends by default-off
         shell: bash
         run: |
-          if cargo tree -p voxelworks-core -e normal --prefix none | grep -v '^voxelworks-core v'; then
-            echo "voxelworks-core must have zero dependencies"
-            exit 1
-          fi
-          if cargo tree -p voxelworks-scene -e normal --prefix none | grep -vE '^(voxelworks-scene|voxelworks-core) v'; then
-            echo "voxelworks-scene may depend only on voxelworks-core"
-            exit 1
-          fi
-          for crate in voxelworks-core voxelworks-scene voxelworks-api; do
-            if cargo tree -p "$crate" -e normal | grep -E '(rayon|minifb|winit|wgpu|rodio|enigo) v[0-9]'; then
-              echo "$crate must not depend on renderer or desktop packages"
+          # Direct edges are policed by tools/check_deps.py. This step checks the
+          # transitive result: without the gpu/audio features no legacy crate may
+          # compile wgpu, rodio or the CPU thread pool unless it owns the CPU renderer.
+          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-testkit voxelworks-platform; do
+            if cargo tree --locked -p "$crate" --no-default-features -e normal | grep -E '(wgpu|rodio|rayon|minifb|enigo) v[0-9]'; then
+              echo "$crate must not depend on GPU, audio or rayon without the matching feature"
               exit 1
             fi
           done
@@ -121,11 +116,11 @@ jobs:
       - name: Engine dependency and game-content boundary
         shell: bash
         run: |
-          if cargo tree -p engine_ecs -e normal | grep -vE '^(engine_ecs|hecs) v'; then
+          if cargo tree --locked -p engine_ecs -e normal --depth 1 --prefix none | grep -vE '^(engine_ecs|hecs) v'; then
             echo "engine_ecs may depend only on hecs"
             exit 1
           fi
-          if cargo tree -p engine_math -e normal | grep -v '^engine_math v'; then
+          if cargo tree --locked -p engine_math -e normal --depth 1 --prefix none | grep -v '^engine_math v'; then
             echo "engine_math must have no dependencies"
             exit 1
           fi
