@@ -47,22 +47,21 @@ def main() -> int:
 
         allowed_workspace = set(rule.get("workspace", []))
         allowed_external = set(rule.get("external", []))
-        if "*" in allowed_workspace:
-            allowed_workspace = names
+        if "*" in allowed_workspace or "*" in allowed_external:
+            print(f"wildcard allowances are not permitted: {name}")
+            failed = True
         for dependency in package["dependencies"]:
             dep_name = dependency.get("rename") or dependency["name"]
             # Metadata dependency names are Cargo package names except for a
             # renamed dependency, for which `rename` is the local crate alias.
             if dep_name in names:
-                if name in GAME_PACKAGES:
-                    continue
                 if dep_name in GAME_PACKAGES:
                     print(f"forbidden engine/game dependency: {name} -> {dep_name}")
                     failed = True
                 elif dep_name not in allowed_workspace:
                     print(f"offending workspace edge: {name} -> {dep_name}")
                     failed = True
-            elif dep_name not in allowed_external and "*" not in allowed_external:
+            elif dep_name not in allowed_external:
                 print(f"offending external edge: {name} -> {dep_name}")
                 failed = True
             if dep_name == "hecs" and name != "engine_ecs":
