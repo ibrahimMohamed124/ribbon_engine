@@ -22,6 +22,7 @@ members = [
   "examples/hello_ecs",
   "examples/voxel_room",
   "examples/editor_demo",
+  "examples/gpu_window",
   "engine/crates/core",
   "engine/crates/scene",
   "engine/crates/api",

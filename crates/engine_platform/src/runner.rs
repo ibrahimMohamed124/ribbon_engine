@@ -7,6 +7,7 @@ use crate::runtime::{
 use crate::{cursor, keyboard, window};
 use engine_app::{App, AppExit, LogBuffer, LogLevel, Runner, Time};
 use engine_events::{EventCursor, WorldEventsExt};
+use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -43,7 +44,7 @@ impl Runner for WinitRunner {
 
 struct DesktopDriver {
     app: Option<App>,
-    window: Option<Window>,
+    window: Option<Arc<Window>>,
     window_id: Option<WindowId>,
     exit_cursor: EventCursor<AppExit>,
     last_frame: Instant,
@@ -102,7 +103,12 @@ impl ApplicationHandler for DesktopDriver {
             .with_inner_size(PhysicalSize::new(config.width.max(1), config.height.max(1)));
         match event_loop.create_window(attributes) {
             Ok(window) => {
+                let window = Arc::new(window);
                 self.window_id = Some(window.id());
+                if let Some(app) = self.app.as_mut() {
+                    app.world
+                        .insert_resource(crate::runtime::WindowHandle(window.clone()));
+                }
                 self.window = Some(window);
                 self.last_frame = Instant::now();
             }

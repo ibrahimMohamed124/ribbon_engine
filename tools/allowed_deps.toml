@@ -43,7 +43,7 @@ external = ["serde", "ron"]
 
 [allowed."engine_render"]
 workspace = ["engine_app", "engine_plugins", "engine_platform", "engine_assets", "engine_math"]
-external = ["wgpu"]
+external = ["wgpu", "pollster"]
 
 [allowed."engine_commands"]
 workspace = ["engine_ecs", "engine_reflect", "engine_scene"]
@@ -84,6 +84,10 @@ external = []
 [allowed."voxel_room"]
 workspace = ["engine_app", "engine_assets", "engine_ecs", "engine_math", "engine_platform", "engine_plugins", "engine_scene", "engine_render", "engine_reflect", "plugin_rendering", "plugin_voxel"]
 external = ["ron"]
+
+[allowed."gpu_window"]
+workspace = ["engine_app", "engine_events", "engine_platform", "engine_plugins", "engine_render"]
+external = []
 
 [allowed."editor_demo"]
 workspace = ["engine_app", "engine_ecs", "engine_editor", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_rendering", "plugin_editor_tools"]

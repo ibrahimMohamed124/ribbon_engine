@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["gpu"]
-gpu = ["dep:wgpu"]
+gpu = ["dep:wgpu", "dep:pollster"]
 
 [dependencies]
 engine_app = { path = "../engine_app" }
@@ -14,3 +14,4 @@ engine_platform = { path = "../engine_platform" }
 engine_assets = { path = "../engine_assets" }
 engine_math = { path = "../engine_math" }
 wgpu = { version = "25.0.2", optional = true }
+pollster = { version = "0.4", optional = true }

@@ -64,6 +64,12 @@ pub struct WindowResized {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Focused(pub bool);
 
+/// Shared handle to the desktop window, inserted by the runner once it exists.
+///
+/// Renderers use it to create a surface; it is absent in headless runs.
+#[derive(Clone)]
+pub struct WindowHandle(pub std::sync::Arc<winit::window::Window>);
+
 /// The desktop window requested to close.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CloseRequested;

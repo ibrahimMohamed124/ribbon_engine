@@ -14,5 +14,5 @@ pub mod window;
 
 pub use config::{MouseButtons, MouseInput, WindowConfig};
 pub use runner::WinitRunner;
-pub use runtime::{Input, PlatformConfig, PlatformPlugin, VirtualInput};
+pub use runtime::{Input, PlatformConfig, PlatformPlugin, VirtualInput, WindowHandle};
 pub use winit::window::Window;

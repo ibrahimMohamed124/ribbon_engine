@@ -8,5 +8,7 @@ pub mod present;
 
 #[cfg(feature = "gpu")]
 pub mod gpu;
+#[cfg(feature = "gpu")]
+pub mod gpu_window;
 
 pub use frame::{DrawCommand, DrawList, Effect, FramePlan, Framebuffer, Renderer};
