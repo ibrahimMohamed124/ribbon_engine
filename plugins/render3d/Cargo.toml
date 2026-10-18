@@ -1,0 +1,15 @@
+[package]
+name = "plugin_render3d"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+engine_app = { path = "../../crates/engine_app" }
+engine_plugins = { path = "../../crates/engine_plugins" }
+engine_render = { path = "../../crates/engine_render" }
+bytemuck = { version = "1", features = ["derive"] }
+glam = "0.30"
+wgpu = "25.0.2"
+
+[dev-dependencies]
+pollster = "0.4"

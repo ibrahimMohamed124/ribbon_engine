@@ -71,6 +71,18 @@ Each step is a `RenderNode` in the existing `RenderGraph`.
 New external crates (`glam`, `gltf`, `bytemuck`, `pollster`) must be added to
 `tools/allowed_deps.toml` or `tools/check_deps.py` fails.
 
+## Status
+
+- Phase 1 (window presents through wgpu): done. `GpuWindowPlugin` owns the
+  context and surface; drawing steps register as `FramePass` objects and run
+  after the clear.
+- Phase 2 (first mesh): done. `plugin_render3d` draws instanced cubes with a
+  depth buffer and a directional light. `examples/cube_spin` shows it.
+- 3D conventions: right-handed, Y-up, camera looks down -Z (glTF). Voxel
+  worlds are Z-up and need a conversion when phase 7 meshes them.
+- `Transform3D` currently lives in `plugin_render3d` and is world-space. Moving
+  it into `engine_scene` with hierarchy support is part of phase 3.
+
 ## Phases and exit criteria
 
 | Phase | Work | Done when |

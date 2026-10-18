@@ -85,6 +85,14 @@ external = []
 workspace = ["engine_app", "engine_assets", "engine_ecs", "engine_math", "engine_platform", "engine_plugins", "engine_scene", "engine_render", "engine_reflect", "plugin_rendering", "plugin_voxel"]
 external = ["ron"]
 
+[allowed."plugin_render3d"]
+workspace = ["engine_app", "engine_plugins", "engine_render"]
+external = ["bytemuck", "glam", "wgpu", "pollster"]
+
+[allowed."cube_spin"]
+workspace = ["engine_app", "engine_events", "engine_platform", "engine_plugins", "engine_render", "plugin_render3d"]
+external = []
+
 [allowed."gpu_window"]
 workspace = ["engine_app", "engine_events", "engine_platform", "engine_plugins", "engine_render"]
 external = []

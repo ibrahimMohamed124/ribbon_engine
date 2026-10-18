@@ -19,17 +19,46 @@ impl Default for ClearColor {
     }
 }
 
+/// Everything a [`FramePass`] needs to draw into the current window frame.
+pub struct FrameTarget<'a> {
+    /// Device that owns the frame's resources.
+    pub device: &'a wgpu::Device,
+    /// Queue used to submit work.
+    pub queue: &'a wgpu::Queue,
+    /// Color view of the swap-chain image, already cleared this frame.
+    pub view: &'a wgpu::TextureView,
+    /// Color format of [`FrameTarget::view`].
+    pub format: wgpu::TextureFormat,
+    /// Frame size in pixels.
+    pub size: (u32, u32),
+}
+
+/// A drawing step that runs after the clear, in registration order.
+///
+/// The world is passed mutably so a pass can read cameras and meshes; passes
+/// should create GPU resources lazily from the device and `format` they receive.
+pub trait FramePass: Send + Sync + 'static {
+    /// Draw into `target`.
+    fn render(&mut self, world: &mut World, target: &FrameTarget<'_>);
+}
+
 /// GPU state owned by the window presenter.
 #[derive(Default)]
 pub struct GpuWindow {
     context: Option<GpuContext>,
     failed: bool,
+    passes: Vec<Box<dyn FramePass>>,
 }
 
 impl GpuWindow {
     /// Borrow the context once the window surface has been created.
     pub fn context(&self) -> Option<&GpuContext> {
         self.context.as_ref()
+    }
+
+    /// Append a pass that runs every frame after the clear.
+    pub fn add_pass(&mut self, pass: Box<dyn FramePass>) {
+        self.passes.push(pass);
     }
 }
 
@@ -92,52 +121,72 @@ pub fn gpu_window_system(world: &mut World) {
         .unwrap_or_default()
         .0;
     let mut error = None;
-    {
-        let state = world.resource_mut::<GpuWindow>();
-        if state.failed {
+    world.resource_scope::<GpuWindow, _>(|world, state| {
+        let GpuWindow {
+            context,
+            failed,
+            passes,
+        } = state;
+        if *failed {
             return;
         }
-        if state.context.is_none() {
+        if context.is_none() {
             match pollster::block_on(GpuContext::new_for_window(
                 window.clone(),
                 size.width,
                 size.height,
             )) {
-                Ok(context) => state.context = Some(context),
+                Ok(created) => *context = Some(created),
                 Err(failure) => {
-                    state.failed = true;
+                    *failed = true;
                     error = Some(format!("GPU window disabled: {}", failure.0));
+                    return;
                 }
             }
         }
-        if let Some(context) = state.context.as_mut() {
-            let stale = context
-                .surface_config()
-                .is_some_and(|c| c.width != size.width || c.height != size.height);
-            if stale {
+        let Some(context) = context.as_mut() else {
+            return;
+        };
+        let stale = context
+            .surface_config()
+            .is_some_and(|c| c.width != size.width || c.height != size.height);
+        if stale {
+            context.resize(size.width, size.height);
+        }
+        let Some(format) = context.surface_config().map(|c| c.format) else {
+            return;
+        };
+        let Some(surface) = context.surface() else {
+            return;
+        };
+        match surface.get_current_texture() {
+            Ok(frame) => {
+                let view = frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+                clear_view(context.device(), context.queue(), &view, color);
+                let target = FrameTarget {
+                    device: context.device(),
+                    queue: context.queue(),
+                    view: &view,
+                    format,
+                    size: (size.width, size.height),
+                };
+                for pass in passes.iter_mut() {
+                    pass.render(world, &target);
+                }
+                frame.present();
+            }
+            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
                 context.resize(size.width, size.height);
             }
-            if let Some(surface) = context.surface() {
-                match surface.get_current_texture() {
-                    Ok(frame) => {
-                        let view = frame
-                            .texture
-                            .create_view(&wgpu::TextureViewDescriptor::default());
-                        clear_view(context.device(), context.queue(), &view, color);
-                        frame.present();
-                    }
-                    Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
-                        context.resize(size.width, size.height);
-                    }
-                    Err(wgpu::SurfaceError::Timeout) => {}
-                    Err(other) => {
-                        state.failed = true;
-                        error = Some(format!("GPU window disabled: {other}"));
-                    }
-                }
+            Err(wgpu::SurfaceError::Timeout) => {}
+            Err(other) => {
+                *failed = true;
+                error = Some(format!("GPU window disabled: {other}"));
             }
         }
-    }
+    });
     if let Some(message) = error {
         log_error(world, message);
     }

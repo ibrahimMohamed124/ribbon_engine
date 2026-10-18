@@ -450,6 +450,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cube_spin"
+version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_events",
+ "engine_platform",
+ "engine_plugins",
+ "engine_render",
+ "plugin_render3d",
+]
+
+[[package]]
 name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -863,6 +875,12 @@ dependencies = [
  "log",
  "xml-rs",
 ]
+
+[[package]]
+name = "glam"
+version = "0.30.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19fc433e8437a212d1b6f1e68c7824af3aed907da60afa994e7f542d18d12aa9"
 
 [[package]]
 name = "glow"
@@ -1924,6 +1942,19 @@ dependencies = [
  "engine_plugins",
  "engine_scene",
  "plugin_voxel",
+]
+
+[[package]]
+name = "plugin_render3d"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "engine_app",
+ "engine_plugins",
+ "engine_render",
+ "glam",
+ "pollster",
+ "wgpu",
 ]
 
 [[package]]
