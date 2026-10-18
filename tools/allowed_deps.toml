@@ -97,6 +97,10 @@ external = ["glam", "gltf"]
 workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "plugin_gltf", "plugin_render3d"]
 external = []
 
+[allowed."graphics_showcase"]
+workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "plugin_gltf", "plugin_render3d"]
+external = []
+
 [allowed."cube_spin"]
 workspace = ["engine_app", "engine_events", "engine_platform", "engine_plugins", "engine_render", "plugin_render3d"]
 external = []

@@ -1017,6 +1017,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphics_showcase"
+version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_assets",
+ "engine_events",
+ "engine_platform",
+ "engine_plugins",
+ "engine_render",
+ "plugin_gltf",
+ "plugin_render3d",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
