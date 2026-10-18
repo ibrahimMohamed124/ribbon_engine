@@ -10,14 +10,16 @@ pub struct Vertex {
     pub position: [f32; 3],
     /// Object-space unit normal.
     pub normal: [f32; 3],
+    /// Texture coordinate, origin at the top-left.
+    pub uv: [f32; 2],
 }
 
-/// Vertices and 16-bit triangle indices (counter-clockwise front faces).
+/// Vertices and 32-bit triangle indices (counter-clockwise front faces).
 pub struct MeshData {
     /// Vertex list.
     pub vertices: Vec<Vertex>,
     /// Triangle indices into `vertices`.
-    pub indices: Vec<u16>,
+    pub indices: Vec<u32>,
 }
 
 /// Unit cube centered on the origin with per-face normals.
@@ -35,7 +37,7 @@ pub fn cube() -> MeshData {
     let mut vertices = Vec::with_capacity(24);
     let mut indices = Vec::with_capacity(36);
     for (normal, u, v) in FACES {
-        let base = vertices.len() as u16;
+        let base = vertices.len() as u32;
         for (cu, cv) in CORNERS {
             vertices.push(Vertex {
                 position: [
@@ -44,6 +46,7 @@ pub fn cube() -> MeshData {
                     normal[2] * 0.5 + u[2] * cu + v[2] * cv,
                 ],
                 normal,
+                uv: [cu + 0.5, 0.5 - cv],
             });
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);

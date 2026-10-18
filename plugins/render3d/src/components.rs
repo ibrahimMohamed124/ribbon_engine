@@ -1,7 +1,9 @@
 //! ECS components for the 3D renderer. World space is right-handed and Y-up;
 //! a camera looks down its local -Z axis (the glTF convention).
 
+use engine_assets::Handle;
 use glam::{Mat4, Quat, Vec3};
+use plugin_gltf::ModelAsset;
 
 /// Position, orientation and scale of an entity in world space.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -93,6 +95,15 @@ pub struct MeshInstance {
     pub mesh: BuiltinMesh,
     /// Linear RGB base color.
     pub color: [f32; 3],
+}
+
+/// Draw every primitive of a loaded glTF model at the entity's transform.
+///
+/// The model is drawn once its asset has finished loading in the `AssetServer`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelInstance {
+    /// Handle of the model in the asset server.
+    pub model: Handle<ModelAsset>,
 }
 
 /// Directional light plus constant ambient term.

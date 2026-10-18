@@ -86,8 +86,16 @@ workspace = ["engine_app", "engine_assets", "engine_ecs", "engine_math", "engine
 external = ["ron"]
 
 [allowed."plugin_render3d"]
-workspace = ["engine_app", "engine_plugins", "engine_render"]
+workspace = ["engine_app", "engine_assets", "engine_plugins", "engine_render", "plugin_gltf"]
 external = ["bytemuck", "glam", "wgpu", "pollster"]
+
+[allowed."plugin_gltf"]
+workspace = ["engine_assets"]
+external = ["glam", "gltf"]
+
+[allowed."model_viewer"]
+workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "plugin_gltf", "plugin_render3d"]
+external = []
 
 [allowed."cube_spin"]
 workspace = ["engine_app", "engine_events", "engine_platform", "engine_plugins", "engine_render", "plugin_render3d"]
