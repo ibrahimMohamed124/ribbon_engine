@@ -2,9 +2,10 @@
 
 > **Deprecated.** This describes the original engine crates in `engine/crates/`.
 > New work goes into the ECS engine described in [`ARCHITECTURE.md`](../ARCHITECTURE.md).
-> The legacy crates remain only because `games/studs` still builds on them; see
-> [`PHASE9.md`](PHASE9.md) for the removal plan and [`SHIMS.md`](SHIMS.md) for the
-> compatibility re-exports that currently bridge the two trees.
+> The STUDS runtime now uses the ECS app/platform/plugin path. Legacy crates
+> remain for compatibility dev-dependencies and other legacy packages; see
+> [`PHASE9.md`](PHASE9.md) for the removal plan and [`SHIMS.md`](SHIMS.md) for
+> the remaining compatibility re-exports.
 > The CPU/GPU parity results below are still the reference measurements for the
 > legacy renderers and must be reproduced by their replacements.
 

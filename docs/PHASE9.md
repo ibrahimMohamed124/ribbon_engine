@@ -3,25 +3,33 @@
 Goal: `games/studs` runs on the ECS engine (`crates/` + `plugins/`), and
 `engine/` (the `voxelworks-*` crates) and the shims in `docs/SHIMS.md` are deleted.
 
-Status: steps 1 (GPU backend move), 2 (testkit move), 3 (scene/api imports) and 4
-(core imports) are done. The engine-side preparation (dependency leaks, CI checks,
-policy enforcement) is done; steps 5-8 remain.
+Status: steps 1-5 are complete. Step 5 replaces the STUDS executable's legacy
+immediate-mode runner with the ECS app and plugins. Step 6 is in progress: the
+frame loop, UI/input integration, rendering submission, and audio events run in
+schedule systems, but core gameplay state is still wrapped in `StudsState` and
+`Game` resources rather than fully split into ECS components/systems. Steps 7-8
+remain open because compatibility tests/examples and other legacy packages still
+reference the shim crates.
 
 ## Why it is not a rename
 
-`games/studs` is written against the legacy immediate-mode `App`/`Ctx`/`Renderer`
-traits. The new engine is an ECS with plugins and a staged schedule. Moving the
-game means rewriting its update loop as systems and plugins, not changing imports.
+The ECS engine is built around `engine_app::App`, plugins, and a staged schedule.
+The STUDS binary now uses that app and no longer calls
+`voxelworks_platform::run_with_mode` or implements the immediate-mode `App`/`Ctx`
+traits. The migration is still incremental: `StudsPlugin` currently hosts the
+existing `Game` aggregate as a resource and adapts its frame plan to the CPU
+renderer; decomposing player, enemy, level, settings, and input into domain ECS
+components/systems remains Phase 9 step 6.
 
-Current game usage of legacy crates (counted from `use` paths in `games/studs`):
+Current direct legacy dependency use in `games/studs`:
 
-| Legacy crate | References | Replaced by |
+| Legacy crate | Current role | Migration target |
 | --- | --- | --- |
-| `voxelworks-core` | ~32 | `engine_math`, `plugin_voxel`, `plugin_physics`, `engine_platform::input`, `plugin_audio` |
-| `voxelworks-scene` | ~18 | `plugin_rendering` scene/material/style types |
-| `voxelworks-render-cpu` | ~15 | `plugin_rendering` (`cpu` feature) |
-| `voxelworks-api` | ~13 | `engine_render` frame contracts |
-| `voxelworks-platform` | ~10 | `engine_platform` + `App`/`Plugin` setup |
+| `voxelworks-core` | No direct STUDS dependency; retained transitively by legacy shim crates | `engine_math`, `plugin_voxel`, `plugin_physics`, `engine_platform::input`, `plugin_audio` |
+| `voxelworks-scene` | No direct STUDS dependency; current source uses `plugin_rendering` types | `plugin_rendering` scene/material/style types |
+| `voxelworks-render-cpu` | Dev-dependency for unchanged renderer/golden integration coverage and `realistic_bench` | `plugin_rendering` (`cpu` feature) |
+| `voxelworks-api` | No direct STUDS dependency or runtime use; legacy compatibility packages still use it | `engine_render` frame contracts and `engine_app` |
+| `voxelworks-platform` | Dev-dependency for existing audio decoding coverage; no runtime runner use | `engine_platform` + `App`/`Plugin` setup |
 
 ## The former blocker: the GPU backend
 
@@ -69,11 +77,13 @@ from the build while migrating.
   `Framebuffer` come from `engine_render`, in `src/`, `examples/` and `tests/`.
   The re-exports are the same types, so only imports changed: no test
   expectation or golden value was touched. `games/studs` drops
-  `voxelworks-scene` and depends on `plugin_rendering` (feature `cpu` only, so
-  the game's `gpu` feature still controls wgpu) and `engine_render`; the
-  allowlist entry follows. `voxelworks-api` stays for the immediate-mode
-  contract (`App`, `Ctx`, `Flow`, `WindowConfig`, `WindowRequest`) and the
-  `FramePlan` alias, which go away with the runner in step 5.
+  `voxelworks-scene` and depends on `plugin_rendering` with the `cpu` feature
+  and on `engine_render`; the old game-level renderer mode is retired with the
+  runner replacement because the ECS GPU voxel bridge is still pending. The
+  allowlist entry follows. At the time of step 3, `voxelworks-api` remained for
+  the immediate-mode contract; step 5 has now removed that contract from the
+  executable path, although compatibility users still require the shim crates
+  until step 7.
 - [x] **4. Switch core imports** (`math`, `voxel`, `physics`, `input`, `audio`) to
   `engine_math`, `plugin_voxel`, `plugin_physics`, `engine_platform::input`,
   `plugin_audio`. Done for `games/studs`: it no longer depends on
@@ -83,12 +93,20 @@ from the build while migrating.
   with their dependencies. `math`, `voxel`, `input` and `time` stay because the
   legacy `api`, `platform` and `minimal` crates still use them; they go with those
   crates in step 7.
-- [ ] **5. Replace the runner.** `voxelworks_platform::run_with_mode` and
-  `RendererMode` become an `App` assembled from `engine_platform` and the
-  rendering plugin. This is where the immediate-mode `App` trait goes away.
-- [ ] **6. Convert the game to a plugin.** Port `player`, `enemy`, `level`, `game`
-  and the settings/input handling to systems in the correct stages. Keep the
-  golden tests (`games/studs/tests/*`) unchanged; they are the safety net.
+- [x] **5. Replace the runner.** `games/studs/src/main.rs` now builds an
+  `engine_app::App` and registers `PlatformPlugin`, `ScenePlugin`,
+  `RenderingPlugin`, `AudioPlugin`, and `StudsPlugin`. `voxelworks_platform::run_with_mode`,
+  `RendererMode`, and the immediate-mode `App`/`Ctx` implementation are removed
+  from the executable path. `engine_platform` presents a neutral `WindowFrame`
+  through its softbuffer-backed winit runner; the game submits its existing CPU
+  renderer output from `Stage::Render`. The old platform and render-CPU shims are
+  retained only as dev-dependencies for compatibility tests/examples.
+- [ ] **6. Finish converting the game to a plugin.** The input/UI loop, fixed-step
+  game update, audio events, title updates, and frame submission now run as
+  schedule systems. However, player, enemy, level, and the core `Game` state are
+  still grouped in a `Game` resource rather than independently modeled as ECS
+  components/systems. Complete that domain decomposition while keeping the
+  golden tests (`games/studs/tests/*`) unchanged.
 - [ ] **7. Delete `engine/`.** Move `engine/examples/minimal` to `examples/`
   (rewritten on the ECS engine) or drop it. Remove the `[allowed.legacy]`
   section from `tools/allowed_deps.toml`, `docs/SHIMS.md`, the `voxelworks-*`
