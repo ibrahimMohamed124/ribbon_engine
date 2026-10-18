@@ -104,8 +104,8 @@ workspace.
   migration and deletion of the old `engine/` tree are tracked in
   [`docs/PHASE9.md`](docs/PHASE9.md); the legacy design is documented in
   [`docs/LEGACY_ARCHITECTURE.md`](docs/LEGACY_ARCHITECTURE.md).
-- The CPU/GPU parity test still lives in the legacy `voxelworks-render-gpu` shim
-  crate and moves with the legacy testkit (`docs/PHASE9.md` step 2).
+- The neutral renderer fixture, the CPU golden test and the CPU/GPU parity test
+  live in `plugins/rendering/tests/` (`docs/PHASE9.md` step 2).
 - The sample voxel room's `--renderer gpu` option currently falls back to CPU
   because the ECS GPU backend is pending.
 

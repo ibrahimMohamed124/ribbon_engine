@@ -41,7 +41,7 @@ jobs:
       - name: GPU fixture parity and engine-only headless examples
         if: runner.os == 'Linux'
         run: |
-          WGPU_BACKEND=vulkan cargo test --locked -p voxelworks-render-gpu --test parity -- --nocapture
+          WGPU_BACKEND=vulkan cargo test --locked -p plugin_rendering --test parity -- --nocapture
           WGPU_BACKEND=vulkan cargo test --locked -p plugin_rendering --lib gpu -- --nocapture
           cargo run --locked -p voxelworks-minimal -- --headless --renderer cpu
           WGPU_BACKEND=vulkan cargo run --locked -p voxelworks-minimal -- --headless --renderer gpu
@@ -104,7 +104,7 @@ jobs:
           # Direct edges are policed by tools/check_deps.py. This step checks the
           # transitive result: without the gpu/audio features no legacy crate may
           # compile wgpu, rodio or the CPU thread pool unless it owns the CPU renderer.
-          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-testkit voxelworks-platform; do
+          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-platform; do
             if cargo tree --locked -p "$crate" --no-default-features -e normal | grep -E '(wgpu|rodio|rayon|minifb|enigo) v[0-9]'; then
               echo "$crate must not depend on GPU, audio or rayon without the matching feature"
               exit 1
@@ -134,11 +134,11 @@ jobs:
         shell: bash
         run: |
           if grep -riE 'studs|warden|page|enemy|monster|crawl|flashlight|maze|jumpscare' \
-            crates plugins engine/crates/core engine/crates/scene engine/crates/api engine/crates/render-cpu engine/crates/render-gpu engine/crates/platform engine/crates/testkit; then
+            crates plugins engine/crates/core engine/crates/scene engine/crates/api engine/crates/render-cpu engine/crates/render-gpu engine/crates/platform; then
             echo "Engine crates contain game-specific vocabulary"
             exit 1
           fi
-          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-render-cpu voxelworks-render-gpu voxelworks-platform voxelworks-testkit; do
+          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-render-cpu voxelworks-render-gpu voxelworks-platform; do
             if cargo tree -p "$crate" -e normal | grep -i 'studs'; then
               echo "$crate must not depend on the studs game"
               exit 1

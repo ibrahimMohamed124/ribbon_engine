@@ -1,46 +1,10 @@
-use voxelworks_api::{Framebuffer, Renderer};
-use voxelworks_core::{math::Vect, voxel::Hit};
-use voxelworks_render_cpu::{render::lighting::SurfaceShader, renderer::CpuRenderer};
-use voxelworks_render_gpu::GpuRenderer;
-use voxelworks_scene::style::RenderStyle;
-use voxelworks_testkit::{styles, Fixture, HEIGHT, WIDTH};
+#![cfg(all(feature = "cpu", feature = "gpu"))]
 
-struct FixtureShader;
+mod common;
 
-impl SurfaceShader for FixtureShader {
-    fn albedo(&self, block: u8, _hit: &Hit, _direction: Vect, _style: &RenderStyle) -> f32 {
-        match block {
-            1 => 0.62,
-            2 => 0.82,
-            _ => 0.0,
-        }
-    }
-
-    fn entity_surface(
-        &self,
-        _kind: voxelworks_scene::entities::EntityKind,
-        _point: [f32; 3],
-        _axis: usize,
-        _sign: f32,
-        part: u8,
-    ) -> voxelworks_render_cpu::render::lighting::EntitySurface {
-        voxelworks_render_cpu::render::lighting::EntitySurface {
-            gray: if part == 0 { 0.32 } else { 0.48 },
-            emissive: false,
-        }
-    }
-}
-
-fn render_cpu(fixture: &Fixture, variant: usize) -> Framebuffer {
-    let mut renderer = CpuRenderer::new(WIDTH as u32, HEIGHT as u32, FixtureShader);
-    let mut output = Framebuffer::new(WIDTH, HEIGHT);
-    renderer.render_frame(
-        &fixture.frame(styles()[variant], variant),
-        &fixture.materials,
-    );
-    renderer.present(&mut output);
-    output
-}
+use common::{render_cpu, styles, Fixture, HEIGHT, WIDTH};
+use engine_render::{Framebuffer, Renderer};
+use plugin_rendering::gpu::voxel::GpuRenderer;
 
 fn error(cpu: &Framebuffer, gpu: &Framebuffer) -> (f64, u8) {
     let mut sum = 0u64;

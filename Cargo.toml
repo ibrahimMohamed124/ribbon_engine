@@ -33,7 +33,6 @@ members = [
   "engine/crates/render-cpu",
   "engine/crates/render-gpu",
   "engine/crates/platform",
-  "engine/crates/testkit",
   "engine/examples/minimal",
   "games/studs",
   "games/studs/tools/bake_sprites",

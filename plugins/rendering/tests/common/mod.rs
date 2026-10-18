@@ -1,17 +1,23 @@
 //! Small renderer fixtures that use no game assets.
+//!
+//! Dev-only: lives in the test tree of `plugin_rendering`, so no production
+//! crate can depend on it. Every test that includes this module is gated on
+//! the `cpu` feature.
 
-use std::sync::OnceLock;
-use voxelworks_api::{DrawCommand, DrawList, FramePlan};
-use voxelworks_core::math::{Angles, Vect};
-use voxelworks_core::voxel::VoxelWorld;
-use voxelworks_scene::entities::{
+use engine_math::{Angles, Vect};
+use engine_render::{DrawCommand, DrawList, Effect, FramePlan, Framebuffer, Renderer};
+use plugin_rendering::cpu::render::lighting::{EntitySurface, SurfaceShader};
+use plugin_rendering::cpu::renderer::CpuRenderer;
+use plugin_rendering::entities::{
     EntityAnimation, EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
     EntityRenderMode, EntityShadow,
 };
-use voxelworks_scene::material::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
-use voxelworks_scene::scene::{Camera, LightingParams, Scene};
-use voxelworks_scene::style::{Palette, RenderStyle, Tonemap};
-use voxelworks_scene::texture::SpriteAtlas;
+use plugin_rendering::material::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
+use plugin_rendering::scene::{Camera, LightingParams, RenderScene};
+use plugin_rendering::style::{Palette, RenderStyle, Tonemap};
+use plugin_rendering::texture::SpriteAtlas;
+use plugin_voxel::{Hit, VoxelWorld};
+use std::sync::OnceLock;
 
 pub const WIDTH: usize = 64;
 pub const HEIGHT: usize = 40;
@@ -144,8 +150,8 @@ impl Fixture {
         }
     }
 
-    pub fn scene(&self, style: RenderStyle) -> Scene<'_> {
-        Scene {
+    pub fn scene(&self, style: RenderStyle) -> RenderScene<'_> {
+        RenderScene {
             world: &self.world,
             empty_voxel: 0,
             camera: Camera {
@@ -164,7 +170,7 @@ impl Fixture {
         }
     }
 
-    pub fn frame(&self, style: RenderStyle, variant: usize) -> FramePlan<'_> {
+    pub fn frame(&self, style: RenderStyle, variant: usize) -> FramePlan<RenderScene<'_>> {
         let mut world_layer = DrawList::new(WIDTH, HEIGHT);
         let mut ui_layer = DrawList::new(WIDTH, HEIGHT);
         if variant > 0 {
@@ -177,9 +183,7 @@ impl Fixture {
             });
             world_layer
                 .commands
-                .push(DrawCommand::Effect(voxelworks_api::Effect::FogBackground {
-                    frame: 17,
-                }));
+                .push(DrawCommand::Effect(Effect::FogBackground { frame: 17 }));
             ui_layer.commands.push(DrawCommand::Rect {
                 x: 4,
                 y: 32,
@@ -227,4 +231,43 @@ pub fn styles() -> [RenderStyle; 3] {
             ..RenderStyle::default()
         },
     ]
+}
+
+/// Flat shader matching the fixture's two constant-albedo materials.
+pub struct FixtureShader;
+
+impl SurfaceShader for FixtureShader {
+    fn albedo(&self, block: u8, _hit: &Hit, _direction: Vect, _style: &RenderStyle) -> f32 {
+        match block {
+            1 => 0.62,
+            2 => 0.82,
+            _ => 0.0,
+        }
+    }
+
+    fn entity_surface(
+        &self,
+        _kind: EntityKind,
+        _point: [f32; 3],
+        _axis: usize,
+        _sign: f32,
+        part: u8,
+    ) -> EntitySurface {
+        EntitySurface {
+            gray: if part == 0 { 0.32 } else { 0.48 },
+            emissive: false,
+        }
+    }
+}
+
+/// Render one fixture variant through the CPU reference renderer.
+pub fn render_cpu(fixture: &Fixture, variant: usize) -> Framebuffer {
+    let mut renderer = CpuRenderer::new(WIDTH as u32, HEIGHT as u32, FixtureShader);
+    let mut output = Framebuffer::new(WIDTH, HEIGHT);
+    renderer.render_frame(
+        &fixture.frame(styles()[variant % 3], variant),
+        &fixture.materials,
+    );
+    renderer.present(&mut output);
+    output
 }

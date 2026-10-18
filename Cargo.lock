@@ -2928,7 +2928,6 @@ dependencies = [
  "voxelworks-api",
  "voxelworks-core",
  "voxelworks-scene",
- "voxelworks-testkit",
 ]
 
 [[package]]
@@ -2936,11 +2935,6 @@ name = "voxelworks-render-gpu"
 version = "0.1.0"
 dependencies = [
  "plugin_rendering",
- "voxelworks-api",
- "voxelworks-core",
- "voxelworks-render-cpu",
- "voxelworks-scene",
- "voxelworks-testkit",
 ]
 
 [[package]]
@@ -2948,15 +2942,6 @@ name = "voxelworks-scene"
 version = "0.1.0"
 dependencies = [
  "plugin_rendering",
-]
-
-[[package]]
-name = "voxelworks-testkit"
-version = "0.1.0"
-dependencies = [
- "voxelworks-api",
- "voxelworks-core",
- "voxelworks-scene",
 ]
 
 [[package]]

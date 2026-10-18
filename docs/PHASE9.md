@@ -3,8 +3,9 @@
 Goal: `games/studs` runs on the ECS engine (`crates/` + `plugins/`), and
 `engine/` (the `voxelworks-*` crates) and the shims in `docs/SHIMS.md` are deleted.
 
-Status: step 1 (GPU backend move) is done. The engine-side preparation (dependency
-leaks, CI checks, policy enforcement) is done; steps 2-8 remain.
+Status: steps 1 (GPU backend move) and 2 (testkit move) are done. The engine-side
+preparation (dependency leaks, CI checks, policy enforcement) is done; steps 3-8
+remain.
 
 ## Why it is not a rename
 
@@ -44,14 +45,23 @@ from the build while migrating.
   `voxelworks-render-gpu` is now a re-export shim. Two deliberate choices: the
   code is moved, not rewritten (it keeps its own wgpu device instead of
   `engine_render::gpu::GpuContext`), because `RENDERER_PLAN.md` freezes this
-  raymarcher and replaces it in phase 7; and the parity test stays in the shim
-  crate until step 2 moves the legacy `testkit` it needs. Verified identical to
+  raymarcher and replaces it in phase 7; and the parity test stayed in the shim
+  crate until step 2 moved the fixture it needs. Verified identical to
   before the move: parity mean error `0.0000 / 0.4051 / 0.7043` (max `0 / 1 / 2`,
   Mesa lavapipe) and headless `voxelworks-minimal` checksums (`gpu`
   `8f1af7f2e5f0202b`, `cpu` `d3a66c50b652d12f`).
-- [ ] **2. Move `voxelworks-testkit`** (neutral fixture room) next to the plugin
-  that owns the renderer, as a dev-only crate or a `tests/common` module. Keep
-  it out of production dependencies (the allowlist already forbids it).
+- [x] **2. Move `voxelworks-testkit`** (neutral fixture room) next to the plugin
+  that owns the renderer, as a dev-only module. Done: the fixture now lives in
+  `plugins/rendering/tests/common/mod.rs`, written against `engine_math`,
+  `engine_render`, `plugin_voxel` and `plugin_rendering` types, so it is part of
+  that crate's test tree and cannot be a production dependency. The CPU fixture
+  golden (`tests/fixture_golden.rs`, feature `cpu`) and the CPU/GPU parity test
+  (`tests/parity.rs`, features `cpu` + `gpu`) moved with it and share one
+  `FixtureShader`/`render_cpu` helper instead of two copies. The expected hashes
+  and parity thresholds are unchanged. `engine/crates/testkit`, its workspace
+  member, lockfile entry, allowlist entry and CI references are gone, and the
+  `render-cpu`/`render-gpu` shims no longer have dev-dependencies or tests. The
+  Linux CI step now runs `cargo test -p plugin_rendering --test parity`.
 - [ ] **3. Switch scene/api imports** in `games/studs` to `plugin_rendering` /
   `engine_render` paths (`RenderStyle`, `MaterialTable`, `Camera`, `DrawList`,
   `Framebuffer`, `Effect`). Mostly mechanical.

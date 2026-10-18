@@ -45,7 +45,7 @@ The platform enables `gpu` and `audio` by default. Both are optional features; `
 - Put windows, device input, audio playback, and app lifecycle in `platform`.
 - Put game rules, levels, assets, and content-specific presets in `games/studs`.
 
-CI enforces direct dependency edges with `tools/check_deps.py` (allowlist in `tools/allowed_deps.toml`), checks that `core`, `scene`, `api`, `testkit` and `platform` do not compile `wgpu`, `rodio` or `rayon` unless the matching feature is enabled, and scans engine source for game-specific vocabulary.
+CI enforces direct dependency edges with `tools/check_deps.py` (allowlist in `tools/allowed_deps.toml`), checks that `core`, `scene`, `api` and `platform` do not compile `wgpu`, `rodio` or `rayon` unless the matching feature is enabled, and scans engine source for game-specific vocabulary.
 
 ## Assets
 
@@ -53,9 +53,9 @@ Only processed runtime assets and their credits/licenses are committed. Raw thir
 
 ## Renderer verification
 
-`voxelworks-testkit` provides a small engine-owned room with two materials, one box entity, one billboard entity, and a generated sprite atlas. It has no dependency on game assets. CPU goldens cover three styles plus draw layers, a fullscreen effect, brightness, entity rendering, and UI text. Their FNV-1a frame hashes are `c0aa91941785e603`, `6666e2333fc5196c`, and `3260fd9f7e087f2e`.
+The neutral fixture (formerly `voxelworks-testkit`, now `plugins/rendering/tests/common/mod.rs`) provides a small engine-owned room with two materials, one box entity, one billboard entity, and a generated sprite atlas. It has no dependency on game assets. CPU goldens cover three styles plus draw layers, a fullscreen effect, brightness, entity rendering, and UI text. Their FNV-1a frame hashes are `c0aa91941785e603`, `6666e2333fc5196c`, and `3260fd9f7e087f2e`.
 
-The CPU/GPU parity integration test renders those same three frame plans through `GpuRenderer` readback. On the local Windows adapter, the measured mean absolute RGB-channel errors were 0.0000, 0.3841, and 0.6895 (8-bit channel units); maximum channel errors were 0, 1, and 2. The assertions allow mean error up to 1.0 and maximum error up to 3 to tolerate small backend floating-point differences. The test prints `SKIP` and its reason when no adapter exists. Linux CI installs Mesa Vulkan software drivers and runs the parity test explicitly.
+The CPU/GPU parity integration test renders those same three frame plans through `GpuRenderer` readback. On the local Windows adapter, the measured mean absolute RGB-channel errors were 0.0000, 0.3841, and 0.6895 (8-bit channel units); maximum channel errors were 0, 1, and 2. The assertions allow mean error up to 1.0 and maximum error up to 3 to tolerate small backend floating-point differences. The test prints `SKIP` and its reason when no adapter exists. Linux CI installs Mesa Vulkan software drivers and runs the parity test explicitly (`cargo test -p plugin_rendering --test parity`).
 
 The minimal example runs CPU or GPU interactively or headlessly, and prints an image checksum in headless mode. CPU and GPU checksums are expected to differ slightly due to backend arithmetic.
 

@@ -5,10 +5,3 @@ edition = "2021"
 
 [dependencies]
 plugin_rendering = { path = "../../../plugins/rendering", default-features = false, features = ["gpu"] }
-
-[dev-dependencies]
-voxelworks-core = { path = "../core" }
-voxelworks-scene = { path = "../scene" }
-voxelworks-api = { path = "../api" }
-voxelworks-testkit = { path = "../testkit" }
-voxelworks-render-cpu = { path = "../render-cpu" }
