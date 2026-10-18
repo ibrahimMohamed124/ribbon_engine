@@ -14,12 +14,7 @@ pub use plugin_voxel::VoxelWorldRes;
 pub use types::{entities, material, scene, style, texture};
 
 #[cfg(feature = "gpu")]
-pub mod gpu {
-    //! GPU context and offscreen target supplied by `engine_render`.
-
-    pub use engine_render::gpu::{GpuContext, OffscreenTarget};
-    pub use engine_render::graph::RenderError;
-}
+pub mod gpu;
 pub use types::{
     BaseAlbedoRule, Camera, LightingParams, Material, MaterialTable, Palette, PbrTextureSet,
     RenderScene, RenderStyle, RgbaMipChain, RgbaMipLevel, Scene, TextureAtlas, TextureColorSpace,

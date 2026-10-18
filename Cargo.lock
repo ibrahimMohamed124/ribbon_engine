@@ -2049,6 +2049,7 @@ dependencies = [
 name = "plugin_rendering"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_app",
  "engine_assets",
  "engine_ecs",
@@ -2059,7 +2060,9 @@ dependencies = [
  "engine_render",
  "engine_scene",
  "plugin_voxel",
+ "pollster",
  "rayon",
+ "wgpu",
 ]
 
 [[package]]
@@ -2932,16 +2935,12 @@ dependencies = [
 name = "voxelworks-render-gpu"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
- "pollster",
- "raw-window-handle",
+ "plugin_rendering",
  "voxelworks-api",
  "voxelworks-core",
  "voxelworks-render-cpu",
  "voxelworks-scene",
  "voxelworks-testkit",
- "wgpu",
- "winit",
 ]
 
 [[package]]

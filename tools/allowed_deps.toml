@@ -63,7 +63,7 @@ external = []
 
 [allowed."plugin_rendering"]
 workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_events", "engine_assets", "engine_platform", "engine_render", "engine_scene", "engine_math", "plugin_voxel"]
-external = ["rayon"]
+external = ["rayon", "wgpu", "pollster", "bytemuck"]
 
 [allowed."plugin_animation"]
 workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_math"]
@@ -132,8 +132,8 @@ workspace = ["voxelworks-api", "voxelworks-core", "voxelworks-scene"]
 external = []
 
 [allowed.legacy."voxelworks-render-gpu"]
-workspace = ["voxelworks-api", "voxelworks-core", "voxelworks-render-cpu", "voxelworks-scene", "voxelworks-testkit"]
-external = ["bytemuck", "pollster", "raw-window-handle", "wgpu", "winit"]
+workspace = ["plugin_rendering", "voxelworks-api", "voxelworks-core", "voxelworks-render-cpu", "voxelworks-scene", "voxelworks-testkit"]
+external = []
 
 [allowed.legacy."voxelworks-platform"]
 workspace = ["engine_platform", "engine_render", "plugin_audio", "voxelworks-api", "voxelworks-core", "voxelworks-render-cpu", "voxelworks-render-gpu", "voxelworks-scene"]
