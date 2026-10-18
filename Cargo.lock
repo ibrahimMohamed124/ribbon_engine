@@ -2566,11 +2566,15 @@ dependencies = [
 name = "studs"
 version = "0.3.0"
 dependencies = [
+ "engine_math",
+ "engine_platform",
  "engine_render",
  "image",
+ "plugin_audio",
+ "plugin_physics",
  "plugin_rendering",
+ "plugin_voxel",
  "voxelworks-api",
- "voxelworks-core",
  "voxelworks-platform",
  "voxelworks-render-cpu",
 ]
@@ -2887,8 +2891,6 @@ dependencies = [
  "engine_app",
  "engine_math",
  "engine_platform",
- "plugin_audio",
- "plugin_physics",
  "plugin_voxel",
 ]
 

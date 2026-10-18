@@ -17,9 +17,13 @@ gpu = ["voxelworks-platform/gpu"]
 audio = ["voxelworks-platform/audio"]
 
 [dependencies]
-voxelworks-core = { path = "../../engine/crates/core" }
 voxelworks-api = { path = "../../engine/crates/api" }
+engine_math = { path = "../../crates/engine_math" }
+engine_platform = { path = "../../crates/engine_platform" }
 engine_render = { path = "../../crates/engine_render", default-features = false }
+plugin_audio = { path = "../../plugins/audio", default-features = false }
+plugin_physics = { path = "../../plugins/physics" }
+plugin_voxel = { path = "../../plugins/voxel" }
 plugin_rendering = { path = "../../plugins/rendering", default-features = false, features = ["cpu"] }
 voxelworks-render-cpu = { path = "../../engine/crates/render-cpu" }
 voxelworks-platform = { path = "../../engine/crates/platform", default-features = false }

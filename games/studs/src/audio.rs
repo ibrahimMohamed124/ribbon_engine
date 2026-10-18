@@ -1,11 +1,11 @@
 //! Game audio events translated to the reusable mixer and desktop sound bank.
 
-use voxelworks_core::audio::{AmbienceAsset, AmbienceId, SoundAsset, SoundBank, SoundId};
+use plugin_audio::{AmbienceAsset, AmbienceId, SoundAsset, SoundBank, SoundId};
 use voxelworks_platform::mixer::{Audio as Mixer, AudioBackend as MixerBackend};
 
 /// Game-specific sound IDs. Numeric values remain stable for saved/debugged data.
 pub mod sounds {
-    use voxelworks_core::audio::SoundId;
+    use plugin_audio::SoundId;
 
     pub const FOOTSTEP: SoundId = SoundId(0);
     pub const CHASE_FOOTSTEP: SoundId = SoundId(1);
@@ -19,7 +19,7 @@ pub mod sounds {
 
 /// Game-specific ambience IDs.
 pub mod ambiences {
-    use voxelworks_core::audio::AmbienceId;
+    use plugin_audio::AmbienceId;
 
     pub const MENU: AmbienceId = AmbienceId(0);
     pub const THREAT: AmbienceId = AmbienceId(1);

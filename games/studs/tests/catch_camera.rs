@@ -1,9 +1,9 @@
+use engine_math::Vect;
 use studs::config::DEFAULT_HFOV;
 use studs::{
     enemy::EnemyAnimation,
     game::{Game, State},
 };
-use voxelworks_core::math::Vect;
 
 #[test]
 fn catch_scene_looks_up_zooms_and_uses_attack_pose() {

@@ -3,9 +3,9 @@
 Goal: `games/studs` runs on the ECS engine (`crates/` + `plugins/`), and
 `engine/` (the `voxelworks-*` crates) and the shims in `docs/SHIMS.md` are deleted.
 
-Status: steps 1 (GPU backend move), 2 (testkit move) and 3 (scene/api imports) are
-done. The engine-side preparation (dependency leaks, CI checks, policy
-enforcement) is done; steps 4-8 remain.
+Status: steps 1 (GPU backend move), 2 (testkit move), 3 (scene/api imports) and 4
+(core imports) are done. The engine-side preparation (dependency leaks, CI checks,
+policy enforcement) is done; steps 5-8 remain.
 
 ## Why it is not a rename
 
@@ -74,10 +74,15 @@ from the build while migrating.
   allowlist entry follows. `voxelworks-api` stays for the immediate-mode
   contract (`App`, `Ctx`, `Flow`, `WindowConfig`, `WindowRequest`) and the
   `FramePlan` alias, which go away with the runner in step 5.
-- [ ] **4. Switch core imports** (`math`, `voxel`, `physics`, `input`, `audio`) to
+- [x] **4. Switch core imports** (`math`, `voxel`, `physics`, `input`, `audio`) to
   `engine_math`, `plugin_voxel`, `plugin_physics`, `engine_platform::input`,
-  `plugin_audio`. Delete the matching re-exports from `voxelworks-core` as
-  each one is no longer used.
+  `plugin_audio`. Done for `games/studs`: it no longer depends on
+  `voxelworks-core` and names the new crates directly (`plugin_audio` with default
+  features off, as before). Only imports changed, so no golden value moved.
+  The `audio` and `physics` re-exports are deleted from `voxelworks-core` along
+  with their dependencies. `math`, `voxel`, `input` and `time` stay because the
+  legacy `api`, `platform` and `minimal` crates still use them; they go with those
+  crates in step 7.
 - [ ] **5. Replace the runner.** `voxelworks_platform::run_with_mode` and
   `RendererMode` become an `App` assembled from `engine_platform` and the
   rendering plugin. This is where the immediate-mode `App` trait goes away.

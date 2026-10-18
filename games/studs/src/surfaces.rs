@@ -4,14 +4,14 @@ use std::sync::OnceLock;
 
 pub use crate::entities::ENEMY_BOUNDS;
 use crate::entities::{PAGE, WARDEN};
+use engine_math::{hash4, Vect};
 use plugin_rendering::entities::{EntityInstance, EntityKind};
 use plugin_rendering::texture::{
     PbrTextureSet, RgbaMipChain, RgbaMipLevel, SpriteAtlas, Texture, TextureColorSpace, TextureId,
 };
 use plugin_rendering::RenderStyle;
 use plugin_rendering::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
-use voxelworks_core::math::{hash4, Vect};
-use voxelworks_core::voxel::{face_uv, Hit};
+use plugin_voxel::{face_uv, Hit};
 use voxelworks_render_cpu::render::entities::EntitySurface;
 use voxelworks_render_cpu::render::lighting::SurfaceShader;
 
@@ -449,9 +449,9 @@ pub fn page_view(pos: Vect, time: f32, index: f32) -> EntityInstance {
 #[cfg(test)]
 mod tests {
     use super::{apply_texture_modulation, wall_texture_modulation};
-    use voxelworks_core::math::Vect;
-    use voxelworks_core::voxel::Hit;
+    use engine_math::Vect;
     use plugin_rendering::texture::Texture;
+    use plugin_voxel::Hit;
 
     #[test]
     fn texture_modulation_preserves_classic_at_zero_and_stays_moderate() {

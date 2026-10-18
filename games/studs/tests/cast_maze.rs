@@ -1,5 +1,5 @@
+use engine_math::{Rng, Vect};
 use studs::world::{World, AIR, X_BLOCKS, Y_BLOCKS, Z_BLOCKS};
-use voxelworks_core::math::{Rng, Vect};
 
 fn unit(rng: &mut Rng) -> f32 {
     (rng.next_u32() >> 8) as f32 / 16_777_216.0

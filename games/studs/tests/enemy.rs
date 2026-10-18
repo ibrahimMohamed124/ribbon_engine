@@ -1,8 +1,8 @@
+use engine_math::{Angles, Rng, Vect};
 use studs::enemy::{
     bfs_next, Enemy, CATCH_DIST, ENEMY_AWAKE_AFTER, ENEMY_BASE_SPEED, SEEN_SPEED_FACTOR,
 };
 use studs::world::{World, FLOOR_TOP};
-use voxelworks_core::math::{Angles, Rng, Vect};
 
 fn world() -> World {
     World::generate(&mut Rng::new(42))

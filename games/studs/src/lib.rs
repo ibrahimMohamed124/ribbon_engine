@@ -13,7 +13,7 @@
 //!     audio.rs      backend-agnostic sound events
 //!     ui/           menus, controls, settings, and pixel UI theme
 //!     settings.rs   persisted user settings
-//!   voxelworks_core   shared math, voxel storage, and framebuffer primitives
+//!   engine_math, plugin_voxel   shared math and voxel storage
 //! ```
 
 pub mod app;

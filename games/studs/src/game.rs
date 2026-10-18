@@ -12,11 +12,11 @@ use crate::player::Player;
 use crate::surfaces::{enemy_view, page_view, StudsSurface};
 use crate::ui::hud::{draw_caught, draw_hud, draw_won};
 use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
+use engine_math::{forward_vec, hash4, Angles, Rng, Vect};
 use engine_render::Framebuffer;
 use plugin_rendering::scene::Scene;
 use plugin_rendering::style::RenderStyle;
 use plugin_rendering::RENDER_DIST;
-use voxelworks_core::math::{forward_vec, hash4, Angles, Rng, Vect};
 use voxelworks_render_cpu::render::raycaster::render_with_materials;
 use voxelworks_render_cpu::Canvas;
 

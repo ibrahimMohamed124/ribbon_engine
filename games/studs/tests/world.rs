@@ -1,6 +1,6 @@
+use engine_math::{Rng, Vect};
 use studs::enemy::bfs_next;
 use studs::world::{World, AIR, FLOOR, X_BLOCKS, Y_BLOCKS, Z_BLOCKS};
-use voxelworks_core::math::{Rng, Vect};
 
 #[test]
 fn ray_down_hits_floor_top() {
