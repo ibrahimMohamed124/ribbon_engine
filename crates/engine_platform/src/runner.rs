@@ -164,7 +164,8 @@ impl SoftwarePresenter {
                 )
                 .map_err(|error| error.to_string())?;
             self.dimensions = (size.width, size.height);
-            self.pixels.resize(size.width as usize * size.height as usize, 0);
+            self.pixels
+                .resize(size.width as usize * size.height as usize, 0);
         }
         scale_frame(
             frame.width,
@@ -174,7 +175,10 @@ impl SoftwarePresenter {
             size.height,
             &mut self.pixels,
         );
-        let mut buffer = self.surface.buffer_mut().map_err(|error| error.to_string())?;
+        let mut buffer = self
+            .surface
+            .buffer_mut()
+            .map_err(|error| error.to_string())?;
         buffer.copy_from_slice(&self.pixels);
         buffer.present().map_err(|error| error.to_string())
     }
@@ -189,7 +193,8 @@ fn scale_frame(
     destination: &mut [u32],
 ) {
     destination.fill(0);
-    if source_width == 0 || source_height == 0 || destination_width == 0 || destination_height == 0 {
+    if source_width == 0 || source_height == 0 || destination_width == 0 || destination_height == 0
+    {
         return;
     }
     let scale = (destination_width as f32 / source_width as f32)
@@ -215,9 +220,10 @@ fn scale_frame(
             let sx = (((px - offset_x) / scale).floor() as usize).min(source_width - 1);
             let source_index = sy * source_width + sx;
             let destination_index = y as usize * destination_width as usize + x as usize;
-            if let (Some(&pixel), Some(output)) =
-                (source.get(source_index), destination.get_mut(destination_index))
-            {
+            if let (Some(&pixel), Some(output)) = (
+                source.get(source_index),
+                destination.get_mut(destination_index),
+            ) {
                 *output = pixel & 0x00ff_ffff;
             }
         }
@@ -246,7 +252,10 @@ impl ApplicationHandler for DesktopDriver {
                     app.world
                         .insert_resource(crate::runtime::WindowHandle(window.clone()));
                     app.world.resource_mut::<crate::runtime::Input>().focused = true;
-                    app.world.resource_mut::<PendingInput>().events.push(PlatformEvent::Focused(true));
+                    app.world
+                        .resource_mut::<PendingInput>()
+                        .events
+                        .push(PlatformEvent::Focused(true));
                 }
                 self.requested_window_size = (config.width.max(1), config.height.max(1));
                 self.applied_title = config.title.clone();
@@ -368,10 +377,8 @@ impl ApplicationHandler for DesktopDriver {
             let requested_size = (config.width.max(1), config.height.max(1));
             if requested_size != self.requested_window_size {
                 if let Some(window) = self.window.as_ref() {
-                    let _ = window.request_inner_size(PhysicalSize::new(
-                        requested_size.0,
-                        requested_size.1,
-                    ));
+                    let _ = window
+                        .request_inner_size(PhysicalSize::new(requested_size.0, requested_size.1));
                 }
                 self.requested_window_size = requested_size;
             }
