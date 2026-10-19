@@ -178,9 +178,7 @@ fn build_primitive(
         Some(indices) => indices.into_u32().collect(),
         None => (0..positions.len() as u32).collect(),
     };
-    if !indices.chunks_exact(3).remainder().is_empty()
-        || indices.iter().any(|&i| i as usize >= positions.len())
-    {
+    if !indices.len().is_multiple_of(3) || indices.iter().any(|&i| i as usize >= positions.len()) {
         return Err("primitive indices are out of range".to_owned());
     }
     let normals = match reader.read_normals() {
@@ -206,11 +204,10 @@ fn build_primitive(
 /// Area-weighted vertex normals for meshes that ship without any.
 pub fn smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
     let mut sums = vec![Vec3::ZERO; positions.len()];
-    for triangle in indices.chunks_exact(3) {
-        let [a, b, c] =
-            [triangle[0], triangle[1], triangle[2]].map(|i| Vec3::from(positions[i as usize]));
+    for &triangle in indices.as_chunks::<3>().0 {
+        let [a, b, c] = triangle.map(|i| Vec3::from(positions[i as usize]));
         let face = (b - a).cross(c - a);
-        for &i in triangle {
+        for i in triangle {
             sums[i as usize] += face;
         }
     }
@@ -228,15 +225,19 @@ fn to_rgba8(image: &gltf::image::Data) -> Result<ImageData, String> {
     match image.format {
         Format::R8G8B8A8 => out.extend_from_slice(pixels),
         Format::R8G8B8 => pixels
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .for_each(|p| out.extend_from_slice(&[p[0], p[1], p[2], 255])),
         Format::R8G8 => pixels
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .for_each(|p| out.extend_from_slice(&[p[0], p[0], p[0], p[1]])),
         Format::R8 => pixels
             .iter()
             .for_each(|&p| out.extend_from_slice(&[p, p, p, 255])),
-        Format::R16G16B16A16 => pixels.chunks_exact(8).for_each(|p| {
+        Format::R16G16B16A16 => pixels.as_chunks::<8>().0.iter().for_each(|p| {
             out.extend_from_slice(&[
                 high(&p[0..2]),
                 high(&p[2..4]),
@@ -244,7 +245,7 @@ fn to_rgba8(image: &gltf::image::Data) -> Result<ImageData, String> {
                 high(&p[6..8]),
             ])
         }),
-        Format::R16G16B16 => pixels.chunks_exact(6).for_each(|p| {
+        Format::R16G16B16 => pixels.as_chunks::<6>().0.iter().for_each(|p| {
             out.extend_from_slice(&[high(&p[0..2]), high(&p[2..4]), high(&p[4..6]), 255])
         }),
         other => return Err(format!("unsupported image format {other:?}")),
