@@ -9,4 +9,5 @@ engine_events = { path = "../../crates/engine_events" }
 engine_platform = { path = "../../crates/engine_platform" }
 engine_plugins = { path = "../../crates/engine_plugins" }
 engine_render = { path = "../../crates/engine_render" }
+engine_scene = { path = "../../crates/engine_scene" }
 plugin_render3d = { path = "../../plugins/render3d" }

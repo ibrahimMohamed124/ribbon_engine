@@ -10,6 +10,7 @@ use engine_platform::input::Key;
 use engine_platform::{Input, PlatformConfig, PlatformPlugin};
 use engine_plugins::AppPluginExt;
 use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use engine_scene::ScenePlugin;
 use plugin_gltf::{GltfLoader, ModelAsset};
 use plugin_render3d::glam::{Quat, Vec3};
 use plugin_render3d::{
@@ -386,6 +387,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let asset_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
     let mut app = App::new();
     app.add_plugin(PlatformPlugin)?;
+    app.add_plugin(ScenePlugin)?;
     app.add_plugin(AssetPlugin)?;
     let (checker, checker_center, triangle, triangle_center) = {
         let server = app.world.resource_mut::<AssetServer>();

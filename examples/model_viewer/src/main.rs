@@ -10,6 +10,7 @@ use engine_events::WorldEventsExt;
 use engine_platform::{PlatformConfig, PlatformPlugin};
 use engine_plugins::AppPluginExt;
 use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use engine_scene::ScenePlugin;
 use plugin_gltf::{GltfLoader, ModelAsset};
 use plugin_render3d::glam::{Quat, Vec3};
 use plugin_render3d::{Camera3D, ModelInstance, Render3dPlugin, Transform3D};
@@ -92,6 +93,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.insert_resource(ClearColor([0.03, 0.04, 0.06, 1.0]));
     app.insert_resource(FrameLimit(limit));
     app.add_plugin(PlatformPlugin)?;
+    app.add_plugin(ScenePlugin)?;
     app.add_plugin(AssetPlugin)?;
     app.add_plugin(GpuWindowPlugin)?;
     app.add_plugin(Render3dPlugin)?;

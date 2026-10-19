@@ -25,6 +25,7 @@ members = [
   "examples/voxel_room",
   "examples/editor_demo",
   "examples/graphics_showcase",
+  "examples/scene_hierarchy_3d",
   "examples/gpu_window",
   "examples/cube_spin",
   "examples/model_viewer",
