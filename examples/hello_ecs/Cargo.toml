@@ -1,0 +1,9 @@
+[package]
+name = "hello_ecs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+engine_app = { path = "../../crates/engine_app" }
+engine_ecs = { path = "../../crates/engine_ecs" }
+engine_schedule = { path = "../../crates/engine_schedule" }

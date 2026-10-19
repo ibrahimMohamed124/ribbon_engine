@@ -1,56 +1,60 @@
 # Voxelworks Engine
 
-Voxelworks is a reusable Rust engine for rendering voxel scenes. GPU rendering is the primary path; the CPU renderer remains a reference backend and fallback. The separate [`studs`](games/studs/) game demonstrates how an application supplies content and rules.
+Voxelworks is a Rust game engine built around a small ECS core, a staged
+scheduler and optional plugins, with a voxel raycasting renderer (CPU and GPU)
+and a wgpu mesh renderer. The [`studs`](games/studs/) game demonstrates an
+application built on it.
 
-## Crates
+> **Status:** `studs` now starts through the ECS `engine_app::App` with
+> `engine_platform`, `engine_scene`, `plugin_rendering`, and `plugin_audio`.
+> The old immediate-mode runner and `App`/`Ctx` traits are no longer on the
+> game executable's runtime path. The live maze, run progression, player, enemy,
+> and page pickups are now ECS resources/entities with scheduled simulation systems.
+> STUDS supports `--renderer cpu|gpu|auto`; GPU rendering currently uses the existing
+> offscreen voxel raycaster and copies its frame to the window. Legacy shim crates
+> remain for compatibility examples until the remaining Phase 9 cleanup. See
+> [docs/PHASE9.md](docs/PHASE9.md).
 
-| Crate | Responsibility |
+## Layout
+
+| Path | Contents |
 | --- | --- |
-| `voxelworks-core` | Math, voxel data and queries, physics, input, timing, and audio identifiers. No dependencies. |
-| `voxelworks-scene` | Renderer-neutral scene, entity, material, texture, and style data. |
-| `voxelworks-api` | The single app, frame, drawing, framebuffer, and renderer contract. |
-| `voxelworks-render-gpu` | Primary wgpu renderer, offscreen readback, and window presenter. |
-| `voxelworks-render-cpu` | Software reference raycaster, rasterizer, font, and post-processing. |
-| `voxelworks-platform` | Window, input, audio playback, and the application runner. GPU and audio are optional features. |
-| `voxelworks-testkit` | Neutral engine-only scenes used by renderer tests; dev-only. |
+| `crates/` | Engine core (`engine_*`): math, ECS, events, schedule, app, plugins, platform, assets, scene, render, reflection, commands, editor |
+| `plugins/` | Optional features (`plugin_*`): voxel, physics, rendering, render3d, gltf, animation, audio, editor tools |
+| `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `material_grid`, `gpu_window`, `editor_demo`, `graphics_showcase`, `scene_hierarchy_3d` |
+| `games/studs/` | The game, now launched through the ECS app and plugin runner; some gameplay migration and compatibility cleanup remain. |
+| `engine/` | **Legacy** `voxelworks-*` crates, to be deleted |
+| `docs/`, `tools/` | Plans, decisions, dependency policy and checker |
 
-```mermaid
-graph TD
-  scene[voxelworks-scene] --> core[voxelworks-core]
-  api[voxelworks-api] --> scene
-  api --> core
-  gpu[voxelworks-render-gpu] --> api
-  cpu[voxelworks-render-cpu] --> api
-  platform[voxelworks-platform] --> api
-  gpu --> scene
-  cpu --> scene
-  gpu --> core
-  cpu --> core
-  platform --> scene
-  platform --> core
-  game[games/studs] --> api
-  game --> gpu
-  game --> cpu
-  game --> platform
-```
+Read [ARCHITECTURE.md](ARCHITECTURE.md) for the dependency graph, frame order and
+known limits, and [CONTRIBUTING.md](CONTRIBUTING.md) before adding code.
 
-The engine-only example does not depend on the game:
+## Running
 
 ```sh
-cargo run -p voxelworks-minimal -- --renderer gpu
-cargo run -p voxelworks-minimal -- --renderer cpu
-cargo run -p voxelworks-minimal -- --headless --renderer gpu
-cargo run -p voxelworks-minimal -- --headless --renderer cpu
+cargo run                                   # the STUDS game (ECS app + platform runner)
+cargo run -p hello_ecs                      # ECS and schedule only
+cargo run -p voxel_room                     # ECS voxel room (add -- --headless --renderer cpu)
+cargo run -p model_viewer                   # glTF model on the wgpu mesh renderer
+cargo run -p graphics_showcase              # animated GPU mesh / glTF graphics showcase
+cargo run -p scene_hierarchy_3d             # visible 3D parent/child transform example
+cargo run -p voxelworks-minimal -- --headless --renderer cpu   # legacy engine-only example
 ```
 
-Headless mode prints a framebuffer checksum. GPU and audio features are enabled by default in the example; build with `--no-default-features` for CPU-only and silent mode.
+`cargo run` runs the game because `default-members` is `games/studs`; use
+`--workspace` (or `-p <name>`) for everything else, for example `cargo test --workspace`.
 
-## What an application supplies
+Audio and GPU rendering are optional Cargo features for STUDS. The defaults enable
+both; `--no-default-features` selects the CPU renderer and disables Rodio output.
+Choose a backend with `cargo run -p studs -- --renderer gpu` or `--renderer cpu`;
+`auto` currently prefers GPU when that feature is compiled in and falls back to CPU
+if GPU initialization fails. The STUDS GPU path is the existing offscreen voxel
+raycaster with readback through `WindowFrame`, not the newer `plugin_render3d`
+mesh-rasterization pipeline.
 
-- An `App` implementation and its update/frame-plan logic.
-- Entity definitions, bounds, and an entity registry.
-- A material table, sprite atlas or PBR texture data as needed, and render styles.
-- CPU `SurfaceShader` behavior when using the reference renderer. GPU appearance must be represented by shared material/scene data.
-- An audio bank when the application uses platform audio.
+## Dependency rules
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for layering rules, known limits, and measured CPU/GPU parity. See [CONTRIBUTING.md](CONTRIBUTING.md) before adding code.
+`tools/allowed_deps.toml` lists every allowed dependency edge per package.
+`python tools/check_deps.py` checks it and runs in CI. Engine crates never
+depend on games, and nothing outside `engine/` and `games/studs` depends on the
+legacy `voxelworks-*` crates.

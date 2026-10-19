@@ -1,8 +1,8 @@
 //! HUD and full-screen overlays. All coordinates are in framebuffer pixels.
 
-use voxelworks_api::Effect;
-pub use voxelworks_render_cpu::fill_rect;
-use voxelworks_render_cpu::Canvas;
+use engine_render::Effect;
+pub use plugin_rendering::cpu::canvas::fill_rect;
+use plugin_rendering::cpu::canvas::Canvas;
 
 pub fn draw_hud(
     fb: &mut impl Canvas,

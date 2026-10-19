@@ -3,9 +3,9 @@
 //! `World` knows nothing about rendering, players or enemies; everything else
 //! asks it questions ("is this tile open?", "what does this ray hit?").
 
+use engine_math::Rng;
+use plugin_voxel::VoxelWorld;
 use std::ops::{Deref, DerefMut};
-use voxelworks_core::math::Rng;
-use voxelworks_core::voxel::VoxelWorld;
 
 pub const CELLS: usize = 10; // maze is CELLS x CELLS cells, each 2x2 tiles with 1-tile walls
 pub const X_BLOCKS: usize = CELLS * 3 + 1;
@@ -50,10 +50,10 @@ impl World {
 
     pub fn cast(
         &self,
-        origin: voxelworks_core::math::Vect,
-        dir: voxelworks_core::math::Vect,
+        origin: engine_math::Vect,
+        dir: engine_math::Vect,
         max_dist: f32,
-    ) -> Option<voxelworks_core::voxel::Hit> {
+    ) -> Option<plugin_voxel::Hit> {
         self.0.cast(origin, dir, max_dist, AIR)
     }
 

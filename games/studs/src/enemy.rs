@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use crate::world::{World, FLOOR_TOP, X_BLOCKS, Y_BLOCKS};
-use voxelworks_core::math::{forward_vec, Angles, Vect};
+use engine_math::{forward_vec, Angles, Vect};
 
 pub const ENEMY_AWAKE_AFTER: f32 = 12.0; // seconds
 pub const ENEMY_BASE_SPEED: f32 = 3.6;
@@ -80,6 +80,7 @@ pub fn animation_state(
     }
 }
 
+#[derive(Clone)]
 pub struct Enemy {
     pub pos: Vect, // feet position
     pub yaw: f32,
@@ -200,7 +201,7 @@ impl Enemy {
         let chest = Vect::new(player.x, player.y, player.z + 1.2);
         let to = Vect::new(chest.x - eye.x, chest.y - eye.y, chest.z - eye.z);
         let dist = (to.x * to.x + to.y * to.y + to.z * to.z).sqrt();
-        if dist > ENEMY_SIGHT_RANGE || dist < 1e-3 {
+        if !(1e-3..=ENEMY_SIGHT_RANGE).contains(&dist) {
             return false;
         }
         let direction = to.scale(1.0 / dist);

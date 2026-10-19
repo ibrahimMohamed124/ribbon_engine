@@ -10,11 +10,11 @@ pub mod theme;
 
 use self::settings as settings_page;
 
-use crate::game::{Difficulty, Game, State};
+use crate::game::{Difficulty, Game, GameReadView, GameUiState, State};
 use crate::input::{key_name, Action, Key};
 use crate::settings::Settings;
 use crate::ui::hud::fill_rect;
-use voxelworks_render_cpu::Canvas;
+use plugin_rendering::cpu::canvas::Canvas;
 
 use self::theme::{ACCENT, MUTED, PANEL_EDGE, SELECTED, TEXT};
 
@@ -145,6 +145,13 @@ impl Ui {
     pub fn show_result(&mut self) {
         self.screen = Screen::Result;
         self.selected = 0;
+    }
+
+    /// Start directly in gameplay for rendering previews and example applications.
+    pub fn start_playing(&mut self) {
+        self.screen = Screen::Playing;
+        self.selected = 0;
+        self.rebinding = None;
     }
 
     pub fn update(&mut self, input: &UiInput, settings: &mut Settings) -> UiOutcome {
@@ -503,6 +510,23 @@ impl Ui {
     }
 
     pub fn draw(&self, fb: &mut impl Canvas, frame: u32, game: &Game, settings: &Settings) {
+        self.draw_model(
+            fb,
+            frame,
+            GameReadView::from_game(game).ui_state(),
+            settings,
+        );
+    }
+
+    /// Draw UI from the value model extracted by ECS systems. Runtime rendering does not need
+    /// to reconstruct or retain the legacy aggregate `Game` object.
+    pub fn draw_model(
+        &self,
+        fb: &mut impl Canvas,
+        frame: u32,
+        game: GameUiState,
+        settings: &Settings,
+    ) {
         if self.screen == Screen::Playing {
             return;
         }
@@ -539,6 +563,11 @@ impl Ui {
 
     /// Draw short, timed gameplay instructions above the player HUD.
     pub fn draw_game_hints(&self, fb: &mut impl Canvas, game: &Game) {
+        self.draw_game_hints_model(fb, GameReadView::from_game(game).ui_state());
+    }
+
+    /// Draw the gameplay hints using a compact ECS-extracted model.
+    pub fn draw_game_hints_model(&self, fb: &mut impl Canvas, game: GameUiState) {
         if self.screen != Screen::Playing {
             return;
         }
@@ -548,7 +577,7 @@ impl Ui {
             theme::centered_text(fb, "GOAL: FIND ALL 6 PAGES", y, 1, TEXT);
             y += 12;
         }
-        if game.enemy_tip_active() {
+        if game.enemy_tip_active {
             fill_rect(fb, 0, y - 3, fb.width() as i32, 12, 0x0007_090b);
             theme::centered_text(fb, "KEEP THE CREATURE IN SIGHT", y, 1, ACCENT);
         }
@@ -751,7 +780,7 @@ impl Ui {
         }
     }
 
-    fn draw_result(&self, fb: &mut impl Canvas, game: &Game, settings: &Settings) {
+    fn draw_result(&self, fb: &mut impl Canvas, game: GameUiState, settings: &Settings) {
         let won = game.state == State::Won;
         let (title, subtitle) = dialogs::result_copy(won);
         let panel = layout::centered_panel(fb, 238, 158);
@@ -767,7 +796,7 @@ impl Ui {
         );
         theme::centered_text(
             fb,
-            &format!("PAGES {}/{}", game.collected, game.pages.len()),
+            &format!("PAGES {}/{}", game.collected, game.page_count),
             panel.y + 53,
             1,
             TEXT,

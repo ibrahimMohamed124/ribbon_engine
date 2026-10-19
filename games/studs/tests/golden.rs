@@ -1,3 +1,5 @@
+use engine_math::Rng;
+use engine_render::Framebuffer;
 use studs::config::DEFAULT_HFOV;
 use studs::entities::WARDEN;
 use studs::game::{Game, State};
@@ -5,8 +7,6 @@ use studs::input::{Controls, InputFrame};
 use studs::settings::Settings;
 use studs::surfaces::studs_material_table;
 use studs::world::World;
-use voxelworks_api::Framebuffer;
-use voxelworks_core::math::Rng;
 use voxelworks_render_cpu::render::render_with_materials;
 
 fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
@@ -167,12 +167,12 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
     let clear = (0..64)
         .map(|i| i as f32 * std::f32::consts::TAU / 64.0)
         .find(|&angle| {
-            let dir = voxelworks_core::math::Vect::new(angle.cos(), angle.sin(), 0.0);
+            let dir = engine_math::Vect::new(angle.cos(), angle.sin(), 0.0);
             game.world.cast(eye, dir, 3.0).is_none()
         })
         .expect("spawn cell should have an open neighboring corridor");
     game.player.view.phi = clear;
-    let dir = voxelworks_core::math::Vect::new(clear.cos(), clear.sin(), 0.0);
+    let dir = engine_math::Vect::new(clear.cos(), clear.sin(), 0.0);
     game.enemy.pos = eye + dir.scale(2.4);
     game.enemy.yaw = clear + std::f32::consts::PI;
     let materials = studs_material_table();
@@ -183,7 +183,7 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
     let mut scene = game
         .scene_styled(137, DEFAULT_HFOV, studs::styles::realistic())
         .unwrap();
-    let center_ray = voxelworks_core::math::forward_vec(scene.camera.view);
+    let center_ray = engine_math::forward_vec(scene.camera.view);
     let warden = scene
         .entities
         .iter()

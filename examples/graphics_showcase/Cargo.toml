@@ -1,0 +1,15 @@
+[package]
+name = "graphics_showcase"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+engine_app = { path = "../../crates/engine_app" }
+engine_assets = { path = "../../crates/engine_assets" }
+engine_events = { path = "../../crates/engine_events" }
+engine_platform = { path = "../../crates/engine_platform" }
+engine_plugins = { path = "../../crates/engine_plugins" }
+engine_render = { path = "../../crates/engine_render" }
+engine_scene = { path = "../../crates/engine_scene" }
+plugin_gltf = { path = "../../plugins/gltf" }
+plugin_render3d = { path = "../../plugins/render3d" }

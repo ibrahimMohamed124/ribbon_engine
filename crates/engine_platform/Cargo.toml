@@ -1,0 +1,12 @@
+[package]
+name = "engine_platform"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+engine_app = { path = "../engine_app" }
+engine_plugins = { path = "../engine_plugins" }
+engine_events = { path = "../engine_events" }
+engine_math = { path = "../engine_math" }
+winit = "0.30.13"
+softbuffer = "0.4.6"

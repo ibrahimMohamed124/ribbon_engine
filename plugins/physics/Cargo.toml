@@ -1,0 +1,12 @@
+[package]
+name = "plugin_physics"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+engine_app = { path = "../../crates/engine_app" }
+engine_plugins = { path = "../../crates/engine_plugins" }
+engine_ecs = { path = "../../crates/engine_ecs" }
+engine_scene = { path = "../../crates/engine_scene" }
+engine_math = { path = "../../crates/engine_math" }
+plugin_voxel = { path = "../voxel" }

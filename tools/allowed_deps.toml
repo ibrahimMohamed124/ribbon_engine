@@ -1,0 +1,158 @@
+# Allowed direct dependency edges. Legacy tables are removed as crates migrate.
+[allowed]
+
+[allowed."engine_math"]
+workspace = []
+external = []
+
+[allowed."engine_ecs"]
+workspace = []
+external = ["hecs"]
+
+[allowed."engine_events"]
+workspace = ["engine_ecs"]
+external = []
+
+[allowed."engine_schedule"]
+workspace = ["engine_ecs"]
+external = []
+
+[allowed."engine_reflect"]
+workspace = ["engine_ecs"]
+external = ["serde"]
+
+[allowed."engine_app"]
+workspace = ["engine_ecs", "engine_events", "engine_schedule", "engine_math"]
+external = []
+
+[allowed."engine_plugins"]
+workspace = ["engine_app"]
+external = []
+
+[allowed."engine_platform"]
+workspace = ["engine_app", "engine_plugins", "engine_events", "engine_math"]
+external = ["winit", "softbuffer"]
+
+[allowed."engine_assets"]
+workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_events"]
+external = []
+
+[allowed."engine_scene"]
+workspace = ["engine_ecs", "engine_reflect", "engine_math", "engine_app", "engine_plugins"]
+external = ["serde", "ron", "glam"]
+
+[allowed."engine_render"]
+workspace = ["engine_app", "engine_plugins", "engine_platform", "engine_assets", "engine_math"]
+external = ["wgpu", "pollster"]
+
+[allowed."engine_commands"]
+workspace = ["engine_ecs", "engine_reflect", "engine_scene"]
+external = []
+
+[allowed."engine_editor"]
+workspace = ["engine_app", "engine_plugins", "engine_platform", "engine_render", "engine_reflect", "engine_commands", "engine_scene", "engine_ecs", "engine_math"]
+external = []
+
+[allowed."plugin_voxel"]
+workspace = ["engine_math"]
+external = []
+
+[allowed."plugin_physics"]
+workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_math", "engine_scene", "plugin_voxel"]
+external = []
+
+[allowed."plugin_rendering"]
+workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_events", "engine_assets", "engine_platform", "engine_render", "engine_scene", "engine_math", "plugin_voxel"]
+external = ["rayon", "wgpu", "pollster", "bytemuck"]
+
+[allowed."plugin_animation"]
+workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_math"]
+external = []
+
+[allowed."plugin_audio"]
+workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_events", "engine_assets", "engine_math"]
+external = ["rodio"]
+
+[allowed."plugin_editor_tools"]
+workspace = ["engine_editor", "engine_commands", "engine_reflect", "engine_scene", "engine_ecs", "engine_app", "engine_plugins", "engine_render", "engine_math"]
+external = []
+
+[allowed."hello_ecs"]
+workspace = ["engine_app", "engine_ecs", "engine_schedule"]
+external = []
+
+[allowed."voxel_room"]
+workspace = ["engine_app", "engine_assets", "engine_ecs", "engine_math", "engine_platform", "engine_plugins", "engine_scene", "engine_render", "engine_reflect", "plugin_rendering", "plugin_voxel"]
+external = ["ron"]
+
+[allowed."plugin_render3d"]
+workspace = ["engine_app", "engine_assets", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf"]
+external = ["bytemuck", "glam", "wgpu", "pollster"]
+
+[allowed."plugin_gltf"]
+workspace = ["engine_assets"]
+external = ["glam", "gltf"]
+
+[allowed."model_viewer"]
+workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_render3d"]
+external = []
+
+[allowed."graphics_showcase"]
+workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_render3d"]
+external = []
+
+[allowed."scene_hierarchy_3d"]
+workspace = ["engine_app", "engine_ecs", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_render3d"]
+external = []
+
+[allowed."cube_spin"]
+workspace = ["engine_app", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_render3d"]
+external = []
+
+[allowed."gpu_window"]
+workspace = ["engine_app", "engine_events", "engine_platform", "engine_plugins", "engine_render"]
+external = []
+
+[allowed."editor_demo"]
+workspace = ["engine_app", "engine_ecs", "engine_editor", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_rendering", "plugin_editor_tools"]
+external = []
+
+[allowed.legacy]
+
+[allowed.legacy."voxelworks-core"]
+workspace = ["engine_app", "engine_math", "engine_platform", "plugin_voxel"]
+external = []
+
+[allowed.legacy."voxelworks-scene"]
+workspace = ["plugin_rendering"]
+external = []
+
+[allowed.legacy."voxelworks-api"]
+workspace = ["engine_platform", "engine_render", "voxelworks-core", "voxelworks-scene"]
+external = []
+
+[allowed.legacy."voxelworks-render-cpu"]
+workspace = ["plugin_rendering", "voxelworks-api", "voxelworks-core", "voxelworks-scene"]
+external = ["rayon"]
+
+[allowed.legacy."voxelworks-render-gpu"]
+workspace = ["plugin_rendering"]
+external = []
+
+[allowed.legacy."voxelworks-platform"]
+workspace = ["engine_platform", "engine_render", "plugin_audio", "voxelworks-api", "voxelworks-core", "voxelworks-render-cpu", "voxelworks-render-gpu", "voxelworks-scene"]
+external = ["softbuffer", "winit"]
+
+[allowed.legacy."voxelworks-minimal"]
+workspace = ["voxelworks-api", "voxelworks-core", "voxelworks-platform", "voxelworks-render-cpu", "voxelworks-render-gpu", "voxelworks-scene"]
+external = []
+
+# STUDS runtime now uses the ECS runner; legacy crates remain dev-dependencies
+# for existing compatibility tests/examples until Phase 9 steps 6-7 are completed.
+[allowed.legacy."studs"]
+workspace = ["engine_app", "engine_events", "engine_math", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_audio", "plugin_physics", "plugin_rendering", "plugin_voxel", "voxelworks-platform", "voxelworks-render-cpu"]
+external = ["image"]
+
+[allowed.legacy."studs-bake-sprites"]
+workspace = []
+external = ["image", "ufbx"]

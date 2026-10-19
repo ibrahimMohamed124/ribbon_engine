@@ -1,9 +1,9 @@
+use engine_math::Vect;
 use studs::audio::AudioEvent;
 use studs::enemy::ENEMY_AWAKE_AFTER;
 use studs::game::{Difficulty, Game, State, PAGES_TOTAL};
 use studs::input::InputFrame;
 use studs::world::FLOOR_TOP;
-use voxelworks_core::math::Vect;
 
 const DT: f32 = 0.016;
 

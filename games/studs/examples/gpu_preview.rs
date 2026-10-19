@@ -1,12 +1,12 @@
 use std::error::Error;
 
+use engine_render::DrawList;
+use plugin_rendering::material::MaterialTable;
 use studs::game::Game;
 use studs::surfaces::{studs_material_table, StudsSurface};
-use voxelworks_api::DrawList;
 use voxelworks_api::{App, FramePlan};
 use voxelworks_api::{Ctx, Flow, WindowConfig};
 use voxelworks_render_cpu::renderer::CpuRenderer;
-use voxelworks_scene::material::MaterialTable;
 
 struct Preview(Game);
 

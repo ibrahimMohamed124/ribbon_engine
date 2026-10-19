@@ -1,0 +1,7 @@
+[package]
+name = "engine_ecs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hecs = "=0.10.5"

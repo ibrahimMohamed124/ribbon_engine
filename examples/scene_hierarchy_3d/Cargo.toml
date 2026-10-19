@@ -1,0 +1,14 @@
+[package]
+name = "scene_hierarchy_3d"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+engine_ecs = { path = "../../crates/engine_ecs" }
+engine_app = { path = "../../crates/engine_app" }
+engine_events = { path = "../../crates/engine_events" }
+engine_platform = { path = "../../crates/engine_platform" }
+engine_plugins = { path = "../../crates/engine_plugins" }
+engine_render = { path = "../../crates/engine_render" }
+engine_scene = { path = "../../crates/engine_scene" }
+plugin_render3d = { path = "../../plugins/render3d" }

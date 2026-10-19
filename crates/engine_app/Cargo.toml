@@ -1,0 +1,10 @@
+[package]
+name = "engine_app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+engine_ecs = { path = "../engine_ecs" }
+engine_events = { path = "../engine_events" }
+engine_schedule = { path = "../engine_schedule" }
+engine_math = { path = "../engine_math" }

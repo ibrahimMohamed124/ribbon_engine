@@ -33,10 +33,16 @@ jobs:
         run: cargo build --locked --workspace --all-targets
       - name: Test
         run: cargo test --locked --workspace
+      - name: Run engine examples
+        run: |
+          cargo run --locked -p hello_ecs
+          cargo run --locked -p voxel_room -- --renderer cpu --headless
+          cargo run --locked -p editor_demo
       - name: GPU fixture parity and engine-only headless examples
         if: runner.os == 'Linux'
         run: |
-          WGPU_BACKEND=vulkan cargo test --locked -p voxelworks-render-gpu --test parity -- --nocapture
+          WGPU_BACKEND=vulkan cargo test --locked -p plugin_rendering --test parity -- --nocapture
+          WGPU_BACKEND=vulkan cargo test --locked -p plugin_rendering --lib gpu -- --nocapture
           cargo run --locked -p voxelworks-minimal -- --headless --renderer cpu
           WGPU_BACKEND=vulkan cargo run --locked -p voxelworks-minimal -- --headless --renderer gpu
 
@@ -57,6 +63,10 @@ jobs:
 
       - name: Build without default features
         run: cargo build --locked --workspace --all-targets --no-default-features
+      - name: Run headless examples without default features
+        run: |
+          cargo run --locked -p hello_ecs --no-default-features
+          cargo run --locked -p voxel_room --no-default-features -- --renderer cpu --headless
       - name: Test without default features
         run: cargo test --locked --workspace --no-default-features
       - name: Verify platform optional dependencies are absent
@@ -88,33 +98,47 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
 
-      - name: Core and scene dependency boundary
+      - name: Legacy crates do not pull optional backends by default-off
         shell: bash
         run: |
-          if cargo tree -p voxelworks-core -e normal --prefix none | grep -v '^voxelworks-core v'; then
-            echo "voxelworks-core must have zero dependencies"
-            exit 1
-          fi
-          if cargo tree -p voxelworks-scene -e normal --prefix none | grep -vE '^(voxelworks-scene|voxelworks-core) v'; then
-            echo "voxelworks-scene may depend only on voxelworks-core"
-            exit 1
-          fi
-          for crate in voxelworks-core voxelworks-scene voxelworks-api; do
-            if cargo tree -p "$crate" -e normal | grep -E '(rayon|minifb|winit|wgpu|rodio|enigo) v[0-9]'; then
-              echo "$crate must not depend on renderer or desktop packages"
+          # Direct edges are policed by tools/check_deps.py. This step checks the
+          # transitive result: without the gpu/audio features no legacy crate may
+          # compile wgpu, rodio or the CPU thread pool unless it owns the CPU renderer.
+          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-platform; do
+            if cargo tree --locked -p "$crate" --no-default-features -e normal | grep -E '(wgpu|rodio|rayon|minifb|enigo) v[0-9]'; then
+              echo "$crate must not depend on GPU, audio or rayon without the matching feature"
               exit 1
             fi
           done
+
+      - name: New workspace dependency policy
+        run: python tools/check_deps.py
+
+      - name: Engine dependency and game-content boundary
+        shell: bash
+        run: |
+          if cargo tree --locked -p engine_ecs -e normal --depth 1 --prefix none | grep -vE '^(engine_ecs|hecs) v'; then
+            echo "engine_ecs may depend only on hecs"
+            exit 1
+          fi
+          if cargo tree --locked -p engine_math -e normal --depth 1 --prefix none | grep -v '^engine_math v'; then
+            echo "engine_math must have no dependencies"
+            exit 1
+          fi
+          if rg -n -i 'studs|warden|crawlmaster|vividcharacters' crates plugins; then
+            echo "Engine crates contain game-specific vocabulary"
+            exit 1
+          fi
 
       - name: Engine game-content boundary
         shell: bash
         run: |
           if grep -riE 'studs|warden|page|enemy|monster|crawl|flashlight|maze|jumpscare' \
-            engine/crates/core engine/crates/scene engine/crates/api engine/crates/render-cpu engine/crates/render-gpu engine/crates/platform engine/crates/testkit; then
+            crates plugins engine/crates/core engine/crates/scene engine/crates/api engine/crates/render-cpu engine/crates/render-gpu engine/crates/platform; then
             echo "Engine crates contain game-specific vocabulary"
             exit 1
           fi
-          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-render-cpu voxelworks-render-gpu voxelworks-platform voxelworks-testkit; do
+          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-render-cpu voxelworks-render-gpu voxelworks-platform; do
             if cargo tree -p "$crate" -e normal | grep -i 'studs'; then
               echo "$crate must not depend on the studs game"
               exit 1
@@ -164,12 +188,12 @@ jobs:
           mkdir dist
           cp -r games/studs/assets dist/assets
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cp target/release/raycast_blocks.exe dist/
+            cp target/release/studs.exe dist/
           else
-            cp target/release/raycast_blocks dist/
+            cp target/release/studs dist/
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: raycast_blocks-${{ runner.os }}
+          name: studs-${{ runner.os }}
           path: dist

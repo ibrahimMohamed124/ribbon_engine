@@ -4,16 +4,16 @@ use std::sync::OnceLock;
 
 pub use crate::entities::ENEMY_BOUNDS;
 use crate::entities::{PAGE, WARDEN};
-use voxelworks_core::math::{hash4, Vect};
-use voxelworks_core::voxel::{face_uv, Hit};
-use voxelworks_render_cpu::render::entities::EntitySurface;
-use voxelworks_render_cpu::render::lighting::SurfaceShader;
-use voxelworks_scene::entities::{EntityInstance, EntityKind};
-use voxelworks_scene::texture::{
+use engine_math::{hash4, Vect};
+use plugin_rendering::cpu::render::entities::EntitySurface;
+use plugin_rendering::cpu::render::lighting::SurfaceShader;
+use plugin_rendering::entities::{EntityInstance, EntityKind};
+use plugin_rendering::texture::{
     PbrTextureSet, RgbaMipChain, RgbaMipLevel, SpriteAtlas, Texture, TextureColorSpace, TextureId,
 };
-use voxelworks_scene::RenderStyle;
-use voxelworks_scene::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
+use plugin_rendering::RenderStyle;
+use plugin_rendering::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
+use plugin_voxel::{face_uv, Hit};
 
 use crate::level::{CEIL, FLOOR, WALL};
 
@@ -241,7 +241,7 @@ impl SurfaceShader for StudsSurface {
         if style.pbr_enabled {
             if let Some(set_id) = material.pbr_texture {
                 let (_, _, tint, alternate) =
-                    voxelworks_scene::material::cell_uv(hit.cell, (0.0, 0.0));
+                    plugin_rendering::material::cell_uv(hit.cell, (0.0, 0.0));
                 let selected_id = if material.cell_variation && alternate && set_id.0 == 1 {
                     TextureId(2)
                 } else {
@@ -250,7 +250,7 @@ impl SurfaceShader for StudsSurface {
                 if let Some(set) = materials.get_pbr_texture(selected_id) {
                     let (mut u, mut v) = face_uv(hit);
                     if material.cell_variation {
-                        let transformed = voxelworks_scene::material::cell_uv(hit.cell, (u, v));
+                        let transformed = plugin_rendering::material::cell_uv(hit.cell, (u, v));
                         u = transformed.0;
                         v = transformed.1;
                     }
@@ -366,7 +366,7 @@ fn classic_albedo(block: u8, hit: &Hit) -> f32 {
         } else if distance < 0.34 {
             albedo *= 0.6;
         }
-        if fx < 0.025 || fx > 0.975 || fy < 0.025 || fy > 0.975 {
+        if !(0.025..=0.975).contains(&fx) || !(0.025..=0.975).contains(&fy) {
             albedo *= 0.65;
         }
         albedo * (1.0 + 0.05 * hash4(hit.cell.0, hit.cell.1, hit.cell.2, 7))
@@ -449,9 +449,9 @@ pub fn page_view(pos: Vect, time: f32, index: f32) -> EntityInstance {
 #[cfg(test)]
 mod tests {
     use super::{apply_texture_modulation, wall_texture_modulation};
-    use voxelworks_core::math::Vect;
-    use voxelworks_core::voxel::Hit;
-    use voxelworks_scene::texture::Texture;
+    use engine_math::Vect;
+    use plugin_rendering::texture::Texture;
+    use plugin_voxel::Hit;
 
     #[test]
     fn texture_modulation_preserves_classic_at_zero_and_stays_moderate() {

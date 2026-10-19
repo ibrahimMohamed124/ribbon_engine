@@ -7,7 +7,5 @@ edition = "2021"
 voxelworks-core = { path = "../core" }
 voxelworks-scene = { path = "../scene" }
 voxelworks-api = { path = "../api" }
+plugin_rendering = { path = "../../../plugins/rendering", default-features = false, features = ["cpu"] }
 rayon = "1.10"
-
-[dev-dependencies]
-voxelworks-testkit = { path = "../testkit" }

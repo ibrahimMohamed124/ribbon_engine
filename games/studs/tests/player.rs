@@ -1,7 +1,7 @@
+use engine_math::{Angles, Rng};
 use studs::input::Controls;
 use studs::player::{Player, EYE_HEIGHT};
 use studs::world::{World, FLOOR_TOP, X_BLOCKS, Y_BLOCKS};
-use voxelworks_core::math::{Angles, Rng};
 
 fn setup() -> (World, Player) {
     let w = World::generate(&mut Rng::new(42));

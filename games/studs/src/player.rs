@@ -2,8 +2,8 @@
 
 use crate::input::Controls;
 use crate::world::{World, FLOOR_TOP};
-use voxelworks_core::math::{Angles, Vect};
-use voxelworks_core::physics::{collides as engine_collides, slide_xy, BodyShape};
+use engine_math::{Angles, Vect};
+use plugin_physics::{collides as engine_collides, slide_xy, BodyShape};
 
 pub const EYE_HEIGHT: f32 = 1.5;
 pub const HEAD_MARGIN: f32 = 0.1;
@@ -25,6 +25,7 @@ fn body_shape() -> BodyShape {
     )
 }
 
+#[derive(Clone)]
 pub struct Player {
     pub pos: Vect, // eye position
     pub view: Angles,

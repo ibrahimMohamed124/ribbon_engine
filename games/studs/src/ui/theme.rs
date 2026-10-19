@@ -1,5 +1,5 @@
-use voxelworks_api::Effect;
-use voxelworks_render_cpu::{fill_rect, Canvas};
+use engine_render::Effect;
+use plugin_rendering::cpu::canvas::{fill_rect, Canvas};
 
 pub const INK: u32 = 0x0008_0a0d;
 pub const PANEL: u32 = 0x0010_1418;
