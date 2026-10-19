@@ -470,6 +470,7 @@ dependencies = [
  "engine_platform",
  "engine_plugins",
  "engine_render",
+ "engine_scene",
  "plugin_render3d",
 ]
 
@@ -722,6 +723,7 @@ dependencies = [
  "engine_math",
  "engine_plugins",
  "engine_reflect",
+ "glam",
  "ron",
  "serde",
 ]
@@ -1026,6 +1028,7 @@ dependencies = [
  "engine_platform",
  "engine_plugins",
  "engine_render",
+ "engine_scene",
  "plugin_gltf",
  "plugin_render3d",
 ]
@@ -1390,6 +1393,7 @@ dependencies = [
  "engine_platform",
  "engine_plugins",
  "engine_render",
+ "engine_scene",
  "plugin_gltf",
  "plugin_render3d",
 ]
@@ -2053,6 +2057,7 @@ dependencies = [
  "engine_assets",
  "engine_plugins",
  "engine_render",
+ "engine_scene",
  "glam",
  "plugin_gltf",
  "pollster",
@@ -2336,6 +2341,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "scene_hierarchy_3d"
+version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_ecs",
+ "engine_events",
+ "engine_platform",
+ "engine_plugins",
+ "engine_render",
+ "engine_scene",
+ "plugin_render3d",
 ]
 
 [[package]]
