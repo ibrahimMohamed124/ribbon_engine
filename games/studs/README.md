@@ -4,7 +4,8 @@ STUDS is a first-person voxel horror game built on Voxelworks Engine. Explore a 
 
 ## Features
 
-- A plugin-based ECS application and desktop runner, currently using the CPU scene renderer for the game path.
+- A plugin-based ECS application with independent player/enemy/page entities and scheduled gameplay systems.
+- Selectable CPU or GPU voxel rendering through the ECS runtime (GPU currently uses offscreen rendering and readback).
 - Creature navigation, line-of-sight pursuit, and search behavior.
 - Sprint stamina, flashlight, configurable controls, saved settings, and spatial audio.
 - Classic grayscale, Moody, and photo-textured Realistic styles.
@@ -14,6 +15,8 @@ STUDS is a first-person voxel horror game built on Voxelworks Engine. Explore a 
 
 ```sh
 cargo run --release -p studs
+cargo run --release -p studs -- --renderer cpu
+cargo run --release -p studs -- --renderer gpu
 cargo run --locked -p studs --example ecs_preview
 ```
 
@@ -39,4 +42,4 @@ Settings and bindings are stored in `settings.cfg` under the operating system's 
 
 Processed assets and the on-demand source manifest live in `games/studs/assets/`. Run `python games/studs/tools/fetch_assets.py --check` to verify tracked files and hashes. Raw source downloads are cached under the ignored `games/studs/assets/source/` directory.
 
-`ecs_preview` starts directly in-game with a deterministic seed and uses the same ECS app, `engine_platform` runner, and CPU rendering path as the game binary. The former `gpu_preview` example and its `RendererMode` argument were tied to the legacy immediate-mode runner and have been retired. GPU voxel rendering remains available through its existing renderer crate, but it is not selected by the migrated STUDS runtime. CPU screenshots and the Realistic benchmark are available through examples in their respective crates.
+`ecs_preview` starts directly in-game with a deterministic seed and uses the same ECS app and platform runner as the game binary. Use `--renderer cpu` or `--renderer gpu` to choose the game backend; `--renderer auto` currently prefers GPU when compiled with that feature and falls back to CPU if GPU initialization fails. The GPU path is the existing offscreen voxel raycaster and copies pixels back through the neutral `WindowFrame` contract; it is not native-surface presentation and does not yet use `plugin_render3d` mesh rasterization. CPU screenshots and the Realistic benchmark remain available through examples in their respective crates.

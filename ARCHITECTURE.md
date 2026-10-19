@@ -49,7 +49,7 @@ The names are close, so for the record:
 | Package | Role |
 | --- | --- |
 | `engine_render` | Backend-neutral frame/draw contracts, render graph, CPU presenter and the optional wgpu context. Owns no scene knowledge. |
-| `plugin_rendering` | Voxel scene/material data, voxel extraction, the CPU raycaster and its ECS bridge. Its `cpu` and `gpu` features are independent; the `gpu` feature only enables `engine_render/gpu`. |
+| `plugin_rendering` | Voxel scene/material data, CPU/GPU voxel raycasters, and the ECS bridge. Its `cpu` and `gpu` features are independently selectable; GPU mode uses offscreen rendering/readback. |
 | `plugin_render3d` | Instanced mesh renderer on wgpu with depth buffer, glTF models via `plugin_gltf`. |
 
 ## Layers and responsibilities
@@ -93,24 +93,26 @@ workspace.
 - Systems run serially; system parameter injection is not implemented.
 - Asset loading is synchronous and handles are weak.
 - The render graph is an ordered, validated pass list, not a resource allocator.
-- The ECS rendering bridge currently renders through its CPU backend. Selecting
-  its GPU backend only records a warning. The voxel GPU renderer itself lives in
-  `plugin_rendering::gpu::voxel` (frozen, replaced by the mesh renderer in
-  `docs/RENDERER_PLAN.md` phase 7) and is not yet wired into that bridge.
+- The ECS rendering bridge supports CPU and GPU voxel rendering. The GPU path uses
+  `plugin_rendering::gpu::voxel`, renders offscreen, and submits its framebuffer through
+  `WindowFrame`; it is still the legacy-style voxel raycaster, not native-surface mesh
+  rasterization. Replacing it with the `plugin_render3d` path is tracked in phase 7 of
+  `docs/RENDERER_PLAN.md`.
 - The editor has no text input and is compiled only with its `editor` feature
   in debug builds. The glyph table limits available UI characters.
 - Scene transforms are recomputed each frame; dirty tracking is not implemented.
-- STUDS now uses `engine_app::App`, `engine_platform::WinitRunner`, and the
-  platform/scene/rendering/audio plugins; the old immediate-mode runner is no
-  longer used by the game executable. Its current rendering is bridged through
-  the CPU renderer into the platform-neutral `WindowFrame`, while gameplay is
-  still primarily held in a `Game` resource rather than fully decomposed into
-  ECS entities/systems. The remaining migration and legacy-tree deletion are
-  tracked in [`docs/PHASE9.md`](docs/PHASE9.md).
+- STUDS uses `engine_app::App`, `WinitRunner`, and the platform/scene/rendering/audio/game
+  plugins. Live gameplay uses `MazeResource` and `RunState` resources plus `Player`, `Enemy`,
+  and `PagePickup` entities, advanced by dedicated schedule systems. `Game` remains a
+  compatibility/domain facade rather than a runtime resource. The game can select CPU or
+  offscreen GPU voxel rendering through `--renderer cpu|gpu|auto`; GPU frames are read back
+  through `WindowFrame`, not rendered directly by `plugin_render3d` to the window surface.
+  The remaining legacy-tree deletion is tracked in [`docs/PHASE9.md`](docs/PHASE9.md).
 - The neutral renderer fixture, the CPU golden test and the CPU/GPU parity test
   live in `plugins/rendering/tests/` (`docs/PHASE9.md` step 2).
-- The sample voxel room's `--renderer gpu` option currently falls back to CPU
-  because the ECS GPU backend is pending.
+- The voxel-room ECS bridge can select the offscreen GPU renderer; it falls back to CPU if
+  GPU initialization fails. Native-surface presentation and integration with `plugin_render3d`
+  remain separate work.
 
 See `docs/SHIMS.md` for transitional imports, `docs/DECISIONS.md` for
 choices made where the refactor plan left behavior unspecified, and

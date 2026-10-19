@@ -8,9 +8,12 @@ application built on it.
 > **Status:** `studs` now starts through the ECS `engine_app::App` with
 > `engine_platform`, `engine_scene`, `plugin_rendering`, and `plugin_audio`.
 > The old immediate-mode runner and `App`/`Ctx` traits are no longer on the
-> game executable's runtime path. Gameplay is still wrapped in a game-state
-> resource, and legacy shim crates remain for compatibility tests/examples while
-> the remaining Phase 9 migration is completed. See [docs/PHASE9.md](docs/PHASE9.md).
+> game executable's runtime path. The live maze, run progression, player, enemy,
+> and page pickups are now ECS resources/entities with scheduled simulation systems.
+> STUDS supports `--renderer cpu|gpu|auto`; GPU rendering currently uses the existing
+> offscreen voxel raycaster and copies its frame to the window. Legacy shim crates
+> remain for compatibility examples until the remaining Phase 9 cleanup. See
+> [docs/PHASE9.md](docs/PHASE9.md).
 
 ## Layout
 
@@ -18,7 +21,7 @@ application built on it.
 | --- | --- |
 | `crates/` | Engine core (`engine_*`): math, ECS, events, schedule, app, plugins, platform, assets, scene, render, reflection, commands, editor |
 | `plugins/` | Optional features (`plugin_*`): voxel, physics, rendering, render3d, gltf, animation, audio, editor tools |
-| `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `material_grid`, `gpu_window`, `editor_demo` |
+| `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `material_grid`, `gpu_window`, `editor_demo`, `graphics_showcase` |
 | `games/studs/` | The game, now launched through the ECS app and plugin runner; some gameplay migration and compatibility cleanup remain. |
 | `engine/` | **Legacy** `voxelworks-*` crates, to be deleted |
 | `docs/`, `tools/` | Plans, decisions, dependency policy and checker |
@@ -40,11 +43,13 @@ cargo run -p voxelworks-minimal -- --headless --renderer cpu   # legacy engine-o
 `cargo run` runs the game because `default-members` is `games/studs`; use
 `--workspace` (or `-p <name>`) for everything else, for example `cargo test --workspace`.
 
-Audio is an optional Cargo feature for STUDS; `--no-default-features` disables
-its Rodio output so the game runs silently without audio system libraries. The
-current STUDS runtime uses the CPU scene renderer. The GPU mesh and voxel renderer
-features remain available to their respective renderer/example packages, but are
-not selected through the retired legacy `RendererMode` switch.
+Audio and GPU rendering are optional Cargo features for STUDS. The defaults enable
+both; `--no-default-features` selects the CPU renderer and disables Rodio output.
+Choose a backend with `cargo run -p studs -- --renderer gpu` or `--renderer cpu`;
+`auto` currently prefers GPU when that feature is compiled in and falls back to CPU
+if GPU initialization fails. The STUDS GPU path is the existing offscreen voxel
+raycaster with readback through `WindowFrame`, not the newer `plugin_render3d`
+mesh-rasterization pipeline.
 
 ## Dependency rules
 
