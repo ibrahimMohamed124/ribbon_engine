@@ -70,6 +70,7 @@ fn spawn_cube(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_model(
     world: &mut World,
     model: engine_assets::Handle<ModelAsset>,
@@ -158,19 +159,18 @@ fn animate_showcase(world: &mut World) {
             if motion.radians_per_second.abs() > f32::EPSILON {
                 let axis = motion.axis.normalize_or_zero();
                 if axis != Vec3::ZERO {
-                    transform.rotation = Quat::from_axis_angle(
-                        axis,
-                        motion.radians_per_second * delta,
-                    ) * transform.rotation;
+                    transform.rotation =
+                        Quat::from_axis_angle(axis, motion.radians_per_second * delta)
+                            * transform.rotation;
                 }
             }
             transform.translation = motion.base_position
                 + Vec3::Y * (elapsed * 1.55 + motion.phase).sin() * motion.bob_amplitude;
         }
         for (_, (transform, motion)) in world.query_mut::<(&mut Transform3D, &ModelMotion)>() {
-            let rotation = Quat::from_rotation_y(
-                elapsed * motion.radians_per_second + motion.phase,
-            ) * Quat::from_rotation_x(motion.tilt);
+            let rotation =
+                Quat::from_rotation_y(elapsed * motion.radians_per_second + motion.phase)
+                    * Quat::from_rotation_x(motion.tilt);
             transform.rotation = rotation;
             transform.translation =
                 motion.world_center - rotation * (transform.scale * motion.local_center);
@@ -179,8 +179,8 @@ fn animate_showcase(world: &mut World) {
         // A gently moving directional light makes the mesh normals and depth visibly useful.
         let sun_phase = elapsed * 0.22;
         let sun = world.resource_mut::<SunLight>();
-        sun.direction = Vec3::new(sun_phase.cos() * 0.55, -0.78, sun_phase.sin() * 0.55)
-            .normalize();
+        sun.direction =
+            Vec3::new(sun_phase.cos() * 0.55, -0.78, sun_phase.sin() * 0.55).normalize();
     }
 
     let target = Vec3::new(0.0, 0.75, 0.0);
@@ -244,13 +244,34 @@ fn add_scene(
         None,
     );
     spawn_model(
-        world, checker, checker_center, Vec3::new(0.0, 1.05, 0.0), 1.75, 0.35, 0.0, 0.12,
+        world,
+        checker,
+        checker_center,
+        Vec3::new(0.0, 1.05, 0.0),
+        1.75,
+        0.35,
+        0.0,
+        0.12,
     );
     spawn_model(
-        world, checker, checker_center, Vec3::new(-2.15, 0.82, -0.15), 1.12, -0.52, 1.3, 0.20,
+        world,
+        checker,
+        checker_center,
+        Vec3::new(-2.15, 0.82, -0.15),
+        1.12,
+        -0.52,
+        1.3,
+        0.20,
     );
     spawn_model(
-        world, checker, checker_center, Vec3::new(2.15, 0.82, -0.15), 1.12, 0.58, 2.4, -0.16,
+        world,
+        checker,
+        checker_center,
+        Vec3::new(2.15, 0.82, -0.15),
+        1.12,
+        0.58,
+        2.4,
+        -0.16,
     );
 
     // A separately imported untextured triangle demonstrates a minimal glTF primitive.
@@ -332,7 +353,11 @@ fn add_scene(
                 column_colors[(column + level) % column_colors.len()],
                 Some(CubeMotion {
                     base_position: Vec3::new(x, y, -3.2),
-                    axis: if level % 2 == 0 { Vec3::Y } else { Vec3::new(1.0, 0.3, 0.0) },
+                    axis: if level % 2 == 0 {
+                        Vec3::Y
+                    } else {
+                        Vec3::new(1.0, 0.3, 0.0)
+                    },
                     radians_per_second: if level % 2 == 0 { 0.18 } else { -0.24 },
                     bob_amplitude: 0.025,
                     phase: column as f32 + level as f32 * 0.4,
@@ -403,19 +428,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_plugin(Render3dPlugin)?;
 
     app.world.spawn((
-        Transform3D::looking_at(Vec3::new(16.0, 5.75, 0.0), Vec3::new(0.0, 0.75, 0.0), Vec3::Y),
+        Transform3D::looking_at(
+            Vec3::new(16.0, 5.75, 0.0),
+            Vec3::new(0.0, 0.75, 0.0),
+            Vec3::Y,
+        ),
         Camera3D {
             far: 150.0,
             ..Camera3D::default()
         },
     ));
-    add_scene(&mut app.world, checker, checker_center, triangle, triangle_center);
+    add_scene(
+        &mut app.world,
+        checker,
+        checker_center,
+        triangle,
+        triangle_center,
+    );
     app.add_system(Stage::Update, animate_showcase);
 
     println!("Voxelworks Graphics Showcase");
     println!("Live features: wgpu mesh rasterization, depth buffer, instanced cubes, directional lighting,");
     println!("GLB model loading, textured base-color materials, mipmapped textures, and animated transforms.");
-    println!("Controls: Space pause/resume, Left/Right orbit speed, Up/Down camera height, R reset.");
+    println!(
+        "Controls: Space pause/resume, Left/Right orbit speed, Up/Down camera height, R reset."
+    );
     println!("Note: mesh ray-picking, shadows, PBR normal/ORM maps, bloom, and voxel-to-mesh rendering are not wired into this renderer yet.");
 
     app.build()?.run();
