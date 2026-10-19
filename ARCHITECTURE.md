@@ -50,7 +50,7 @@ The names are close, so for the record:
 | --- | --- |
 | `engine_render` | Backend-neutral frame/draw contracts, render graph, CPU presenter and the optional wgpu context. Owns no scene knowledge. |
 | `plugin_rendering` | Voxel scene/material data, CPU/GPU voxel raycasters, and the ECS bridge. Its `cpu` and `gpu` features are independently selectable; GPU mode uses offscreen rendering/readback. |
-| `plugin_render3d` | Instanced mesh renderer on wgpu with depth buffer, glTF models via `plugin_gltf`. |
+| `plugin_render3d` | Mesh renderer on the native wgpu surface, with ECS extraction, instanced geometry, depth buffering, and glTF models via `plugin_gltf`. |
 
 ## Layers and responsibilities
 
@@ -115,10 +115,15 @@ workspace.
   The remaining legacy-tree deletion is tracked in [`docs/PHASE9.md`](docs/PHASE9.md).
 - The neutral renderer fixture, the CPU golden test and the CPU/GPU parity test
   live in `plugins/rendering/tests/` (`docs/PHASE9.md` step 2).
-- The voxel-room ECS bridge can select the offscreen GPU renderer; it falls back to CPU if
-  GPU initialization fails. Native-surface presentation and integration with `plugin_render3d`
-  remain separate work.
+- The voxel-room ECS bridge can select the offscreen GPU voxel renderer; it falls back to CPU if
+  GPU initialization fails. That voxel path is still separate from `plugin_render3d`; rendering
+  voxel chunk meshes through the native surface is tracked in phase 7 of `docs/RENDERER_PLAN.md`.
 
 See `docs/SHIMS.md` for transitional imports, `docs/DECISIONS.md` for
 choices made where the refactor plan left behavior unspecified, and
 `docs/LEGACY_ARCHITECTURE.md` for renderer verification results.
+
+
+## 3D Rendering
+
+- The mesh renderer uses `GpuWindowPlugin` for direct native wgpu-surface presentation. `Render3dPlugin` extracts camera, global mesh/model transforms, and sunlight into `ExtractedScene3D` during `PostUpdate`; its frame pass consumes that snapshot during GPU submission.
