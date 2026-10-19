@@ -23,6 +23,7 @@ members = [
   "plugins/gltf",
   "examples/hello_ecs",
   "examples/voxel_room",
+  "examples/voxel_mesh_showcase",
   "examples/editor_demo",
   "examples/graphics_showcase",
   "examples/scene_hierarchy_3d",

@@ -4,13 +4,15 @@
 //! `GpuWindowPlugin` renders its frame. GPU passes consume this compact snapshot
 //! instead of querying gameplay ECS data while recording GPU commands.
 
-use crate::components::{Camera3D, MeshInstance, ModelInstance, SunLight};
+use crate::components::{Camera3D, MeshInstance, ModelInstance, SunLight, VoxelMeshInstance3D};
 use engine_app::{App, Stage, World};
 use engine_assets::Handle;
 use engine_plugins::Plugin;
 use engine_scene::GlobalTransform3D;
 use glam::Mat4;
 use plugin_gltf::ModelAsset;
+use plugin_voxel::VoxelChunkMesh;
+use std::sync::Arc;
 
 /// Camera and resolved world pose selected for one render frame.
 #[derive(Clone, Copy, Debug)]
@@ -39,6 +41,17 @@ pub struct ExtractedModel3D {
     pub model: Handle<ModelAsset>,
 }
 
+/// One immutable greedy-meshed voxel chunk ready for GPU upload.
+#[derive(Clone, Debug)]
+pub struct ExtractedVoxelMesh3D {
+    /// Resolved chunk-to-world transform including the voxel-grid origin.
+    pub transform: Mat4,
+    /// Shared CPU mesh; GPU upload is cached by `Render3dPlugin`.
+    pub mesh: Arc<VoxelChunkMesh>,
+    /// Linear RGB tint for the block id represented by this mesh.
+    pub color: [f32; 3],
+}
+
 /// Compact render-facing scene snapshot produced from the ECS each frame.
 ///
 /// This contains copied transforms and asset handles rather than references into
@@ -51,6 +64,8 @@ pub struct ExtractedScene3D {
     pub meshes: Vec<ExtractedMesh3D>,
     /// Loaded or pending glTF model instances.
     pub models: Vec<ExtractedModel3D>,
+    /// Greedy-meshed voxel instances rendered by the same native GPU mesh pipeline.
+    pub voxels: Vec<ExtractedVoxelMesh3D>,
     /// Directional sunlight and ambient contribution for this frame.
     pub sun: SunLight,
     /// App frame counter used by tools to correlate diagnostics with a frame.
@@ -89,6 +104,19 @@ pub fn extract_scene_3d(world: &mut World) {
             extracted.models.push(ExtractedModel3D {
                 transform: transform.matrix(),
                 model: model.model,
+            });
+        }
+
+        extracted.voxels.clear();
+        for (_, (transform, voxel)) in world
+            .query::<(&GlobalTransform3D, &VoxelMeshInstance3D)>()
+            .iter()
+        {
+            let origin = glam::Vec3::from(voxel.mesh.origin_y_up);
+            extracted.voxels.push(ExtractedVoxelMesh3D {
+                transform: transform.matrix() * Mat4::from_translation(origin),
+                mesh: Arc::clone(&voxel.mesh),
+                color: voxel.color,
             });
         }
 

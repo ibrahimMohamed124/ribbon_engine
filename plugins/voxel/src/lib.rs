@@ -1,6 +1,8 @@
-//! Voxel world storage, ray casting, and face queries.
-//!
-//! This crate is scaffolded for the staged engine refactor.
+//! Voxel world storage, ray casting, face queries, and greedy surface meshing.
+pub mod meshing;
 pub mod voxel;
 
+pub use meshing::{
+    greedy_mesh_chunk, greedy_mesh_world, z_up_to_y_up, VoxelChunkMesh, VoxelVertex,
+};
 pub use voxel::*;

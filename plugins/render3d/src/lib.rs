@@ -8,34 +8,55 @@ pub mod components;
 pub mod extract;
 pub mod mesh;
 pub mod model;
+pub mod post;
 pub mod renderer;
 
-pub use components::{BuiltinMesh, Camera3D, MeshInstance, ModelInstance, SunLight, Transform3D};
+pub use components::{
+    BuiltinMesh, Camera3D, MeshInstance, ModelInstance, SunLight, Transform3D, VoxelMeshInstance3D,
+};
 pub use engine_scene::GlobalTransform3D;
 pub use extract::{
     extract_scene_3d, ExtractedCamera3D, ExtractedMesh3D, ExtractedModel3D, ExtractedScene3D,
-    RenderExtraction3DPlugin,
+    ExtractedVoxelMesh3D, RenderExtraction3DPlugin,
 };
 pub use glam;
 pub use model::{upload_model, GpuModelPart};
-pub use renderer::{Draw, MaterialId, MeshId, MeshRenderer, Scene, TextureData};
+pub use renderer::{Draw, MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, Scene, TextureData};
 
+use crate::mesh::Vertex;
+use crate::post::{HdrTarget, ToneMapper, HDR_FORMAT};
 use engine_app::{App, World};
 use engine_assets::AssetServer;
 use engine_plugins::Plugin;
-use engine_render::gpu_window::{FramePass, FrameTarget, GpuWindow};
+use engine_render::gpu_window::{clear_view, ClearColor, FramePass, FrameTarget, GpuWindow};
 use glam::Mat4;
+use plugin_voxel::VoxelChunkMesh;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Default)]
 struct MeshPass {
-    renderer: Option<(wgpu::TextureFormat, MeshRenderer)>,
+    renderer: Option<MeshRenderer>,
+    hdr: Option<HdrTarget>,
+    tonemapper: Option<(wgpu::TextureFormat, ToneMapper)>,
     /// Uploaded models keyed by asset handle id and generation.
     models: HashMap<(u64, u32), Vec<GpuModelPart>>,
+    /// Retain immutable CPU chunk meshes so pointer keys cannot be reused while cached.
+    voxel_meshes: HashMap<usize, CachedVoxelMesh>,
+}
+
+struct CachedVoxelMesh {
+    // Strong ownership prevents an allocator-reused Arc pointer from aliasing this cache key.
+    _source: Arc<VoxelChunkMesh>,
+    gpu_mesh: crate::renderer::MeshId,
 }
 
 impl FramePass for MeshPass {
+    fn name(&self) -> &'static str {
+        "mesh pass"
+    }
+
     fn render(&mut self, world: &mut World, target: &FrameTarget<'_>) {
         // Temporarily borrow the snapshot so GPU submission can read AssetServer without
         // cloning the extracted vectors. `resource_scope` restores the snapshot even on unwind.
@@ -74,22 +95,17 @@ impl MeshPass {
             })
             .collect();
 
-        if self
-            .renderer
-            .as_ref()
-            .is_none_or(|(format, _)| *format != target.format)
-        {
-            self.models.clear();
-            self.renderer = Some((
-                target.format,
-                MeshRenderer::new(target.device, target.queue, target.format),
-            ));
-        }
-        let Some((_, renderer)) = self.renderer.as_mut() else {
-            return;
-        };
         if !extracted.models.is_empty() {
             if let Some(server) = world.try_resource::<AssetServer>() {
+                // Lazily create the device resources before importing model parts.
+                if self.renderer.is_none() {
+                    self.models.clear();
+                    self.renderer =
+                        Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
+                }
+                let Some(renderer) = self.renderer.as_mut() else {
+                    return;
+                };
                 for placement in &extracted.models {
                     let key = (placement.model.id(), placement.model.generation());
                     let parts = match self.models.entry(key) {
@@ -111,23 +127,101 @@ impl MeshPass {
             }
         }
 
+        if !extracted.voxels.is_empty() {
+            if self.renderer.is_none() {
+                self.models.clear();
+                self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
+            }
+            let Some(renderer) = self.renderer.as_mut() else {
+                return;
+            };
+            for placement in &extracted.voxels {
+                let key = Arc::as_ptr(&placement.mesh) as usize;
+                let gpu_mesh = match self.voxel_meshes.entry(key) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.get().gpu_mesh,
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let vertices: Vec<Vertex> = placement
+                            .mesh
+                            .vertices
+                            .iter()
+                            .map(|vertex| Vertex {
+                                position: vertex.position,
+                                normal: vertex.normal,
+                                uv: vertex.uv,
+                            })
+                            .collect();
+                        let gpu_mesh =
+                            renderer.upload_mesh(target.device, &vertices, &placement.mesh.indices);
+                        entry.insert(CachedVoxelMesh {
+                            _source: Arc::clone(&placement.mesh),
+                            gpu_mesh,
+                        });
+                        gpu_mesh
+                    }
+                };
+                draws.push(Draw {
+                    mesh: gpu_mesh,
+                    material: MeshRenderer::WHITE,
+                    model: placement.transform,
+                    tint: placement.color,
+                });
+            }
+        }
+
+        if draws.is_empty() {
+            return;
+        }
+        if self.renderer.is_none() {
+            self.models.clear();
+            self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
+        }
+        if self.hdr.as_ref().is_none_or(|hdr| hdr.size != target.size) {
+            self.hdr = Some(HdrTarget::new(target.device, target.size));
+            self.tonemapper = None;
+        }
+        let Some(hdr_view) = self.hdr.as_ref().map(|hdr| &hdr.view) else {
+            return;
+        };
+        if self
+            .tonemapper
+            .as_ref()
+            .is_none_or(|(format, _)| *format != target.format)
+        {
+            self.tonemapper = Some((
+                target.format,
+                ToneMapper::new(target.device, hdr_view, target.format),
+            ));
+        }
+
+        let clear_color = world
+            .try_resource::<ClearColor>()
+            .copied()
+            .unwrap_or_default()
+            .0;
+        clear_view(target.device, target.queue, hdr_view, clear_color);
         let view = Mat4::from_rotation_translation(
             camera.transform.rotation,
             camera.transform.translation,
         )
         .inverse();
         let view_proj = camera.camera.projection(width as f32 / height as f32) * view;
-        renderer.render(
-            target.device,
-            target.queue,
-            target.view,
-            target.size,
-            &Scene {
-                view_proj,
-                sun: &extracted.sun,
-                draws: &draws,
-            },
-        );
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.render(
+                target.device,
+                target.queue,
+                hdr_view,
+                target.size,
+                &Scene {
+                    view_proj,
+                    camera_position: camera.transform.translation,
+                    sun: &extracted.sun,
+                    draws: &draws,
+                },
+            );
+        }
+        if let Some((_, tonemapper)) = self.tonemapper.as_ref() {
+            tonemapper.render(target.device, target.queue, target.view);
+        }
     }
 }
 

@@ -12,6 +12,7 @@ engine_scene = { path = "../../crates/engine_scene" }
 bytemuck = { version = "1", features = ["derive"] }
 glam = "0.30"
 plugin_gltf = { path = "../gltf" }
+plugin_voxel = { path = "../voxel" }
 wgpu = "25.0.2"
 
 [dev-dependencies]

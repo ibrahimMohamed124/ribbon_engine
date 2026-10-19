@@ -483,12 +483,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_system(Stage::Last, report_render_extraction);
 
     println!("Voxelworks Graphics Showcase");
-    println!("Live features: native wgpu surface, ECS render extraction, mesh rasterization, depth buffer,");
-    println!("instanced cubes, directional lighting, textured GLB models, mipmapped textures, and animation.");
+    println!("Live features: native wgpu surface, ECS extraction, indexed meshes, depth buffer,");
+    println!("Cook-Torrance metallic-roughness PBR, HDR tone mapping, directional shadows, and frustum culling.");
     println!(
         "Controls: Space pause/resume, Left/Right orbit speed, Up/Down camera height, R reset."
     );
-    println!("Note: mesh ray-picking, shadows, PBR normal/ORM maps, bloom, and voxel-to-mesh rendering are not wired into this renderer yet.");
+    println!("Remaining: normal/occlusion/emissive maps, alpha modes, cascaded/soft shadows, AO, bloom, fog, IBL, and GPU culling.");
+    println!(
+        "Run `cargo run -p voxel_mesh_showcase` to view greedy voxels on the same mesh pipeline."
+    );
 
     app.build()?.run();
     Ok(())
