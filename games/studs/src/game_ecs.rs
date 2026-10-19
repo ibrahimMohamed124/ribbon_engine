@@ -278,14 +278,8 @@ pub fn resolve_run(world: &mut World) {
     }
 }
 
-/// Page positions and collected flags, ordered by pickup index.
-pub type PageSnapshot = (Vec<Vect>, Vec<bool>);
-
-/// Player, enemy, and page snapshot read at the rendering boundary.
-pub type ViewParts = (Player, Enemy, PageSnapshot);
-
 /// Helpers for systems and rendering to read the current ECS entities safely.
-pub fn page_snapshot(world: &World) -> PageSnapshot {
+pub fn page_snapshot(world: &World) -> (Vec<Vect>, Vec<bool>) {
     let mut pickups: Vec<PagePickup> = world
         .query::<&PagePickup>()
         .iter()
@@ -297,6 +291,9 @@ pub fn page_snapshot(world: &World) -> PageSnapshot {
         pickups.iter().map(|pickup| pickup.collected).collect(),
     )
 }
+
+/// Player, enemy, and `(pickup positions, collected flags)` snapshot used for rendering.
+pub type ViewParts = (Player, Enemy, (Vec<Vect>, Vec<bool>));
 
 /// Convert ECS-owned components and run state to the compatibility input type
 /// expected by the existing rendering helpers, without storing a `Game` resource.
