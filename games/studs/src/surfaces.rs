@@ -5,6 +5,8 @@ use std::sync::OnceLock;
 pub use crate::entities::ENEMY_BOUNDS;
 use crate::entities::{PAGE, WARDEN};
 use engine_math::{hash4, Vect};
+use plugin_rendering::cpu::render::entities::EntitySurface;
+use plugin_rendering::cpu::render::lighting::SurfaceShader;
 use plugin_rendering::entities::{EntityInstance, EntityKind};
 use plugin_rendering::texture::{
     PbrTextureSet, RgbaMipChain, RgbaMipLevel, SpriteAtlas, Texture, TextureColorSpace, TextureId,
@@ -12,8 +14,6 @@ use plugin_rendering::texture::{
 use plugin_rendering::RenderStyle;
 use plugin_rendering::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
 use plugin_voxel::{face_uv, Hit};
-use plugin_rendering::cpu::render::entities::EntitySurface;
-use plugin_rendering::cpu::render::lighting::SurfaceShader;
 
 use crate::level::{CEIL, FLOOR, WALL};
 

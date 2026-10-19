@@ -12,8 +12,9 @@ name = "studs"
 path = "src/main.rs"
 
 [features]
-default = ["audio"]
+default = ["audio", "gpu"]
 audio = ["plugin_audio/audio"]
+gpu = ["plugin_rendering/gpu"]
 
 [dependencies]
 engine_app = { path = "../../crates/engine_app" }

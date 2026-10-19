@@ -25,6 +25,7 @@ fn body_shape() -> BodyShape {
     )
 }
 
+#[derive(Clone)]
 pub struct Player {
     pub pos: Vect, // eye position
     pub view: Angles,

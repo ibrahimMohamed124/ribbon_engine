@@ -23,6 +23,7 @@ pub mod config;
 pub mod enemy;
 pub mod entities;
 pub mod game;
+pub mod game_ecs;
 pub mod input;
 pub mod level;
 pub mod player;

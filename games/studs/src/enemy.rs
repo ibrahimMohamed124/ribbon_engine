@@ -80,6 +80,7 @@ pub fn animation_state(
     }
 }
 
+#[derive(Clone)]
 pub struct Enemy {
     pub pos: Vect, // feet position
     pub yaw: f32,

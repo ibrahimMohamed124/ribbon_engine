@@ -1,8 +1,9 @@
 //! STUDS application setup and ECS plugin integration.
 //!
-//! Gameplay is advanced by engine schedule systems. The desktop event loop, input snapshot,
-//! and native window are owned by `engine_platform`; rendering uses `plugin_rendering`'s CPU
-//! renderer until the game's scene is migrated to the fully ECS-native render extraction path.
+//! Runtime-owned world state lives in ECS resources and entities: `RunState` and
+//! `MazeResource` are resources, while `Player`, `Enemy`, and `PagePickup` are
+//! independently addressable entities. The legacy `Game` type is used only to
+//! generate a new run and as a compatibility/domain API for existing consumers.
 
 use std::fs;
 use std::path::PathBuf;
@@ -11,19 +12,24 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use engine_app::{App, AppExit, Stage, Time, World};
 use engine_events::WorldEventsExt;
 use engine_math::Vect;
-use engine_platform::input::{Key, KeyState, MouseSource, ALL_KEYS};
+use engine_platform::input::{Key, MouseSource, ALL_KEYS};
 use engine_platform::runtime::CursorGrabState;
 use engine_platform::{Input as PlatformInput, PlatformConfig, WindowFrame, WindowHandle};
 use engine_plugins::{AppPluginExt, Plugin};
 use engine_render::{DrawList, FramePlan, Framebuffer, Renderer};
-use plugin_audio::{AudioListener, AudioOutput, PlaySound, SetAmbience, SoundId};
+use plugin_audio::{AudioListener, PlaySound, SetAmbience, SoundId};
 use plugin_rendering::cpu::renderer::CpuRenderer;
-use plugin_rendering::ecs::{RenderBackend, RenderSettings};
+use plugin_rendering::ecs::{CpuBackend, DefaultShader, RenderBackend, RenderSettings};
 use plugin_rendering::material::MaterialTable;
+use plugin_rendering::Scene;
 
 use crate::audio::{ambiences, sounds, AudioEvent};
-use crate::game::{Game, State, PAGES_TOTAL};
+use crate::enemy::proximity_intensity;
+use crate::enemy::Enemy;
+use crate::game::{Game, GameReadView, GameUiState, State, PAGES_TOTAL};
+use crate::game_ecs::{self, MazeResource, RunState, RunStep};
 use crate::input::{Input as GameInput, InputFrame};
+use crate::player::Player;
 use crate::settings::Settings;
 use crate::surfaces::{studs_material_table, StudsSurface};
 use crate::ui::{Screen, Ui, UiInput};
@@ -36,11 +42,10 @@ impl MouseSource for FrameMouse {
     }
 }
 
-/// Game-owned state shared by the registered update/render systems.
+/// Input/UI/application preferences; this resource deliberately excludes gameplay state.
 struct StudsState {
     settings_path: PathBuf,
     settings: Settings,
-    game: Game,
     input: GameInput,
     ui: Ui,
     title_timer: f32,
@@ -51,13 +56,10 @@ struct StudsState {
 }
 
 impl StudsState {
-    fn new(seed: Option<u32>, start_in_game: bool) -> Self {
+    fn new(start_in_game: bool) -> Self {
         println!("STUDS - find all {PAGES_TOTAL} pages and don't get caught.");
         let settings_path = Settings::default_path();
         let settings = load_settings(&settings_path);
-
-        let mut game = Game::new(seed.unwrap_or_else(seed_now));
-        game.flashlight_on = settings.flashlight_on_start;
         let input = GameInput::with_mouse_look(
             settings.bindings.clone(),
             settings.mouse_sensitivity,
@@ -71,7 +73,6 @@ impl StudsState {
         Self {
             settings_path,
             settings,
-            game,
             input,
             ui,
             title_timer: 0.0,
@@ -81,32 +82,139 @@ impl StudsState {
             render_frame: 0,
         }
     }
-
-    fn title(&self, fps: f32) -> String {
-        match self.ui.screen() {
-            Screen::MainMenu => "STUDS | main menu".to_owned(),
-            Screen::Difficulty => "STUDS | choose difficulty".to_owned(),
-            Screen::Pause => "STUDS | paused".to_owned(),
-            Screen::Settings => "STUDS | settings".to_owned(),
-            Screen::Controls => "STUDS | controls".to_owned(),
-            Screen::ConfirmMainMenu => "STUDS | confirm".to_owned(),
-            Screen::Result | Screen::Playing => self.game.window_title(fps),
-        }
-    }
 }
 
-/// Per-game CPU renderer state. The platform runner only receives the neutral `WindowFrame`.
+enum RendererImpl {
+    Cpu(CpuRenderer<StudsSurface>),
+    #[cfg(feature = "gpu")]
+    Gpu(Box<plugin_rendering::gpu::voxel::GpuRenderer>),
+}
+
+/// Per-game renderer. Both backends consume the same extracted scene and FramePlan.
 struct StudsRenderer {
-    renderer: CpuRenderer<StudsSurface>,
+    renderer: RendererImpl,
     output: Framebuffer,
+    backend: RenderBackend,
 }
 
 impl StudsRenderer {
-    fn new(width: usize, height: usize) -> Self {
-        Self {
-            renderer: CpuRenderer::new(width as u32, height as u32, StudsSurface),
-            output: Framebuffer::new(width, height),
+    fn new(
+        width: usize,
+        height: usize,
+        requested: RenderBackend,
+    ) -> (Self, RenderBackend, Option<String>) {
+        let width_u32 = width.max(1) as u32;
+        let height_u32 = height.max(1) as u32;
+        let output = Framebuffer::new(width_u32 as usize, height_u32 as usize);
+        if requested == RenderBackend::Gpu {
+            #[cfg(feature = "gpu")]
+            {
+                match plugin_rendering::gpu::voxel::GpuRenderer::new(width_u32, height_u32) {
+                    Ok(renderer) => {
+                        return (
+                            Self {
+                                renderer: RendererImpl::Gpu(Box::new(renderer)),
+                                output,
+                                backend: RenderBackend::Gpu,
+                            },
+                            RenderBackend::Gpu,
+                            None,
+                        );
+                    }
+                    Err(error) => {
+                        return (
+                            Self {
+                                renderer: RendererImpl::Cpu(CpuRenderer::new(
+                                    width_u32,
+                                    height_u32,
+                                    StudsSurface,
+                                )),
+                                output,
+                                backend: RenderBackend::Cpu,
+                            },
+                            RenderBackend::Cpu,
+                            Some(format!(
+                                "GPU renderer initialization failed; continuing with CPU: {error}"
+                            )),
+                        );
+                    }
+                }
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
+                return (
+                    Self {
+                        renderer: RendererImpl::Cpu(CpuRenderer::new(
+                            width_u32,
+                            height_u32,
+                            StudsSurface,
+                        )),
+                        output,
+                        backend: RenderBackend::Cpu,
+                    },
+                    RenderBackend::Cpu,
+                    Some("GPU renderer requested, but STUDS was compiled without the `gpu` feature; using CPU".to_owned()),
+                );
+            }
         }
+        (
+            Self {
+                renderer: RendererImpl::Cpu(CpuRenderer::new(width_u32, height_u32, StudsSurface)),
+                output,
+                backend: RenderBackend::Cpu,
+            },
+            RenderBackend::Cpu,
+            None,
+        )
+    }
+
+    fn resize(&mut self, width: usize, height: usize) {
+        let width = width.max(1);
+        let height = height.max(1);
+        if self.output.width == width && self.output.height == height {
+            return;
+        }
+        self.output = Framebuffer::new(width, height);
+        match &mut self.renderer {
+            RendererImpl::Cpu(renderer) => renderer.resize(width as u32, height as u32),
+            #[cfg(feature = "gpu")]
+            RendererImpl::Gpu(renderer) => renderer.resize(width as u32, height as u32),
+        }
+    }
+
+    fn render_frame(
+        &mut self,
+        plan: &FramePlan<Scene<'_>>,
+        materials: &MaterialTable,
+    ) -> Option<String> {
+        match &mut self.renderer {
+            RendererImpl::Cpu(renderer) => {
+                renderer.render_frame(plan, materials);
+                None
+            }
+            #[cfg(feature = "gpu")]
+            RendererImpl::Gpu(renderer) => {
+                renderer.render_frame(plan, materials);
+                renderer.take_error()
+            }
+        }
+    }
+
+    fn present(&mut self) {
+        match &mut self.renderer {
+            RendererImpl::Cpu(renderer) => renderer.present(&mut self.output),
+            #[cfg(feature = "gpu")]
+            RendererImpl::Gpu(renderer) => renderer.present(&mut self.output),
+        }
+    }
+
+    fn fall_back_to_cpu(&mut self) {
+        self.renderer = RendererImpl::Cpu(CpuRenderer::new(
+            self.output.width.max(1) as u32,
+            self.output.height.max(1) as u32,
+            StudsSurface,
+        ));
+        self.backend = RenderBackend::Cpu;
     }
 }
 
@@ -114,6 +222,7 @@ impl StudsRenderer {
 pub struct StudsPlugin {
     seed: Option<u32>,
     start_in_game: bool,
+    backend: RenderBackend,
 }
 
 impl Default for StudsPlugin {
@@ -127,7 +236,13 @@ impl StudsPlugin {
         Self {
             seed: None,
             start_in_game: false,
+            backend: default_backend(),
         }
+    }
+
+    pub fn with_backend(mut self, backend: RenderBackend) -> Self {
+        self.backend = backend;
+        self
     }
 
     /// Deterministic in-game preview used by the example target.
@@ -135,6 +250,7 @@ impl StudsPlugin {
         Self {
             seed: Some(seed),
             start_in_game: true,
+            backend: default_backend(),
         }
     }
 }
@@ -149,10 +265,13 @@ impl Plugin for StudsPlugin {
     }
 
     fn build(&self, app: &mut App) {
-        let state = StudsState::new(self.seed, self.start_in_game);
+        let state = StudsState::new(self.start_in_game);
         let width = state.settings.render_width.max(1);
         let height = state.settings.render_height.max(1);
         let scale = state.settings.window_scale.max(1);
+        let mut initial_game = Game::new(self.seed.unwrap_or_else(seed_now));
+        initial_game.flashlight_on = state.settings.flashlight_on_start;
+        let (renderer, backend, warning) = StudsRenderer::new(width, height, self.backend);
 
         app.insert_resource(PlatformConfig {
             title: "STUDS".to_owned(),
@@ -160,18 +279,32 @@ impl Plugin for StudsPlugin {
             height: (height as u32).saturating_mul(scale),
         });
         app.insert_resource(RenderSettings {
-            backend: RenderBackend::Cpu,
+            backend,
             width: width as u32,
             height: height as u32,
         });
-        app.insert_resource(StudsRenderer::new(width, height));
+        // RenderingPlugin provides the generic ECS renderer; STUDS supplies a specialized
+        // renderer because its CPU and GPU voxel paths share custom materials and overlays.
+        // Remove the unused generic instance so there is exactly one active frame renderer.
+        app.world.remove_resource::<CpuBackend<DefaultShader>>();
+        #[cfg(feature = "gpu")]
+        app.world
+            .remove_resource::<plugin_rendering::ecs::GpuBackend>();
+        app.insert_resource(renderer);
         app.insert_resource(state);
+        game_ecs::install_game(&mut app.world, initial_game);
         app.world.spawn((AudioListener::default(),));
+
+        if let Some(warning) = warning {
+            app.world
+                .resource_mut::<engine_app::LogBuffer>()
+                .push(engine_app::LogLevel::Warn, warning);
+        }
 
         #[cfg(feature = "audio")]
         match plugin_audio::rodio_backend::RodioBackend::new(crate::audio::sound_bank()) {
             Ok(backend) => {
-                app.world.resource_mut::<AudioOutput>().0 = Some(Box::new(backend));
+                app.world.resource_mut::<plugin_audio::AudioOutput>().0 = Some(Box::new(backend));
             }
             Err(error) => app.world.resource_mut::<engine_app::LogBuffer>().push(
                 engine_app::LogLevel::Warn,
@@ -180,7 +313,11 @@ impl Plugin for StudsPlugin {
         }
 
         app.add_system(Stage::PreUpdate, update_ui_and_collect_input);
-        app.add_system(Stage::FixedUpdate, fixed_game_update);
+        app.add_system(Stage::FixedUpdate, begin_fixed_step);
+        app.add_system(Stage::FixedUpdate, game_ecs::update_player);
+        app.add_system(Stage::FixedUpdate, game_ecs::collect_pages);
+        app.add_system(Stage::FixedUpdate, game_ecs::update_enemy);
+        app.add_system(Stage::FixedUpdate, game_ecs::resolve_run);
         app.add_system(Stage::PostUpdate, finish_game_state);
         app.add_system(Stage::PostUpdate, emit_audio_events);
         app.add_system(Stage::PostUpdate, update_window_title);
@@ -188,12 +325,21 @@ impl Plugin for StudsPlugin {
     }
 }
 
-/// Build the complete desktop app using the ECS app, platform runner, and rendering/audio plugins.
+/// Build the desktop app using the ECS app, platform runner, and rendering/audio plugins.
 pub fn build_app(seed: Option<u32>, preview: bool) -> Result<App, Box<dyn std::error::Error>> {
+    build_app_with_renderer(seed, preview, default_backend())
+}
+
+/// Build STUDS while explicitly choosing the renderer backend.
+pub fn build_app_with_renderer(
+    seed: Option<u32>,
+    preview: bool,
+    backend: RenderBackend,
+) -> Result<App, Box<dyn std::error::Error>> {
     let mut app = App::new();
     app.insert_resource(PlatformConfig::default());
     app.insert_resource(RenderSettings {
-        backend: RenderBackend::Cpu,
+        backend,
         width: 320,
         height: 180,
     });
@@ -202,11 +348,30 @@ pub fn build_app(seed: Option<u32>, preview: bool) -> Result<App, Box<dyn std::e
     app.add_plugin(plugin_rendering::ecs::RenderingPlugin)?;
     app.add_plugin(plugin_audio::AudioPlugin)?;
     if preview {
-        app.add_plugin(StudsPlugin::preview(seed.unwrap_or(42)))?;
+        app.add_plugin(StudsPlugin {
+            seed: Some(seed.unwrap_or(42)),
+            start_in_game: true,
+            backend,
+        })?;
     } else {
-        app.add_plugin(StudsPlugin { seed, start_in_game: false })?;
+        app.add_plugin(StudsPlugin {
+            seed,
+            start_in_game: false,
+            backend,
+        })?;
     }
     Ok(app.build()?)
+}
+
+fn default_backend() -> RenderBackend {
+    #[cfg(feature = "gpu")]
+    {
+        RenderBackend::Gpu
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        RenderBackend::Cpu
+    }
 }
 
 fn load_settings(settings_path: &std::path::Path) -> Settings {
@@ -242,9 +407,9 @@ fn update_ui_and_collect_input(world: &mut World) {
                     (size.width, size.height)
                 })
                 .or_else(|| {
-                    world.try_resource::<PlatformConfig>().map(|config| {
-                        (config.width.max(1), config.height.max(1))
-                    })
+                    world
+                        .try_resource::<PlatformConfig>()
+                        .map(|config| (config.width.max(1), config.height.max(1)))
                 })
                 .unwrap_or((framebuffer_size.0 as u32, framebuffer_size.1 as u32));
             let viewport = engine_platform::window::viewport(window_size, framebuffer_size);
@@ -283,32 +448,43 @@ fn update_ui_and_collect_input(world: &mut World) {
                     width: (width as u32).saturating_mul(scale),
                     height: (height as u32).saturating_mul(scale),
                 });
+                let backend = world
+                    .try_resource::<RenderSettings>()
+                    .map_or(RenderBackend::Cpu, |settings| settings.backend);
                 world.insert_resource(RenderSettings {
-                    backend: RenderBackend::Cpu,
+                    backend,
                     width: width as u32,
                     height: height as u32,
                 });
             }
             if outcome.start_game {
                 state.pending_input = InputFrame::default();
-                state.game = Game::new_with_difficulty(
-                    seed_now(),
-                    outcome.difficulty.unwrap_or(state.game.difficulty),
-                );
-                state.game.flashlight_on = state.settings.flashlight_on_start;
+                let difficulty = outcome
+                    .difficulty
+                    .unwrap_or_else(|| world.resource::<RunState>().difficulty);
+                let mut game = Game::new_with_difficulty(seed_now(), difficulty);
+                game.flashlight_on = state.settings.flashlight_on_start;
+                game_ecs::install_game(world, game);
             } else if outcome.restart_game {
                 state.pending_input = InputFrame::default();
-                state.game.restart(seed_now());
+                let (difficulty, flashlight_on) = {
+                    let run = world.resource::<RunState>();
+                    (run.difficulty, run.flashlight_on)
+                };
+                let mut game = Game::new_with_difficulty(seed_now(), difficulty);
+                game.flashlight_on = flashlight_on;
+                game_ecs::install_game(world, game);
             }
 
-            if state.ui.is_playing() && state.game.state == State::Playing {
+            let is_playing =
+                state.ui.is_playing() && world.resource::<RunState>().state == State::Playing;
+            if is_playing {
                 let capture_mouse = state.input.mouse_look_active() && platform_input.focused;
                 let mut mouse = FrameMouse(platform_input.mouse_delta);
-                let frame_input = state.input.poll_with_mouse_source(
-                    platform_input,
-                    &mut mouse,
-                    capture_mouse,
-                );
+                let frame_input =
+                    state
+                        .input
+                        .poll_with_mouse_source(platform_input, &mut mouse, capture_mouse);
                 if frame_input.quit {
                     world.send_event(AppExit);
                     return;
@@ -330,39 +506,56 @@ fn update_ui_and_collect_input(world: &mut World) {
     });
 }
 
-fn fixed_game_update(world: &mut World) {
+/// Select the buffered input for this fixed step and advance run-level clocks.
+fn begin_fixed_step(world: &mut World) {
     let dt = world.resource::<Time>().delta.as_secs_f32();
-    world.resource_scope::<StudsState, _>(|_, state| {
-        if state.ui.is_playing() && state.game.state == State::Playing {
-            let input = if state.repeat_step {
-                state.repeat_input
+    world.resource_scope::<StudsState, _>(|world, state| {
+        let ui_playing = state.ui.is_playing();
+        let step = world.resource_scope::<RunState, _>(|_, run| {
+            if ui_playing && run.state == State::Playing {
+                let input = if state.repeat_step {
+                    state.repeat_input
+                } else {
+                    let first = std::mem::take(&mut state.pending_input);
+                    state.repeat_input = first.level_only();
+                    state.repeat_step = true;
+                    first
+                };
+                let enemy_awake_before_time_advance = run.enemy_awake();
+                if input.toggle_flashlight {
+                    run.flashlight_on = !run.flashlight_on;
+                }
+                run.time += dt;
+                RunStep {
+                    active: true,
+                    input,
+                    enemy_awake_before_time_advance,
+                }
             } else {
-                let first = std::mem::take(&mut state.pending_input);
-                state.repeat_input = first.level_only();
-                state.repeat_step = true;
-                first
-            };
-            state.game.update(&input, dt);
-        } else if state.game.state != State::Playing {
-            state.game.update(&InputFrame::default(), dt);
-        }
+                if run.state != State::Playing {
+                    run.state_t += dt;
+                }
+                RunStep::default()
+            }
+        });
+        world.insert_resource(step);
     });
 }
 
 fn finish_game_state(world: &mut World) {
-    world.resource_scope::<StudsState, _>(|_, state| {
-        if state.ui.is_playing() && state.game.state != State::Playing {
-            if state.game.state == State::Won
-                && state
-                    .settings
-                    .record_best_time(state.game.difficulty, state.game.time)
-            {
-                let _ = state.settings.save(&state.settings_path);
+    world.resource_scope::<StudsState, _>(|world, state| {
+        world.resource_scope::<RunState, _>(|_, run| {
+            if state.ui.is_playing() && run.state != State::Playing {
+                if run.state == State::Won
+                    && state.settings.record_best_time(run.difficulty, run.time)
+                {
+                    let _ = state.settings.save(&state.settings_path);
+                }
+                state.ui.show_result();
             }
-            state.ui.show_result();
-        }
-        // `FixedUpdate` may have run multiple times this frame; the next frame starts with the
-        // buffered edge/delta input again while held controls are repeated only within this frame.
+        });
+        // FixedUpdate may execute more than once per displayed frame. Repeat held controls
+        // within that frame, then let the next PreUpdate supply fresh input edges and deltas.
         state.repeat_step = false;
     });
 }
@@ -374,7 +567,15 @@ fn update_window_title(world: &mut World) {
         state.title_timer += dt;
         if state.title_timer > 0.4 {
             state.title_timer = 0.0;
-            let title = state.title(fps);
+            let title = match state.ui.screen() {
+                Screen::MainMenu => "STUDS | main menu".to_owned(),
+                Screen::Difficulty => "STUDS | choose difficulty".to_owned(),
+                Screen::Pause => "STUDS | paused".to_owned(),
+                Screen::Settings => "STUDS | settings".to_owned(),
+                Screen::Controls => "STUDS | controls".to_owned(),
+                Screen::ConfirmMainMenu => "STUDS | confirm".to_owned(),
+                Screen::Result | Screen::Playing => world.resource::<RunState>().window_title(fps),
+            };
             if let Some(config) = world.try_resource::<PlatformConfig>().cloned() {
                 world.insert_resource(PlatformConfig { title, ..config });
             }
@@ -387,10 +588,7 @@ fn render_game_frame(world: &mut World) {
         world.resource_scope::<StudsRenderer, _>(|world, renderer| {
             let width = state.settings.render_width.max(1);
             let height = state.settings.render_height.max(1);
-            if renderer.output.width != width || renderer.output.height != height {
-                renderer.renderer.resize(width as u32, height as u32);
-                renderer.output = Framebuffer::new(width, height);
-            }
+            renderer.resize(width, height);
 
             let has_game_scene = matches!(
                 state.ui.screen(),
@@ -401,20 +599,6 @@ fn render_game_frame(world: &mut World) {
                     | Screen::Controls
                     | Screen::ConfirmMainMenu
             );
-            let scene = if has_game_scene {
-                let mut style = state
-                    .settings
-                    .visual_style
-                    .render_style(state.settings.quality_preset);
-                style.limit_flicker = state.settings.reduce_flashing;
-                state.game.scene_styled(
-                    state.render_frame,
-                    state.settings.hfov_radians(),
-                    style,
-                )
-            } else {
-                None
-            };
             let apply_brightness = state.ui.is_playing()
                 || matches!(
                     state.ui.screen(),
@@ -424,54 +608,131 @@ fn render_game_frame(world: &mut World) {
                         | Screen::Controls
                         | Screen::ConfirmMainMenu
                 );
-            let mut world_layer = DrawList::new(width, height);
-            if apply_brightness {
-                state.game.draw_overlay(&mut world_layer, state.render_frame);
-            }
-            let mut ui_layer = DrawList::new(width, height);
-            if !state.ui.is_playing() {
-                state.ui.draw(
-                    &mut ui_layer,
-                    state.render_frame,
-                    &state.game,
-                    &state.settings,
-                );
-            } else {
-                state.ui.draw_game_hints(&mut ui_layer, &state.game);
-            }
-            let plan = FramePlan {
-                scene,
-                world_layer,
-                brightness: if apply_brightness {
-                    state.settings.brightness
-                } else {
-                    1.0
-                },
-                ui_layer,
-            };
-            renderer.renderer.render_frame(&plan, studs_material_table());
-            renderer.renderer.present(&mut renderer.output);
-            world
-                .resource_mut::<WindowFrame>()
-                .set_pixels(width, height, &renderer.output.pixels);
+
+            world.resource_scope::<MazeResource, _>(|world, maze| {
+                world.resource_scope::<RunState, _>(|world, run| {
+                    let Some((player, enemy, (pages, got))) = game_ecs::read_view_parts(world)
+                    else {
+                        return;
+                    };
+                    let style = {
+                        let mut style = state
+                            .settings
+                            .visual_style
+                            .render_style(state.settings.quality_preset);
+                        style.limit_flicker = state.settings.reduce_flashing;
+                        style
+                    };
+                    let view = GameReadView {
+                        difficulty: run.difficulty,
+                        world: &maze.0,
+                        player: &player,
+                        enemy: &enemy,
+                        pages: &pages,
+                        got: &got,
+                        collected: run.collected,
+                        time: run.time,
+                        state: run.state,
+                        state_t: run.state_t,
+                        flashlight_on: run.flashlight_on,
+                        enemy_awake_since: run.enemy_awake_since,
+                    };
+                    let scene = if has_game_scene {
+                        view.scene_styled(state.render_frame, state.settings.hfov_radians(), style)
+                    } else {
+                        None
+                    };
+                    let mut world_layer = DrawList::new(width, height);
+                    if apply_brightness {
+                        view.draw_overlay(&mut world_layer, state.render_frame);
+                    }
+                    let ui_model: GameUiState = view.ui_state();
+                    let mut ui_layer = DrawList::new(width, height);
+                    if !state.ui.is_playing() {
+                        state.ui.draw_model(
+                            &mut ui_layer,
+                            state.render_frame,
+                            ui_model,
+                            &state.settings,
+                        );
+                    } else {
+                        state.ui.draw_game_hints_model(&mut ui_layer, ui_model);
+                    }
+                    let plan = FramePlan {
+                        scene,
+                        world_layer,
+                        brightness: if apply_brightness {
+                            state.settings.brightness
+                        } else {
+                            1.0
+                        },
+                        ui_layer,
+                    };
+                    let error = renderer.render_frame(&plan, studs_material_table());
+                    drop(plan);
+                    renderer.present();
+                    if let Some(error) = error {
+                        world.resource_mut::<engine_app::LogBuffer>().push(
+                            engine_app::LogLevel::Warn,
+                            format!("STUDS renderer frame failed: {error}"),
+                        );
+                        if renderer.backend == RenderBackend::Gpu {
+                            renderer.fall_back_to_cpu();
+                            if let Some(settings) = world.try_resource::<RenderSettings>().copied()
+                            {
+                                world.insert_resource(RenderSettings {
+                                    backend: RenderBackend::Cpu,
+                                    width: settings.width.max(1),
+                                    height: settings.height.max(1),
+                                });
+                            }
+                        }
+                    }
+                    if world.try_resource::<WindowFrame>().is_some() {
+                        world.resource_mut::<WindowFrame>().set_pixels(
+                            renderer.output.width,
+                            renderer.output.height,
+                            &renderer.output.pixels,
+                        );
+                    }
+                });
+            });
         });
     });
 }
 
 fn emit_audio_events(world: &mut World) {
-    let frame = world.resource_scope::<StudsState, _>(|world, state| {
+    let frame = world.resource_scope::<RunState, _>(|world, run| {
+        let player = world
+            .query::<&Player>()
+            .iter()
+            .next()
+            .map(|(_, player)| (player.pos, player.view.psi))
+            .unwrap_or((Vect::new(0.0, 0.0, 0.0), 0.0));
+        let enemy_pos = world
+            .query::<&Enemy>()
+            .iter()
+            .next()
+            .map(|(_, enemy)| enemy.pos)
+            .unwrap_or(player.0);
         let listener = AudioListener {
-            position: state.game.player.pos,
-            yaw: state.game.player.view.psi,
+            position: player.0,
+            yaw: player.1,
         };
-        for (_, current) in world.query_mut::<&mut AudioListener>() {
+        if let Some((_, current)) = world.query_mut::<&mut AudioListener>().into_iter().next() {
             *current = listener;
-            break;
         }
-        let ambience = match state.ui.screen() {
-            Screen::Playing if state.game.state == State::Playing && state.game.enemy_awake() => {
-                Some((ambiences::THREAT, 0.025 + state.game.proximity() * 0.11))
-            }
+        let enemy_awake = run.enemy_awake();
+        let distance = enemy_pos.dist_xy(player.0);
+        let ambience = match world
+            .try_resource::<StudsState>()
+            .map(|state| state.ui.screen())
+            .unwrap_or(Screen::MainMenu)
+        {
+            Screen::Playing if run.state == State::Playing && enemy_awake => Some((
+                ambiences::THREAT,
+                0.025 + proximity_intensity(distance, true) * 0.11,
+            )),
             Screen::MainMenu
             | Screen::Pause
             | Screen::Difficulty
@@ -481,36 +742,44 @@ fn emit_audio_events(world: &mut World) {
             _ => None,
         };
         AudioFrame {
-            events: std::mem::take(&mut state.game.events),
-            spatial_events: std::mem::take(&mut state.game.spatial_events),
+            events: std::mem::take(&mut run.events),
+            spatial_events: std::mem::take(&mut run.spatial_events),
             ambience,
-            effects_gain: if state.settings.mute_all {
-                0.0
-            } else {
-                state.settings.master_volume * state.settings.effects_volume
-            },
-            ambient_gain: if state.settings.mute_all {
-                0.0
-            } else {
-                state.settings.master_volume * state.settings.ambient_volume
-            },
+            effects_gain: world
+                .try_resource::<StudsState>()
+                .map(|state| {
+                    if state.settings.mute_all {
+                        0.0
+                    } else {
+                        state.settings.master_volume * state.settings.effects_volume
+                    }
+                })
+                .unwrap_or(0.0),
+            ambient_gain: world
+                .try_resource::<StudsState>()
+                .map(|state| {
+                    if state.settings.mute_all {
+                        0.0
+                    } else {
+                        state.settings.master_volume * state.settings.ambient_volume
+                    }
+                })
+                .unwrap_or(0.0),
             listener,
         }
     });
 
     for event in frame.events {
-        let gain = frame.effects_gain;
-        if gain > 0.0 {
+        if frame.effects_gain > 0.0 {
             world.send_event(PlaySound {
                 id: sound_id(event),
                 position: None,
-                gain,
+                gain: frame.effects_gain,
             });
         }
     }
     for event in frame.spatial_events {
-        let gain = frame.effects_gain;
-        if gain <= 0.0 {
+        if frame.effects_gain <= 0.0 {
             continue;
         }
         let pan = event.pan.clamp(-1.0, 1.0);
@@ -525,7 +794,7 @@ fn emit_audio_events(world: &mut World) {
         world.send_event(PlaySound {
             id: sound_id(event.event),
             position: Some(position),
-            gain,
+            gain: frame.effects_gain,
         });
     }
     let (id, gain) = frame
