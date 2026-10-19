@@ -36,7 +36,7 @@ graph TD
   plugins[engine_plugins] --> app
   platform[engine_platform] --> app & plugins & events & math
   assets[engine_assets] --> app & plugins & ecs & events
-  scene[engine_scene] --> ecs & reflect & math & app & plugins
+  scene[engine_scene] --> ecs & reflect & math & app & plugins & glam
   render[engine_render] --> app & plugins & platform & assets & math
   commands[engine_commands] --> ecs & reflect & scene
   editor[engine_editor] --> app & plugins & platform & render & reflect & commands & scene
@@ -98,9 +98,14 @@ workspace.
   `WindowFrame`; it is still the legacy-style voxel raycaster, not native-surface mesh
   rasterization. Replacing it with the `plugin_render3d` path is tracked in phase 7 of
   `docs/RENDERER_PLAN.md`.
+- `WinitRunner` must create the `softbuffer` CPU presenter only after `WindowFrame`
+  contains a complete non-empty image. `PlatformPlugin` registers the resource for every
+  app, including GPU-only apps; resource presence alone must not create a CPU surface for
+  an HWND already used by `wgpu`, because competing native surfaces can crash on shutdown.
 - The editor has no text input and is compiled only with its `editor` feature
   in debug builds. The glyph table limits available UI characters.
-- Scene transforms are recomputed each frame; dirty tracking is not implemented.
+- Local 2D/voxel transforms and 3D quaternion transforms share the same entity hierarchy; their global transforms are recomputed each `PostUpdate` (dirty tracking is not implemented). `plugin_render3d` consumes `GlobalTransform3D`.
+- `examples/scene_hierarchy_3d` demonstrates this `Transform3D` parent-child composition in the GPU mesh renderer and reports runtime diagnostics for global transform propagation.
 - STUDS uses `engine_app::App`, `WinitRunner`, and the platform/scene/rendering/audio/game
   plugins. Live gameplay uses `MazeResource` and `RunState` resources plus `Player`, `Enemy`,
   and `PagePickup` entities, advanced by dedicated schedule systems. `Game` remains a

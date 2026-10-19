@@ -19,8 +19,7 @@ raymarcher until phase 7 below moves it over.
   and legacy shading features. STUDS now reaches both through the ECS App and
   shared frame contract, but this remains the voxel-raycaster path; it has not yet
   been migrated to the `plugin_render3d` mesh pipeline.
-- `Transform3D` is currently world-space and separate from the scene hierarchy.
-  Voxel worlds are Z-up, while `plugin_render3d` is right-handed and Y-up.
+- `Transform3D` and `GlobalTransform3D` are now owned by `engine_scene` and use the shared `Parent`/`Children` hierarchy. `ScenePlugin` propagates 3D world transforms before render passes, and `plugin_render3d` consumes those global transforms. The legacy voxel world remains Z-up, while the mesh renderer is right-handed and Y-up; conversion is still required when meshing voxel chunks.
 - The mesh pipeline is still foundational rather than a full modern PBR renderer:
   mesh picking, voxel chunk meshing, shadow maps, normal/ORM maps, HDR, bloom,
   ambient occlusion, and the broader post-processing chain remain future work.
@@ -71,7 +70,7 @@ Each step is a `RenderNode` in the existing `RenderGraph`.
 | State machines | none | generic FSM component |
 | Resources | images, materials, RON scenes, embedded GLB/self-contained glTF assets | animation assets, external glTF buffer/image resolution, async loading |
 | Core | logger, RNG, schedule stats | profiling (CPU and GPU timestamps), engine config, localization |
-| Math | `Vect`/`Angles` in `engine_math`; `Vec3`/`Mat4`/`Quat` via `glam` in `plugin_render3d` | unified math/transform APIs across scene, mesh, and voxel subsystems |
+| Math | `Vect`/`Angles` in `engine_math`; 3D `Vec3`/`Mat4`/`Quat` via `glam` in `engine_scene` | one shared vector/quaternion API across 3D scene, mesh and voxel subsystems; voxel-to-Y-up conversion |
 | Parsers | RON, embedded GLB/self-contained glTF | external glTF resources and broader asset formats |
 
 New external crates (`glam`, `gltf`, `bytemuck`, `pollster`) must be added to
@@ -86,15 +85,15 @@ New external crates (`glam`, `gltf`, `bytemuck`, `pollster`) must be added to
   depth buffer and a directional light. `examples/cube_spin` shows it.
 - 3D conventions: right-handed, Y-up, camera looks down -Z (glTF). Voxel
   worlds are Z-up and need a conversion when phase 7 meshes them.
-- Phase 3 (glTF): done except hierarchy. `plugin_gltf` loads `.glb` (and
-  self-contained `.gltf`) through `AssetServer` into `ModelAsset` (primitives,
-  materials, decoded images, flattened node placements). `plugin_render3d`
-  uploads models once per asset handle, with sRGB base color textures, linear
-  light mip chains and 8x anisotropic sampling. `examples/model_viewer` loads
-  any `.glb`. Not yet supported: normal/ORM maps, alpha modes, vertex colors,
-  external buffer files, skins.
-- `Transform3D` still lives in `plugin_render3d` and is world-space. Moving it
-  into `engine_scene` with hierarchy support is the remaining phase 3 item.
+- Phase 3 (glTF): model loading and shared transform hierarchy are implemented.
+  `plugin_gltf` loads `.glb` (and self-contained `.gltf`) through `AssetServer`
+  into `ModelAsset` (primitives, materials, decoded images, flattened node
+  placements). `plugin_render3d` uploads models once per asset handle, with sRGB
+  base color textures, linear-light mip chains and 8x anisotropic sampling.
+  `examples/model_viewer` loads any supported `.glb`. Not yet supported: normal/ORM
+  maps, alpha modes, vertex colors, external buffer files, or skinned animation.
+- The scene/transform portion of phase 3 is implemented: `Transform3D` is defined by `engine_scene`, with reflected/serialized `GlobalTransform3D` propagation through shared parent relations. Parent-relative transforms compose translation, quaternion rotation, and per-axis scale. Transform decomposition cannot represent shear from rotated children under non-uniformly scaled parents; a matrix-based world-transform contract may be needed if such cases become a supported use case.
+- `examples/scene_hierarchy_3d` is a runnable visual/runtime diagnostic for shared 3D hierarchy transforms. It animates a parent, joint, link, and tip through `plugin_render3d`, then prints a PASS/FAIL report for the resolved world transforms. Run it with `cargo run -p scene_hierarchy_3d`.
 - `examples/graphics_showcase` brings the current mesh features together in a
   single live scene: colored instanced cubes, cached GLB models and their base
   color textures, a computed-normal triangle, depth testing, directional and
@@ -115,7 +114,7 @@ New external crates (`glam`, `gltf`, `bytemuck`, `pollster`) must be added to
 | 0 | Push current work, tag `voxel-cpu-baseline`, freeze `engine/crates/*` | tag exists, CI green |
 | 1 | Window presents through wgpu (`GpuWindowPlugin`), then `glam` and a 3D transform | window shows an animated clear color; resize works |
 | 2 | First mesh: hard-coded cube, vertex/index buffers, camera uniform, depth buffer | spinning cube, resize safe |
-| 3 | glTF loader through `engine_assets`; `MeshAsset`, `MaterialAsset`, GPU cache | a textured `.glb` renders |
+| 3 | glTF loader through `engine_assets`; `MeshAsset`, `MaterialAsset`, GPU cache, shared 3D hierarchy | a textured `.glb` renders and parented mesh instances follow global transforms |
 | 4 | PBR: albedo/normal/ORM, directional/point/spot lights, HDR, tonemapping | PBR sample scene; offscreen test pins an image |
 | 5 | Flashlight shadow map, cascaded shadows, GTAO | shadows visible; no acne on the test scene |
 | 6 | Bloom, volumetric fog, grade, grain, quality tiers | tiers switch at runtime |
