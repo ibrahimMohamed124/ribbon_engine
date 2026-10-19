@@ -125,7 +125,7 @@ jobs:
             echo "engine_math must have no dependencies"
             exit 1
           fi
-          if rg -n -i 'studs|warden|crawlmaster|vividcharacters' crates plugins; then
+          if grep -rniE 'studs|warden|crawlmaster|vividcharacters' crates plugins; then
             echo "Engine crates contain game-specific vocabulary"
             exit 1
           fi
@@ -156,7 +156,6 @@ jobs:
       - name: Engine-only minimal app
         run: cargo run --locked -p voxelworks-minimal -- --headless
       - name: Level probe
-        if: runner.os == 'Linux'
         run: cargo run --release --locked -p voxelworks-render-cpu --example level_probe
 
   release-build:
