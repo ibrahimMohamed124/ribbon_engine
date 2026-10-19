@@ -9,5 +9,6 @@ engine_reflect = { path = "../engine_reflect" }
 engine_math = { path = "../engine_math" }
 engine_app = { path = "../engine_app" }
 engine_plugins = { path = "../engine_plugins" }
+glam = "0.30"
 serde = { version = "1.0", features = ["derive"] }
 ron = "0.10"

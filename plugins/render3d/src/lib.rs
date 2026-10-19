@@ -1,8 +1,8 @@
 //! Mesh rendering for the engine: ECS components, an instanced wgpu mesh
 //! pipeline with a depth buffer, and a plugin that draws into the window.
 //!
-//! World space is right-handed and Y-up. Transforms here are world-space; the
-//! scene hierarchy is not consulted yet.
+//! World space is right-handed and Y-up. Three-dimensional local transforms are
+//! owned by `engine_scene`; this renderer consumes their resolved global transforms.
 
 pub mod components;
 pub mod mesh;
@@ -10,6 +10,7 @@ pub mod model;
 pub mod renderer;
 
 pub use components::{BuiltinMesh, Camera3D, MeshInstance, ModelInstance, SunLight, Transform3D};
+pub use engine_scene::GlobalTransform3D;
 pub use glam;
 pub use model::{upload_model, GpuModelPart};
 pub use renderer::{Draw, MaterialId, MeshId, MeshRenderer, Scene, TextureData};
@@ -36,17 +37,17 @@ impl FramePass for MeshPass {
             return;
         }
         let Some((pose, camera)) = world
-            .query::<(&Transform3D, &Camera3D)>()
+            .query::<(&Transform3D, &GlobalTransform3D, &Camera3D)>()
             .iter()
             .next()
-            .map(|(_, (pose, camera))| (*pose, *camera))
+            .map(|(_, (_, pose, camera))| (*pose, *camera))
         else {
             return;
         };
         let mut draws: Vec<Draw> = world
-            .query::<(&Transform3D, &MeshInstance)>()
+            .query::<(&Transform3D, &GlobalTransform3D, &MeshInstance)>()
             .iter()
-            .map(|(_, (transform, mesh))| Draw {
+            .map(|(_, (_, transform, mesh))| Draw {
                 mesh: MeshRenderer::CUBE,
                 material: MeshRenderer::WHITE,
                 model: transform.matrix(),
@@ -54,9 +55,9 @@ impl FramePass for MeshPass {
             })
             .collect();
         let placements: Vec<_> = world
-            .query::<(&Transform3D, &ModelInstance)>()
+            .query::<(&Transform3D, &GlobalTransform3D, &ModelInstance)>()
             .iter()
-            .map(|(_, (transform, instance))| (transform.matrix(), instance.model))
+            .map(|(_, (_, transform, instance))| (transform.matrix(), instance.model))
             .collect();
         if self
             .renderer
@@ -123,7 +124,7 @@ impl Plugin for Render3dPlugin {
     }
 
     fn dependencies(&self) -> &'static [&'static str] {
-        &["GpuWindowPlugin"]
+        &["GpuWindowPlugin", "ScenePlugin"]
     }
 
     fn build(&self, app: &mut App) {

@@ -1,16 +1,18 @@
-//! Hierarchy, transforms, and serializable prefab scene documents.
+//! 2D/voxel and 3D transforms, shared hierarchy, and serializable prefab scene documents.
 //!
-//! Render-specific cameras/materials remain in `plugin_rendering`; game-specific data remains in games.
+//! Render-specific cameras/materials remain in rendering plugins; game-specific data remains in games.
 
 mod hierarchy;
 mod prefab;
 mod transform;
 
-pub use hierarchy::{propagate_transforms, HierarchyError, HierarchyExt};
+pub use hierarchy::{propagate_transforms, propagate_transforms_3d, HierarchyError, HierarchyExt};
 pub use prefab::{
     capture, instantiate, instantiate_lenient, Prefab, PrefabEntity, SceneDoc, SceneError,
 };
-pub use transform::{Children, GlobalTransform, Name, Parent, Transform};
+pub use transform::{
+    Children, GlobalTransform, GlobalTransform3D, Name, Parent, Transform, Transform3D,
+};
 
 use engine_app::{App, Stage};
 use engine_plugins::Plugin;
@@ -31,6 +33,8 @@ impl Plugin for ScenePlugin {
             .register::<Name>()
             .and_then(|_| registry.register::<Transform>())
             .and_then(|_| registry.register::<GlobalTransform>())
+            .and_then(|_| registry.register::<Transform3D>())
+            .and_then(|_| registry.register::<GlobalTransform3D>())
             .and_then(|_| registry.register::<Parent>())
             .and_then(|_| registry.register::<Children>());
         if let Err(error) = registration {
@@ -41,5 +45,6 @@ impl Plugin for ScenePlugin {
         }
         app.world.insert_resource(registry);
         app.add_system(Stage::PostUpdate, propagate_transforms);
+        app.add_system(Stage::PostUpdate, propagate_transforms_3d);
     }
 }

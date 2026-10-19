@@ -1,59 +1,13 @@
-//! ECS components for the 3D renderer. World space is right-handed and Y-up;
-//! a camera looks down its local -Z axis (the glTF convention).
+//! ECS render components. World space is right-handed and Y-up; a camera looks
+//! down its local -Z axis (the glTF convention). `Transform3D` is re-exported
+//! from `engine_scene` so rendering consumes the shared scene transform model.
 
 use engine_assets::Handle;
-use glam::{Mat4, Quat, Vec3};
+pub use engine_scene::Transform3D;
+use glam::{Mat4, Vec3};
 use plugin_gltf::ModelAsset;
 
-/// Position, orientation and scale of an entity in world space.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Transform3D {
-    /// World-space position.
-    pub translation: Vec3,
-    /// World-space orientation.
-    pub rotation: Quat,
-    /// Per-axis scale. Keep it uniform until lighting gets a normal matrix.
-    pub scale: Vec3,
-}
-
-impl Default for Transform3D {
-    fn default() -> Self {
-        Self {
-            translation: Vec3::ZERO,
-            rotation: Quat::IDENTITY,
-            scale: Vec3::ONE,
-        }
-    }
-}
-
-impl Transform3D {
-    /// Identity transform moved to `translation`.
-    pub fn from_translation(translation: Vec3) -> Self {
-        Self {
-            translation,
-            ..Self::default()
-        }
-    }
-
-    /// A transform at `eye` whose -Z axis points at `target`.
-    pub fn looking_at(eye: Vec3, target: Vec3, up: Vec3) -> Self {
-        let (_, rotation, translation) = Mat4::look_at_rh(eye, target, up)
-            .inverse()
-            .to_scale_rotation_translation();
-        Self {
-            translation,
-            rotation,
-            scale: Vec3::ONE,
-        }
-    }
-
-    /// Local-to-world matrix.
-    pub fn matrix(&self) -> Mat4 {
-        Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
-    }
-}
-
-/// Perspective camera. The first entity with a `Camera3D` and a [`Transform3D`] is used.
+/// Perspective camera. The first entity with a `Camera3D` and local/global 3D transforms is used.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera3D {
     /// Vertical field of view in radians.
