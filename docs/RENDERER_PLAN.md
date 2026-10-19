@@ -1,141 +1,113 @@
 # Renderer plan: GPU-first, mesh-based, realism-oriented
 
-This plan supersedes the "CPU/GPU parity" direction of `REALISM_PLAN.md` for new
-engine work. `REALISM_PLAN.md` stays valid for STUDS on the legacy voxel
-raymarcher until phase 7 below moves it over.
+This plan supersedes the "CPU/GPU parity" direction of `REALISM_PLAN.md` for
+new engine rendering work. `REALISM_PLAN.md` remains relevant to STUDS while its
+gameplay and rendering transition away from the legacy voxel raycaster is pending.
 
-## Where the engine is today
+## Current implementation snapshot
 
-- The legacy renderer under `engine/crates/render-gpu` draws a full-screen
-  triangle and raymarches a voxel grid in a fragment shader. It remains separate
-  from the newer ECS-based windowed mesh pipeline.
-- The current workspace also contains `plugins/render3d`, a wgpu rasterization
-  pipeline with vertex/index buffers, an instanced cube path, depth buffering,
-  directional/ambient lighting, and imported glTF meshes.
-- `plugin_gltf` loads embedded `.glb` / self-contained `.gltf` assets through
-  `AssetServer`; `plugin_render3d` uploads model geometry, base-color textures,
-  and generated mip chains and caches uploaded parts by asset handle.
-- The older `plugins/rendering` path still owns voxel-oriented CPU/GPU rendering
-  and legacy shading features. STUDS now reaches both through the ECS App and
-  shared frame contract, but this remains the voxel-raycaster path; it has not yet
-  been migrated to the `plugin_render3d` mesh pipeline.
-- `Transform3D` and `GlobalTransform3D` are now owned by `engine_scene` and use the shared `Parent`/`Children` hierarchy. `ScenePlugin` propagates 3D world transforms before render passes, and `plugin_render3d` consumes those global transforms. The legacy voxel world remains Z-up, while the mesh renderer is right-handed and Y-up; conversion is still required when meshing voxel chunks.
-- The mesh pipeline is still foundational rather than a full modern PBR renderer:
-  mesh picking, voxel chunk meshing, shadow maps, normal/ORM maps, HDR, bloom,
-  ambient occlusion, and the broader post-processing chain remain future work.
+The engine now has a usable native-surface mesh-rendering vertical slice:
 
-## Decisions
+- `engine_render::RenderGraph` validates named-resource dependencies and runs
+  `FramePass` nodes in resource order. `GpuWindow` models clear, mesh passes,
+  and final presentation as a graph chain; surface acquisition and
+  `SurfaceTexture::present()` remain presenter responsibilities.
+- `plugin_render3d` extracts ECS camera, transforms, built-in meshes, glTF model
+  placements, voxel-mesh placements, and sunlight into `ExtractedScene3D`.
+- The forward mesh shader uses a Cook-Torrance / GGX metallic-roughness BRDF,
+  glTF base-color texture and factor, packed metallic-roughness map (G=roughness,
+  B=metallic), a directional light, ambient contribution, and a single
+  directional depth shadow map.
+- Scene color renders to `Rgba16Float`, followed by a fullscreen Reinhard
+  tone-mapping pass before the native window image is presented.
+- Camera-frustum sphere culling filters color-pass instances. Off-screen models
+  are still retained in the shadow draw list so they can cast shadows into the
+  visible scene.
+- `plugin_voxel` has greedy surface chunk meshing. It removes faces between
+  solid voxels, merges adjacent equal-block faces, culls chunk boundary faces
+  against neighboring world cells, and converts legacy Z-up coordinates to
+  the mesh renderer's Y-up coordinates. `VoxelMeshInstance3D` sends these meshes
+  through the same GPU mesh path as built-in geometry and glTF assets.
+- `examples/graphics_showcase` and `examples/voxel_mesh_showcase` provide
+  visible samples for the mesh/material and native voxel-mesh paths.
 
-1. Rasterize meshes with wgpu and WGSL. Do not extend the voxel raymarcher.
-2. Voxel worlds become meshes (greedy-meshed chunks) drawn by the same pipeline.
-3. The CPU renderer is a frozen reference for legacy goldens. No new features.
-4. Forward PBR with a depth pre-pass first; clustered lights and deferred
-   shading are revisited only if the light count demands it.
-5. GPU tests render offscreen and read back (`GpuContext::readback`). Tests
-   skip cleanly when no adapter exists. Linux CI installs
-   `mesa-vulkan-drivers`.
-6. New code lives under `crates/` and `plugins/`. Nothing new is added to
-   `engine/crates/*`.
-7. `engine_math` must stay dependency-free (CI enforces it). 3D math types come
-   from `glam` in a crate that is allowed to depend on it.
+This is a foundation, not a claim that every advanced rendering feature is done.
+STUDS still uses the legacy voxel renderer; the voxel showcase is the first
+integrated vertical slice, not the game migration.
+
+## Rendering decisions
+
+1. New render features use wgpu rasterization and WGSL; the legacy voxel
+   raymarcher is not the place for new engine rendering work.
+2. Voxel worlds are converted to greedy-meshed chunks and drawn through
+   `plugin_render3d`.
+3. The CPU renderer is a frozen reference for legacy goldens. Avoid adding new
+   engine capabilities there unless explicitly needed for compatibility.
+4. `RenderGraph` orders passes by named resource dependencies. It is not yet a
+   transient resource allocator, async-compute scheduler, or GPU profiler.
+5. Forward PBR remains the initial path. Reconsider clustered or deferred
+   rendering only if measured scene complexity justifies it.
+6. GPU tests use offscreen rendering/readback and skip cleanly when an adapter is
+   unavailable. Tests and GPU validation still need to be run on a machine with
+   the Rust toolchain and graphics adapter available.
+7. New engine code belongs under `crates/` and `plugins/`, not `engine/crates/*`.
 
 ## Target frame
 
-Each step is a `RenderNode` in the existing `RenderGraph`.
+The following is the long-term target, not a statement that every line is already
+implemented:
 
 ```text
- 1  Extract       ECS -> RenderWorld (mesh instances, lights, camera)
- 2  Cull          frustum culling, instance batching
- 3  Shadows       spot (flashlight), cascaded (sun), cube (point)
- 4  Depth/Normal  pre-pass
- 5  AO            GTAO or SSAO
- 6  Opaque PBR    Cook-Torrance, albedo/normal/ORM -> HDR RGBA16F
- 7  Sky and fog   volumetric fog
- 8  Transparent   sorted back to front
- 9  Post          bloom, exposure, tonemap, grade, grain, anti-aliasing
-10  UI/editor     DrawList quads over the image
-11  Present       wgpu surface
+ 1  Extract       ECS -> render-facing snapshot
+ 2  Cull          CPU frustum culling; instance batching (GPU culling later)
+ 3  Shadows       single directional map now; cascades / point / spot later
+ 4  Depth         opaque depth buffer now; dedicated pre-pass later if measured
+ 5  Opaque PBR    Cook-Torrance metallic-roughness into HDR RGBA16F
+ 6  Sky and fog   future sky model and volumetric fog
+ 7  Transparent   future alpha modes and sorting
+ 8  Post          Reinhard tonemap now; bloom, exposure controls, grade, AA later
+ 9  UI/editor     DrawList quads over the image
+10  Present       wgpu surface
 ```
 
 ## Gap analysis
 
-| Area | Present | Missing |
+| Area | Present | Remaining work |
 | --- | --- | --- |
-| Front end | scene hierarchy, camera components, basic editor | mesh-picking UI, multiple active cameras, text GUI |
-| Back end | native wgpu window surface; explicit ECS render extraction; `plugin_render3d` mesh rasterization and depth buffer | render-graph integration for the new mesh path, shadow maps, culling and GPU profiling |
-| Materials, textures | GLB base-color upload and mip chains in `plugin_render3d`; CPU PBR maps in the legacy renderer | mesh-pipeline normal/ORM maps, HDR and compressed GPU texture formats |
-| Audio | rodio output, sound bank | 3D positional audio, effects, voice priority |
-| Animation | per-frame transform systems; placeholder animation crate | glTF skins and clips, timelines |
-| Physics | voxel collision | mesh/AABB colliders, broad phase |
-| State machines | none | generic FSM component |
-| Resources | images, materials, RON scenes, embedded GLB/self-contained glTF assets | animation assets, external glTF buffer/image resolution, async loading |
-| Core | logger, RNG, schedule stats | profiling (CPU and GPU timestamps), engine config, localization |
-| Math | `Vect`/`Angles` in `engine_math`; 3D `Vec3`/`Mat4`/`Quat` via `glam` in `engine_scene` | one shared vector/quaternion API across 3D scene, mesh and voxel subsystems; voxel-to-Y-up conversion |
-| Parsers | RON, embedded GLB/self-contained glTF | external glTF resources and broader asset formats |
-
-New external crates (`glam`, `gltf`, `bytemuck`, `pollster`) must be added to
-`tools/allowed_deps.toml` or `tools/check_deps.py` fails.
-
-## Status
-
-- Phase 1 (window presents through wgpu): done. `GpuWindowPlugin` owns the
-  context and native surface; drawing steps register as `FramePass` objects and run
-  after the clear. The mesh pipeline renders directly into this surface without a
-  CPU framebuffer readback.
-- Phase 2 (first mesh): done. `plugin_render3d` draws instanced cubes with a
-  depth buffer and a directional light. `examples/cube_spin` shows it.
-- ECS extraction for the mesh pipeline is now an explicit `PostUpdate` system.
-  `ExtractedScene3D` snapshots camera/world transforms, built-in mesh instances,
-  glTF placements, and sunlight before `GpuWindowPlugin` begins GPU submission.
-  `MeshPass` consumes this snapshot rather than querying gameplay entities while
-  recording the render pass. The snapshot reuses its vectors between frames.
-- 3D conventions: right-handed, Y-up, camera looks down -Z (glTF). Voxel
-  worlds are Z-up and need a conversion when phase 7 meshes them.
-- Phase 3 (glTF): model loading and shared transform hierarchy are implemented.
-  `plugin_gltf` loads `.glb` (and self-contained `.gltf`) through `AssetServer`
-  into `ModelAsset` (primitives, materials, decoded images, flattened node
-  placements). `plugin_render3d` uploads models once per asset handle, with sRGB
-  base color textures, linear-light mip chains and 8x anisotropic sampling.
-  `examples/model_viewer` loads any supported `.glb`. Not yet supported: normal/ORM
-  maps, alpha modes, vertex colors, external buffer files, or skinned animation.
-- The scene/transform portion of phase 3 is implemented: `Transform3D` is defined by `engine_scene`, with reflected/serialized `GlobalTransform3D` propagation through shared parent relations. Parent-relative transforms compose translation, quaternion rotation, and per-axis scale. Transform decomposition cannot represent shear from rotated children under non-uniformly scaled parents; a matrix-based world-transform contract may be needed if such cases become a supported use case.
-- `examples/scene_hierarchy_3d` is a runnable visual/runtime diagnostic for shared 3D hierarchy transforms. It animates a parent, joint, link, and tip through `plugin_render3d`, then prints a PASS/FAIL report for the resolved world transforms. Run it with `cargo run -p scene_hierarchy_3d`.
-- `examples/graphics_showcase` brings the current mesh features together in a
-  single live scene: colored instanced cubes, cached GLB models and their base
-  color textures, a computed-normal triangle, depth testing, directional and
-  ambient light, animated transforms, and an orbiting camera. Its README lists
-  the controls and explicitly documents renderer capabilities that are not yet
-  wired in.
-- STUDS' `--renderer cpu|gpu|auto` selects the CPU voxel renderer or the existing
-  offscreen GPU voxel renderer through the ECS runtime. The GPU pixels still pass
-  through readback and `WindowFrame`; this does not mark phase 7 complete because
-  STUDS is not yet drawing voxel chunk meshes through `plugin_render3d` on the
-  native wgpu surface.
-- ECS-to-mesh extraction is complete for camera transforms, built-in meshes, glTF model
-  placements, and sunlight. The generic `RenderGraph` is not yet the executor for these
-  `FramePass` objects; pass scheduling and graph integration remain separate future work.
-- `assets/models/*.glb` are generated by `tools/make_test_models.py`.
+| Frame graph | Validated resource dependency graph; native `GpuWindow` passes chained by color versions | Transient resource allocation, explicit graph nodes for every internal mesh subpass, detailed tracing/profiling |
+| Mesh backend | Native wgpu surface, indexed meshes, depth buffer, GPU instance buffers | GPU-driven rendering, robust asset eviction, async upload, resource lifetime policy |
+| Materials | Cook-Torrance/GGX, base-color factor/map, metallic/roughness factors/map, generated mips | Normal maps, occlusion maps, emissive, alpha modes, vertex colors, compression, material caching/sharing |
+| Lighting | Directional sun, ambient term, single 1024 directional depth map | Cascaded shadows, multi-tap PCF/soft shadows, point/spot lights, physically based image-based lighting |
+| HDR/post | `Rgba16Float` scene color and fullscreen Reinhard tonemapping | Exposure control, bloom, color grading, anti-aliasing, fog, AO/GTAO |
+| Visibility | Conservative CPU frustum sphere culling for main color pass; off-screen objects remain in shadow draws | Better bounds for animated/deformed meshes, occlusion culling, LOD, GPU culling, metrics |
+| Voxels | Greedy chunk surface meshing, block grouping, cross-chunk face culling, Y-up conversion, native GPU showcase | Dirty-chunk updates/remeshing, material atlas/texture IDs, chunk streaming, STUDS migration and raycaster deletion |
+| Front end | Scene hierarchy, camera component, single active extracted camera | Multi-camera/render layers, picking, editor text UI |
+| Animation | Transform animation systems and placeholder plugin | glTF skins/clips, morph targets, animation evaluation |
+| Physics | Voxel collision | Mesh/AABB colliders, broadphase, robust 3D character controller |
+| Audio | Audio output and sound bank | 3D spatialization, effects, voice prioritization |
+| Assets | Embedded GLB / self-contained glTF, decoded images, synchronous weak handles | External glTF resources, async loading, robust hot-reload and cache eviction |
+| Core | Logger, RNG, schedule stats | CPU/GPU profiling, engine configuration, localization |
 
 ## Phases and exit criteria
 
-| Phase | Work | Done when |
+| Phase | State | Exit criteria |
 | --- | --- | --- |
-| 0 | Push current work, tag `voxel-cpu-baseline`, freeze `engine/crates/*` | tag exists, CI green |
-| 1 | Window presents through wgpu (`GpuWindowPlugin`), then `glam` and a 3D transform | window shows an animated clear color; resize works |
-| 2 | First mesh: hard-coded cube, vertex/index buffers, camera uniform, depth buffer | spinning cube, resize safe |
-| 3 | glTF loader through `engine_assets`; `MeshAsset`, `MaterialAsset`, GPU cache, shared 3D hierarchy | a textured `.glb` renders and parented mesh instances follow global transforms |
-| 4 | PBR: albedo/normal/ORM, directional/point/spot lights, HDR, tonemapping | PBR sample scene; offscreen test pins an image |
-| 5 | Flashlight shadow map, cascaded shadows, GTAO | shadows visible; no acne on the test scene |
-| 6 | Bloom, volumetric fog, grade, grain, quality tiers | tiers switch at runtime |
-| 7 | Voxel chunk mesher on the same pipeline; migrate STUDS; delete the raymarcher | STUDS renders through meshes |
-| 8 | Skeletal animation, mesh colliders, 3D audio, state machines, profiling | monster animates and collides |
-| 9 | IBL and reflection probes, TAA, LODs, GPU culling | tracked per feature |
+| 1–3: runtime, first mesh, glTF, shared 3D transforms | Implemented foundation | Windowed scene and imported GLB render; parented transforms propagate |
+| 4a: first PBR/HDR path | Implemented foundation | Base color + metallic/roughness factors and packed map feed Cook-Torrance shader; HDR tone mapping runs |
+| 4b: full material system | In progress | Normal, occlusion, emissive maps; alpha handling; conformance scenes and GPU verification |
+| 5a: directional shadows | Implemented baseline | Single directional depth map is rendered and sampled |
+| 5b: shadow quality | In progress | Multi-tap PCF, stable shadow bounds, acne/peter-panning regression coverage, cascades and additional light types |
+| 6: advanced post | Planned | Bloom, AO, fog, exposure and quality controls |
+| 7a: voxel-to-mesh vertical slice | Implemented | Greedy mesher and `voxel_mesh_showcase` draw chunks with native mesh pipeline |
+| 7b: STUDS migration / legacy deletion | Not complete | STUDS gameplay renders meshes on native surface; legacy raycaster and unneeded legacy crates are removed safely |
+| 8: advanced gameplay support | Planned | Skeletal animation, mesh colliders, 3D audio, state machines and profiling |
+| 9: advanced renderer | Planned | IBL, TAA, LOD, GPU culling tracked individually |
 
-## Repository hygiene tied to this plan
+## Repository hygiene
 
-- Finish the legacy-tree removal (see `SHIMS.md`) before phase 7.
-- Split oversized `lib.rs` files when touched: `engine_assets`,
-  `engine_commands`, `engine_schedule`, `engine_reflect`.
-- New renderer code uses small modules (`context`, `pipelines/`, `passes/`) and
-  readable `.wgsl` files under `shaders/`.
-- Pick one crate naming scheme (`engine_*` versus `voxelworks-*`).
+- Do not claim STUDS migration complete until `docs/PHASE9.md` and compatibility
+  constraints have been resolved and the old voxel path has actually been removed.
+- Split large renderer modules further when that improves API boundaries and
+  resource ownership; avoid a cosmetic rewrite that breaks the working samples.
+- Keep dependency rules in `tools/allowed_deps.toml`; run
+  `python tools/check_deps.py` after manifest changes.

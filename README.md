@@ -21,7 +21,7 @@ application built on it.
 | --- | --- |
 | `crates/` | Engine core (`engine_*`): math, ECS, events, schedule, app, plugins, platform, assets, scene, render, reflection, commands, editor |
 | `plugins/` | Optional features (`plugin_*`): voxel, physics, rendering, render3d, gltf, animation, audio, editor tools |
-| `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `material_grid`, `gpu_window`, `editor_demo`, `graphics_showcase`, `scene_hierarchy_3d` |
+| `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `gpu_window`, `editor_demo`, `graphics_showcase`, `scene_hierarchy_3d`, `voxel_mesh_showcase` |
 | `games/studs/` | The game, now launched through the ECS app and plugin runner; some gameplay migration and compatibility cleanup remain. |
 | `engine/` | **Legacy** `voxelworks-*` crates, to be deleted |
 | `docs/`, `tools/` | Plans, decisions, dependency policy and checker |
@@ -36,8 +36,9 @@ cargo run                                   # the STUDS game (ECS app + platform
 cargo run -p hello_ecs                      # ECS and schedule only
 cargo run -p voxel_room                     # ECS voxel room (add -- --headless --renderer cpu)
 cargo run -p model_viewer                   # glTF model on the wgpu mesh renderer
-cargo run -p graphics_showcase              # animated GPU mesh / glTF graphics showcase
+cargo run -p graphics_showcase              # PBR / HDR / directional-shadow graphics showcase
 cargo run -p scene_hierarchy_3d             # visible 3D parent/child transform example
+cargo run -p voxel_mesh_showcase             # greedy voxel chunks on the native 3D renderer
 cargo run -p voxelworks-minimal -- --headless --renderer cpu   # legacy engine-only example
 ```
 
