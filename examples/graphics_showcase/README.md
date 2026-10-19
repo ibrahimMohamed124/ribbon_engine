@@ -33,6 +33,12 @@ cargo run -p graphics_showcase -- --frames 600
 - A separate imported triangle whose normals are computed by the glTF loader when absent.
 - Per-frame transforms, camera orbit, and frame-limit shutdown for capture workflows.
 
+The example uses `GpuWindowPlugin` for direct native-surface presentation and
+`ExtractedScene3D` for the ECS-to-render boundary. Camera and entity world transforms
+are resolved by `ScenePlugin` and extracted during `PostUpdate`; GPU passes consume the
+resulting snapshot. On the first rendered frame, the terminal prints `[RENDER EXTRACT] PASS`
+with the camera, built-in mesh, and glTF placement counts (or `FAIL` if extraction is empty).
+
 The example intentionally uses only capabilities already integrated into the
 current windowed mesh renderer. It is not a claim that mesh ray-picking, shadow
 maps, metallic/roughness PBR, normal/ORM maps, bloom, ambient occlusion, or

@@ -14,7 +14,8 @@ use engine_scene::ScenePlugin;
 use plugin_gltf::{GltfLoader, ModelAsset};
 use plugin_render3d::glam::{Quat, Vec3};
 use plugin_render3d::{
-    BuiltinMesh, Camera3D, MeshInstance, ModelInstance, Render3dPlugin, SunLight, Transform3D,
+    BuiltinMesh, Camera3D, ExtractedScene3D, MeshInstance, ModelInstance, Render3dPlugin, SunLight,
+    Transform3D,
 };
 use std::error::Error;
 use std::path::Path;
@@ -46,6 +47,7 @@ struct ShowcaseState {
     camera_height: f32,
     paused: bool,
     frame_limit: Option<u64>,
+    extraction_reported: bool,
 }
 
 fn spawn_cube(
@@ -197,6 +199,35 @@ fn animate_showcase(world: &mut World) {
 
     if frame_limit.is_some_and(|limit| frame >= limit) {
         world.send_event(AppExit);
+    }
+}
+
+fn report_render_extraction(world: &mut World) {
+    let (frame, has_camera, mesh_count, model_count) = {
+        let extracted = world.resource::<ExtractedScene3D>();
+        (
+            extracted.frame,
+            extracted.camera.is_some(),
+            extracted.meshes.len(),
+            extracted.models.len(),
+        )
+    };
+    if frame == 0 {
+        return;
+    }
+    let state = world.resource_mut::<ShowcaseState>();
+    if state.extraction_reported {
+        return;
+    }
+    state.extraction_reported = true;
+    if has_camera && mesh_count > 0 && model_count > 0 {
+        println!(
+            "[RENDER EXTRACT] PASS: frame={frame}, camera=1, built-in meshes={mesh_count}, glTF placements={model_count}"
+        );
+    } else {
+        println!(
+            "[RENDER EXTRACT] FAIL: frame={frame}, camera={has_camera}, built-in meshes={mesh_count}, glTF placements={model_count}"
+        );
     }
 }
 
@@ -420,6 +451,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         camera_height: 5.0,
         paused: false,
         frame_limit,
+        extraction_reported: false,
     });
     app.add_plugin(GpuWindowPlugin)?;
     app.insert_resource(SunLight {
@@ -448,10 +480,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         triangle_center,
     );
     app.add_system(Stage::Update, animate_showcase);
+    app.add_system(Stage::Last, report_render_extraction);
 
     println!("Voxelworks Graphics Showcase");
-    println!("Live features: wgpu mesh rasterization, depth buffer, instanced cubes, directional lighting,");
-    println!("GLB model loading, textured base-color materials, mipmapped textures, and animated transforms.");
+    println!("Live features: native wgpu surface, ECS render extraction, mesh rasterization, depth buffer,");
+    println!("instanced cubes, directional lighting, textured GLB models, mipmapped textures, and animation.");
     println!(
         "Controls: Space pause/resume, Left/Right orbit speed, Up/Down camera height, R reset."
     );
