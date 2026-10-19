@@ -101,19 +101,46 @@ impl DesktopDriver {
         let Some(app) = self.app.as_mut() else {
             return;
         };
-        let presentation_error = if !self.presentation_failed {
-            match (
-                self.window.as_ref(),
-                self.presenter.as_mut(),
-                app.world.try_resource::<WindowFrame>(),
-            ) {
-                (Some(window), Some(presenter), Some(frame)) => {
-                    presenter.present(window, frame).err()
+        if self.presentation_failed {
+            return;
+        }
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        // PlatformPlugin always registers WindowFrame, including for GPU-only apps. Do not
+        // create a softbuffer/GDI surface merely because the resource exists: doing so can make
+        // softbuffer and wgpu compete for the same HWND and crash during shutdown on Windows.
+        // Wait until a CPU renderer has submitted a complete, non-empty frame before creating it.
+        let has_presentable_frame = app
+            .world
+            .try_resource::<WindowFrame>()
+            .is_some_and(|frame| {
+                frame.width > 0
+                    && frame.height > 0
+                    && frame.pixels.len() >= frame.width.saturating_mul(frame.height)
+            });
+        if !has_presentable_frame {
+            return;
+        }
+        if self.presenter.is_none() {
+            match SoftwarePresenter::new(window.clone()) {
+                Ok(presenter) => self.presenter = Some(presenter),
+                Err(error) => {
+                    app.world.resource_mut::<LogBuffer>().push(
+                        LogLevel::Warn,
+                        format!("CPU window presentation unavailable: {error}"),
+                    );
+                    self.presentation_failed = true;
+                    return;
                 }
-                _ => None,
             }
-        } else {
-            None
+        }
+        let presentation_error = match (
+            self.presenter.as_mut(),
+            app.world.try_resource::<WindowFrame>(),
+        ) {
+            (Some(presenter), Some(frame)) => presenter.present(window, frame).err(),
+            _ => None,
         };
         if let Some(error) = presentation_error {
             app.world.resource_mut::<LogBuffer>().push(
@@ -259,18 +286,6 @@ impl ApplicationHandler for DesktopDriver {
                 }
                 self.requested_window_size = (config.width.max(1), config.height.max(1));
                 self.applied_title = config.title.clone();
-                match SoftwarePresenter::new(window.clone()) {
-                    Ok(presenter) => self.presenter = Some(presenter),
-                    Err(error) => {
-                        if let Some(app) = self.app.as_mut() {
-                            app.world.resource_mut::<LogBuffer>().push(
-                                LogLevel::Warn,
-                                format!("CPU window presentation unavailable: {error}"),
-                            );
-                        }
-                        self.presentation_failed = true;
-                    }
-                }
                 self.window = Some(window);
                 self.last_frame = Instant::now();
             }
@@ -410,6 +425,13 @@ impl ApplicationHandler for DesktopDriver {
         if let Some(app) = self.app.as_mut() {
             app.shutdown();
         }
+        // Tear down while the event loop is still alive and in dependency order: CPU presenter,
+        // then the app (GPU surface/device/passes), then the window they were created from.
+        // Dropping the window first, or letting it outlive the loop, crashes wgpu on Windows.
+        self.presenter = None;
+        self.app = None;
+        self.window = None;
+        self.window_id = None;
     }
 }
 
