@@ -10,10 +10,13 @@ application built on it.
 > The old immediate-mode runner and `App`/`Ctx` traits are no longer on the
 > game executable's runtime path. The live maze, run progression, player, enemy,
 > and page pickups are now ECS resources/entities with scheduled simulation systems.
-> STUDS supports `--renderer cpu|gpu|auto`; GPU rendering currently uses the existing
-> offscreen voxel raycaster and copies its frame to the window. Legacy shim crates
-> remain for compatibility examples until the remaining Phase 9 cleanup. See
-> [docs/PHASE9.md](docs/PHASE9.md).
+> STUDS supports `--renderer cpu|gpu|auto`. Its GPU backend now uses the
+> engine-owned `plugin_render3d::OffscreenVoxelRenderer`, which consumes dynamically
+> remeshed voxel chunks and draws through the PBR/HDR mesh pipeline with STUDS albedo textures;
+> CPU raycasting remains the reference/fallback. The GPU creature is currently a multipart mesh
+> proxy while the CPU path uses the baked sprite atlas. Legacy raycaster code is retained until
+> manual Windows GPU gameplay smoke checks pass. See [docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md](docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md)
+> and [docs/PHASE9.md](docs/PHASE9.md).
 
 ## Layout
 
@@ -21,7 +24,7 @@ application built on it.
 | --- | --- |
 | `crates/` | Engine core (`engine_*`): math, ECS, events, schedule, app, plugins, platform, assets, scene, render, reflection, commands, editor |
 | `plugins/` | Optional features (`plugin_*`): voxel, physics, rendering, render3d, gltf, animation, audio, editor tools |
-| `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `material_grid`, `gpu_window`, `editor_demo`, `graphics_showcase`, `scene_hierarchy_3d` |
+| `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `gpu_window`, `editor_demo`, `graphics_showcase`, `scene_hierarchy_3d`, `voxel_mesh_showcase` |
 | `games/studs/` | The game, now launched through the ECS app and plugin runner; some gameplay migration and compatibility cleanup remain. |
 | `engine/` | **Legacy** `voxelworks-*` crates, to be deleted |
 | `docs/`, `tools/` | Plans, decisions, dependency policy and checker |
@@ -36,8 +39,9 @@ cargo run                                   # the STUDS game (ECS app + platform
 cargo run -p hello_ecs                      # ECS and schedule only
 cargo run -p voxel_room                     # ECS voxel room (add -- --headless --renderer cpu)
 cargo run -p model_viewer                   # glTF model on the wgpu mesh renderer
-cargo run -p graphics_showcase              # animated GPU mesh / glTF graphics showcase
+cargo run -p graphics_showcase              # PBR / HDR / directional-shadow graphics showcase
 cargo run -p scene_hierarchy_3d             # visible 3D parent/child transform example
+cargo run -p voxel_mesh_showcase             # dynamic greedy voxel chunks on the native 3D renderer
 cargo run -p voxelworks-minimal -- --headless --renderer cpu   # legacy engine-only example
 ```
 
@@ -48,9 +52,10 @@ Audio and GPU rendering are optional Cargo features for STUDS. The defaults enab
 both; `--no-default-features` selects the CPU renderer and disables Rodio output.
 Choose a backend with `cargo run -p studs -- --renderer gpu` or `--renderer cpu`;
 `auto` currently prefers GPU when that feature is compiled in and falls back to CPU
-if GPU initialization fails. The STUDS GPU path is the existing offscreen voxel
-raycaster with readback through `WindowFrame`, not the newer `plugin_render3d`
-mesh-rasterization pipeline.
+if GPU initialization fails. The STUDS GPU path uses `plugin_render3d::OffscreenVoxelRenderer` for native GPU mesh
+rasterization and copies the tone-mapped framebuffer through `WindowFrame`. The CPU
+raycaster remains available as a fallback/reference; legacy GPU raycaster source is kept
+until manual gameplay checks on the target Windows hardware are complete.
 
 ## Dependency rules
 

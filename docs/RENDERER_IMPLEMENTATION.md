@@ -1,0 +1,80 @@
+# Renderer vertical-slice implementation notes
+
+This document records the boundaries of the current implementation to avoid
+confusing integrated capabilities with features that remain in the roadmap.
+
+## Integrated in this phase
+
+1. **Graph-driven native-window passes.** `GpuWindow` registers clear, each
+   `FramePass`, and final presentation as nodes with named color-version
+   dependencies. `RenderGraph` validates reads/writes and computes stable order.
+   The presenter still owns the wgpu surface and calls `SurfaceTexture::present()`.
+2. **PBR material inputs.** `plugin_gltf` retains metallic/roughness factors and
+   the packed metallic-roughness image index. When a glTF material omits
+   `metallicFactor`, the loader preserves glTF 2.0’s default value of `1.0`.
+   `plugin_render3d` uploads base color
+   as sRGB and the G=roughness/B=metallic map as linear data with generated mip
+   levels. The shader evaluates a Cook-Torrance GGX forward BRDF. The public
+   `PbrMaterialDesc` groups factors and optional texture maps into one descriptor,
+   keeping the material upload API explicit without an oversized argument list.
+3. **HDR and tone mapping.** Mesh color renders to `Rgba16Float`, then a fullscreen
+   Reinhard tone mapper writes the acquired surface image.
+4. **Directional shadows.** A depth-only directional-light pass creates a single
+   shadow map; the material pass samples it with a depth-comparison sampler and
+   depth bias. Cascades, PCF kernels, point/spot shadows and production-grade
+   stability work remain incomplete.
+5. **Main-pass visibility.** Conservative bounding-sphere/frustum tests reduce
+   the color-pass instance list. The shadow list retains valid off-screen draws
+   so objects outside the camera view can still cast shadows.
+6. **Dynamic voxel-world integration.** `plugin_voxel::ChunkedVoxelWorld` wraps
+   mutable voxel storage, revisions and a retained CPU mesh cache. `set_block` invalidates
+   only its owning chunk plus face-neighbors when touching chunk boundaries. Dirty chunks
+   are greedily remeshed against the complete world; empty results are explicit eviction
+   updates. `plugin_render3d::OffscreenVoxelRenderer` consumes those updates, replaces GPU
+   buffers and reuses freed mesh slots while rendering through the common HDR/PBR/depth/shadow
+   pipeline. The native ECS mesh path evicts GPU meshes no longer present in the extracted
+   scene. STUDS' GPU backend uses the offscreen mesh renderer, with its game palette and visual
+   entities still defined in the game folder.
+
+## Deliberately not claimed complete
+
+- The STUDS GPU code path has moved from the legacy GPU raycaster to the engine mesh renderer,
+  but manual gameplay smoke checks remain pending. Its CPU raycaster and legacy GPU raycaster
+  implementation are deliberately retained as reference/rollback paths.
+- STUDS still presents the mesh-rendered framebuffer through offscreen readback and `WindowFrame`;
+  native-surface presentation and the old renderer's game-specific spot-light/noise effects are
+  not part of this migration.
+- The generic API supports dynamic chunk edits and GPU mesh update/eviction. The engine-only
+  `voxel_mesh_showcase` removes and restores a floor block at the corner shared by chunks to
+  exercise incremental remeshing, entity replacement and GPU-resource eviction; STUDS does not
+  gain a block-breaking mechanic just to exercise the engine. Engine-level tests cover owner-chunk
+  updates, boundary neighbors, no-op edits, out-of-bounds edits and empty-chunk eviction updates.
+- The PBR shader does not yet implement normal/occlusion/emissive textures,
+  alpha modes, vertex colors, image-based lighting, or multiple point/spot lights.
+- The current shadow map is a single fixed-resolution directional map without
+  cascades or a multi-tap PCF kernel.
+- The render graph is a scheduling/dependency graph, not a transient GPU resource
+  allocator or complete graph of every internal render subpass.
+- Bloom, ambient occlusion, fog, GPU culling, LOD, skeletal animation, and legacy
+  renderer deletion remain planned work.
+
+## PBR renderer test expectations
+
+The low-level GPU tests read the mesh pass before the production HDR tone-mapping and
+surface transfer stage. They therefore assert color dominance and texture contrast in
+linear output rather than exact display RGB values or display-space brightness. PBR
+specular highlights can add small values to channels that are zero in a material's base
+color, and metallic surfaces without image-based lighting can be intentionally dim. The
+64x64 checker fixture requires more than 20 dominant-color pixels for each checker color;
+this ensures both regions actually render without assuming a fixed pixel count across GPU
+adapters and drivers. The glTF loader test separately checks the spec-defined defaults
+(`metallicFactor = 1.0` and `roughnessFactor = 1.0`) for the checker fixture that omits both
+values.
+
+## Local validation
+
+Run `finish-dynamic-voxel-phase.ps1` on Windows from the extracted project root. It formats
+source, checks dependency policy, runs the workspace check/clippy/build/test matrix with and
+without default features, and builds the STUDS release GPU path. The script is validation-only:
+it does not commit or push. The Rust toolchain and GPU adapter availability vary by machine; this
+file does not claim the new phase has already compiled or passed runtime checks on every target.

@@ -14,7 +14,7 @@ path = "src/main.rs"
 [features]
 default = ["audio", "gpu"]
 audio = ["plugin_audio/audio"]
-gpu = ["plugin_rendering/gpu"]
+gpu = ["plugin_rendering/gpu", "dep:plugin_render3d"]
 
 [dependencies]
 engine_app = { path = "../../crates/engine_app" }
@@ -28,6 +28,7 @@ plugin_audio = { path = "../../plugins/audio", default-features = false }
 plugin_physics = { path = "../../plugins/physics" }
 plugin_voxel = { path = "../../plugins/voxel" }
 plugin_rendering = { path = "../../plugins/rendering", default-features = false, features = ["cpu"] }
+plugin_render3d = { path = "../../plugins/render3d", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]

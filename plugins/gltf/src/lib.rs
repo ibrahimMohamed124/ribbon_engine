@@ -29,8 +29,14 @@ pub struct PrimitiveData {
 pub struct MaterialData {
     /// Linear base color multiplier (RGBA).
     pub base_color: [f32; 4],
+    /// Metallic factor in the glTF metallic-roughness workflow.
+    pub metallic_factor: f32,
+    /// Perceptual roughness factor in the glTF metallic-roughness workflow.
+    pub roughness_factor: f32,
     /// Index into [`ModelAsset::images`] for the sRGB base color texture.
     pub base_color_texture: Option<usize>,
+    /// Index into [`ModelAsset::images`] for the linear G=roughness/B=metallic texture.
+    pub metallic_roughness_texture: Option<usize>,
 }
 
 /// Decoded 8-bit RGBA image.
@@ -109,8 +115,13 @@ pub fn parse(bytes: &[u8]) -> Result<ModelAsset, String> {
         let pbr = material.pbr_metallic_roughness();
         model.materials.push(MaterialData {
             base_color: pbr.base_color_factor(),
+            metallic_factor: pbr.metallic_factor(),
+            roughness_factor: pbr.roughness_factor(),
             base_color_texture: pbr
                 .base_color_texture()
+                .map(|info| info.texture().source().index()),
+            metallic_roughness_texture: pbr
+                .metallic_roughness_texture()
                 .map(|info| info.texture().source().index()),
         });
     }
@@ -278,6 +289,10 @@ mod tests {
         assert_eq!(cube.material, Some(0));
         assert_eq!(model.materials[0].base_color_texture, Some(0));
         assert_eq!(model.materials[0].base_color, [1.0; 4]);
+        // The fixture omits metallicFactor; glTF 2.0 defines its default as 1.0.
+        assert_eq!(model.materials[0].metallic_factor, 1.0);
+        assert_eq!(model.materials[0].roughness_factor, 1.0);
+        assert_eq!(model.materials[0].metallic_roughness_texture, None);
         assert_eq!((model.images[0].width, model.images[0].height), (8, 8));
         assert_eq!(model.images[0].rgba8.len(), 8 * 8 * 4);
         // Parent translation (0, 0.5, 0) times child translation (1.5, 0, 0) and scale 0.8.

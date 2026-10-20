@@ -48,9 +48,9 @@ The names are close, so for the record:
 
 | Package | Role |
 | --- | --- |
-| `engine_render` | Backend-neutral frame/draw contracts, render graph, CPU presenter and the optional wgpu context. Owns no scene knowledge. |
+| `engine_render` | Backend-neutral frame/draw contracts, resource-validated render graph, CPU presenter and optional wgpu context. Owns no scene knowledge. |
 | `plugin_rendering` | Voxel scene/material data, CPU/GPU voxel raycasters, and the ECS bridge. Its `cpu` and `gpu` features are independently selectable; GPU mode uses offscreen rendering/readback. |
-| `plugin_render3d` | Instanced mesh renderer on wgpu with depth buffer, glTF models via `plugin_gltf`. |
+| `plugin_render3d` | Native-surface indexed/instanced mesh renderer with ECS extraction, depth buffering, metallic-roughness PBR, HDR tone mapping, directional shadows, frustum culling, glTF assets, greedy voxel mesh support, dynamic GPU mesh eviction and `OffscreenVoxelRenderer`. |
 
 ## Layers and responsibilities
 
@@ -92,12 +92,8 @@ workspace.
 
 - Systems run serially; system parameter injection is not implemented.
 - Asset loading is synchronous and handles are weak.
-- The render graph is an ordered, validated pass list, not a resource allocator.
-- The ECS rendering bridge supports CPU and GPU voxel rendering. The GPU path uses
-  `plugin_rendering::gpu::voxel`, renders offscreen, and submits its framebuffer through
-  `WindowFrame`; it is still the legacy-style voxel raycaster, not native-surface mesh
-  rasterization. Replacing it with the `plugin_render3d` path is tracked in phase 7 of
-  `docs/RENDERER_PLAN.md`.
+- The render graph validates named-resource dependencies and orders native window frame passes, but is not yet a transient resource allocator, async scheduler, or GPU profiler.
+- `plugin_voxel::ChunkedVoxelWorld` now owns edit revisions, dirty chunk invalidation and incremental greedy remeshing. `plugin_render3d::OffscreenVoxelRenderer` consumes those updates and uploads/releases chunk GPU meshes; the native ECS `Render3dPlugin` path also releases voxel meshes removed from the extracted scene. STUDS' GPU backend uses the offscreen mesh renderer bridge, while the CPU raycaster remains a reference/fallback and legacy raycaster source is retained pending manual runtime checks. See `docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md`.
 - `WinitRunner` must create the `softbuffer` CPU presenter only after `WindowFrame`
   contains a complete non-empty image. `PlatformPlugin` registers the resource for every
   app, including GPU-only apps; resource presence alone must not create a CPU surface for
@@ -109,16 +105,22 @@ workspace.
 - STUDS uses `engine_app::App`, `WinitRunner`, and the platform/scene/rendering/audio/game
   plugins. Live gameplay uses `MazeResource` and `RunState` resources plus `Player`, `Enemy`,
   and `PagePickup` entities, advanced by dedicated schedule systems. `Game` remains a
-  compatibility/domain facade rather than a runtime resource. The game can select CPU or
-  offscreen GPU voxel rendering through `--renderer cpu|gpu|auto`; GPU frames are read back
-  through `WindowFrame`, not rendered directly by `plugin_render3d` to the window surface.
-  The remaining legacy-tree deletion is tracked in [`docs/PHASE9.md`](docs/PHASE9.md).
+  compatibility/domain facade rather than a runtime resource. Its GPU route now invokes
+  `plugin_render3d::OffscreenVoxelRenderer`, with pixels read back through `WindowFrame`;
+  `--renderer cpu` remains the legacy software reference/fallback. STUDS owns no engine
+  remeshing or GPU-resource policy. The old raycaster isn't removed until manual gameplay
+  verification passes; remaining legacy-tree cleanup is tracked in [`docs/PHASE9.md`](docs/PHASE9.md).
 - The neutral renderer fixture, the CPU golden test and the CPU/GPU parity test
   live in `plugins/rendering/tests/` (`docs/PHASE9.md` step 2).
-- The voxel-room ECS bridge can select the offscreen GPU renderer; it falls back to CPU if
-  GPU initialization fails. Native-surface presentation and integration with `plugin_render3d`
-  remain separate work.
+- `examples/voxel_mesh_showcase` demonstrates dynamic block edits, chunk-boundary invalidation and GPU mesh replacement on the native mesh pipeline. Dynamic editing is provided by `ChunkedVoxelWorld::set_block` and `rebuild_dirty_chunks`; STUDS exercises GPU upload/update/eviction through `OffscreenVoxelRenderer`.
 
 See `docs/SHIMS.md` for transitional imports, `docs/DECISIONS.md` for
 choices made where the refactor plan left behavior unspecified, and
 `docs/LEGACY_ARCHITECTURE.md` for renderer verification results.
+
+
+## 3D Rendering
+
+- The mesh renderer uses `GpuWindowPlugin` for direct native wgpu-surface presentation. The GPU window builds a `RenderGraph` chain for surface clearing, registered `FramePass` instances, and final presentation ordering. `Render3dPlugin` extracts camera, global mesh/model/voxel transforms, and sunlight into `ExtractedScene3D` during `PostUpdate`; its frame pass consumes that snapshot during GPU submission.
+- `plugin_render3d` currently includes a first Cook-Torrance/GGX metallic-roughness shader, a directional shadow-depth pass, a `Rgba16Float` HDR target and Reinhard tone mapping. It samples glTF base-color and packed metallic-roughness textures. Frustum culling applies to the color pass while off-screen models remain eligible for shadow casting. Cascaded/soft shadows, normal/occlusion/emissive maps, alpha modes, AO, bloom, fog, IBL and GPU culling remain unimplemented.
+- `plugin_voxel::greedy_mesh_chunk` creates material-grouped surface meshes with cross-chunk face culling and converts Z-up voxel coordinates to Y-up mesh coordinates. `examples/voxel_mesh_showcase` proves this path on the native renderer; STUDS GPU mode now uses `plugin_render3d::OffscreenVoxelRenderer`; its CPU raycaster remains a reference/fallback.

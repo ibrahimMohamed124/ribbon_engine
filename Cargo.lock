@@ -2060,6 +2060,7 @@ dependencies = [
  "engine_scene",
  "glam",
  "plugin_gltf",
+ "plugin_voxel",
  "pollster",
  "wgpu",
 ]
@@ -2609,6 +2610,7 @@ dependencies = [
  "image",
  "plugin_audio",
  "plugin_physics",
+ "plugin_render3d",
  "plugin_rendering",
  "plugin_voxel",
  "voxelworks-platform",
@@ -2891,6 +2893,20 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "voxel_mesh_showcase"
+version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_events",
+ "engine_platform",
+ "engine_plugins",
+ "engine_render",
+ "engine_scene",
+ "plugin_render3d",
+ "plugin_voxel",
+]
 
 [[package]]
 name = "voxel_room"

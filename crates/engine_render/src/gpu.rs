@@ -24,13 +24,23 @@ impl OffscreenTarget {
 
 /// Shared instance, adapter, device, queue, optional surface, and offscreen target.
 pub struct GpuContext {
-    _instance: wgpu::Instance,
-    adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    // Fields drop in declaration order. The surface and every device-owned object must be
+    // released before the instance that created them; destroying a Vulkan instance first
+    // crashes on exit (STATUS_ACCESS_VIOLATION on Windows).
     surface: Option<wgpu::Surface<'static>>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
     target: OffscreenTarget,
+    queue: wgpu::Queue,
+    device: wgpu::Device,
+    adapter: wgpu::Adapter,
+    _instance: wgpu::Instance,
+}
+
+impl Drop for GpuContext {
+    fn drop(&mut self) {
+        // Let in-flight work finish so the surface/swapchain is idle when it is destroyed.
+        let _ = self.device.poll(wgpu::PollType::Wait);
+    }
 }
 
 impl GpuContext {

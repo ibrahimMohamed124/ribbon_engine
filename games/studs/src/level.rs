@@ -4,8 +4,8 @@
 //! asks it questions ("is this tile open?", "what does this ray hit?").
 
 use engine_math::Rng;
-use plugin_voxel::VoxelWorld;
-use std::ops::{Deref, DerefMut};
+use plugin_voxel::{ChunkedVoxelWorld, VoxelWorld};
+use std::ops::Deref;
 
 pub const CELLS: usize = 10; // maze is CELLS x CELLS cells, each 2x2 tiles with 1-tile walls
 pub const X_BLOCKS: usize = CELLS * 3 + 1;
@@ -18,7 +18,10 @@ pub const FLOOR: u8 = b'f';
 pub const WALL: u8 = b'#';
 pub const CEIL: u8 = b'c';
 
-pub struct World(VoxelWorld);
+/// STUDS maze data backed by the engine's mutable, chunked voxel world.
+/// The maze generator owns block meanings and layout; chunk invalidation and meshing
+/// remain in `plugin_voxel` and the GPU upload path remains in `plugin_render3d`.
+pub struct World(ChunkedVoxelWorld);
 
 /// First tile (x or y) of maze cell `c`.
 pub fn origin(c: usize) -> usize {
@@ -38,6 +41,11 @@ impl World {
 
     pub fn blocks(&self) -> &[u8] {
         self.0.blocks()
+    }
+
+    /// Mutable access to the engine-owned chunked voxel data for edits made by game rules.
+    pub fn chunked_world_mut(&mut self) -> &mut ChunkedVoxelWorld {
+        &mut self.0
     }
 
     pub fn tile_open(&self, x: i32, y: i32) -> bool {
@@ -138,7 +146,11 @@ impl World {
                 }
             }
         }
-        World(VoxelWorld::new(X_BLOCKS, Y_BLOCKS, Z_BLOCKS, blocks))
+        World(ChunkedVoxelWorld::new(
+            VoxelWorld::new(X_BLOCKS, Y_BLOCKS, Z_BLOCKS, blocks),
+            [8, 8, Z_BLOCKS],
+            AIR,
+        ))
     }
 }
 
@@ -147,12 +159,6 @@ impl Deref for World {
 
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-impl DerefMut for World {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
     }
 }
 

@@ -18,10 +18,17 @@ use engine_platform::{Input as PlatformInput, PlatformConfig, WindowFrame, Windo
 use engine_plugins::{AppPluginExt, Plugin};
 use engine_render::{DrawList, FramePlan, Framebuffer, Renderer};
 use plugin_audio::{AudioListener, PlaySound, SetAmbience, SoundId};
+#[cfg(feature = "gpu")]
+use plugin_render3d::{
+    glam::{Mat4, Quat, Vec3},
+    OffscreenCamera3D, OffscreenDraw3D, OffscreenVoxelRenderer, SunLight, VoxelBlockMaterial,
+};
 use plugin_rendering::cpu::renderer::CpuRenderer;
 use plugin_rendering::ecs::{CpuBackend, DefaultShader, RenderBackend, RenderSettings};
 use plugin_rendering::material::MaterialTable;
 use plugin_rendering::Scene;
+#[cfg(feature = "gpu")]
+use plugin_voxel::ChunkedVoxelWorld;
 
 use crate::audio::{ambiences, sounds, AudioEvent};
 use crate::enemy::proximity_intensity;
@@ -31,6 +38,10 @@ use crate::game_ecs::{self, MazeResource, RunState, RunStep};
 use crate::input::{Input as GameInput, InputFrame};
 use crate::player::Player;
 use crate::settings::Settings;
+#[cfg(feature = "gpu")]
+use crate::settings::VisualStyle;
+#[cfg(feature = "gpu")]
+use crate::surfaces::studs_gpu_voxel_materials;
 use crate::surfaces::{studs_material_table, StudsSurface};
 use crate::ui::{Screen, Ui, UiInput};
 
@@ -86,8 +97,11 @@ impl StudsState {
 
 enum RendererImpl {
     Cpu(CpuRenderer<StudsSurface>),
+    /// STUDS' GPU backend exercises the engine's native mesh renderer. The legacy voxel
+    /// raycaster remains available in `plugin_rendering` for compatibility/rollback, but
+    /// this game no longer selects it as its GPU implementation.
     #[cfg(feature = "gpu")]
-    Gpu(Box<plugin_rendering::gpu::voxel::GpuRenderer>),
+    MeshGpu(Box<OffscreenVoxelRenderer>),
 }
 
 /// Per-game renderer. Both backends consume the same extracted scene and FramePlan.
@@ -109,11 +123,11 @@ impl StudsRenderer {
         if requested == RenderBackend::Gpu {
             #[cfg(feature = "gpu")]
             {
-                match plugin_rendering::gpu::voxel::GpuRenderer::new(width_u32, height_u32) {
+                match OffscreenVoxelRenderer::new(width_u32, height_u32) {
                     Ok(renderer) => {
                         return (
                             Self {
-                                renderer: RendererImpl::Gpu(Box::new(renderer)),
+                                renderer: RendererImpl::MeshGpu(Box::new(renderer)),
                                 output,
                                 backend: RenderBackend::Gpu,
                             },
@@ -178,7 +192,7 @@ impl StudsRenderer {
         match &mut self.renderer {
             RendererImpl::Cpu(renderer) => renderer.resize(width as u32, height as u32),
             #[cfg(feature = "gpu")]
-            RendererImpl::Gpu(renderer) => renderer.resize(width as u32, height as u32),
+            RendererImpl::MeshGpu(renderer) => renderer.resize(width as u32, height as u32),
         }
     }
 
@@ -193,9 +207,8 @@ impl StudsRenderer {
                 None
             }
             #[cfg(feature = "gpu")]
-            RendererImpl::Gpu(renderer) => {
-                renderer.render_frame(plan, materials);
-                renderer.take_error()
+            RendererImpl::MeshGpu(_) => {
+                Some("mesh GPU backend must render through the engine voxel-scene API".to_owned())
             }
         }
     }
@@ -204,8 +217,31 @@ impl StudsRenderer {
         match &mut self.renderer {
             RendererImpl::Cpu(renderer) => renderer.present(&mut self.output),
             #[cfg(feature = "gpu")]
-            RendererImpl::Gpu(renderer) => renderer.present(&mut self.output),
+            RendererImpl::MeshGpu(_) => {}
         }
+    }
+
+    #[cfg(feature = "gpu")]
+    fn render_voxel_world(
+        &mut self,
+        world: &mut ChunkedVoxelWorld,
+        camera: Option<OffscreenCamera3D>,
+        materials: &[VoxelBlockMaterial<'_>],
+        sun: SunLight,
+        objects: &[OffscreenDraw3D],
+        clear_color: [f64; 4],
+    ) -> Result<(), String> {
+        let rendered = match &mut self.renderer {
+            RendererImpl::MeshGpu(renderer) => {
+                renderer.render_with_materials(world, camera, materials, sun, objects, clear_color)
+            }
+            RendererImpl::Cpu(_) => {
+                return Err("mesh rendering was requested while the CPU backend is active".into())
+            }
+        }
+        .map_err(|error| error.to_string())?;
+        self.output = rendered;
+        Ok(())
     }
 
     fn fall_back_to_cpu(&mut self) {
@@ -658,25 +694,78 @@ fn render_game_frame(world: &mut World) {
                     } else {
                         state.ui.draw_game_hints_model(&mut ui_layer, ui_model);
                     }
-                    let plan = FramePlan {
-                        scene,
-                        world_layer,
-                        brightness: if apply_brightness {
-                            state.settings.brightness
-                        } else {
-                            1.0
-                        },
-                        ui_layer,
+                    let brightness = if apply_brightness {
+                        state.settings.brightness
+                    } else {
+                        1.0
                     };
-                    let error = renderer.render_frame(&plan, studs_material_table());
-                    drop(plan);
-                    renderer.present();
-                    if let Some(error) = error {
-                        world.resource_mut::<engine_app::LogBuffer>().push(
-                            engine_app::LogLevel::Warn,
-                            format!("STUDS renderer frame failed: {error}"),
+
+                    #[cfg(feature = "gpu")]
+                    if renderer.backend == RenderBackend::Gpu {
+                        // Only copy presentation-neutral camera/light data from the legacy
+                        // scene adapter. The voxel world, chunking, greedy meshing and GPU
+                        // mesh lifecycle are all owned by engine crates/plugins.
+                        let (camera, flashlight) = scene
+                            .as_ref()
+                            .map(|scene| {
+                                (
+                                    studs_camera(scene.camera, width, height),
+                                    scene.lighting.light_level,
+                                )
+                            })
+                            .map_or((None, 0.0), |(camera, light)| (Some(camera), light));
+                        // `view` has no destructor; its borrows end at its final use above.
+                        // Drop the scene adapter explicitly because it can retain the world borrow.
+                        drop(scene);
+
+                        let objects = if camera.is_some() {
+                            studs_scene_objects(
+                                &enemy,
+                                &pages,
+                                &got,
+                                run.time,
+                                run.enemy_awake(),
+                            )
+                        } else {
+                            Vec::new()
+                        };
+                        // `SunLight::direction` describes where light travels; the shader
+                        // reverses it to obtain the surface-to-light vector.
+                        let light_direction = camera
+                            .map(|camera| camera.forward)
+                            .unwrap_or(Vec3::new(-0.35, -0.8, -0.45));
+                        let sun = SunLight {
+                            direction: light_direction.normalize_or_zero(),
+                            color: Vec3::splat(flashlight.max(0.0) * 4.0),
+                            // The CPU renderer includes a broader material response and texture
+                            // modulation. Keep a modest neutral fill on the mesh path too, so
+                            // shadowed surfaces remain legible while the flashlight is pulsing.
+                            ambient: Vec3::splat(match state.settings.visual_style {
+                                VisualStyle::Moody => 0.085,
+                                VisualStyle::Classic => 0.20,
+                                VisualStyle::Realistic => 0.14,
+                            }),
+                        };
+                        let clear_color = match state.settings.visual_style {
+                            VisualStyle::Moody => [0.002, 0.006, 0.004, 1.0],
+                            VisualStyle::Classic => [0.018, 0.018, 0.018, 1.0],
+                            VisualStyle::Realistic => [0.008, 0.009, 0.008, 1.0],
+                        };
+                        let materials = studs_gpu_voxel_materials(state.settings.visual_style);
+                        let render_result = renderer.render_voxel_world(
+                            maze.0.chunked_world_mut(),
+                            camera,
+                            &materials,
+                            sun,
+                            &objects,
+                            clear_color,
                         );
-                        if renderer.backend == RenderBackend::Gpu {
+                        if let Err(error) = render_result {
+                            world.resource_mut::<engine_app::LogBuffer>().push(
+                                engine_app::LogLevel::Warn,
+                                format!("STUDS mesh renderer frame failed: {error}; falling back to CPU"),
+                            );
+                            renderer.output.pixels.fill(0);
                             renderer.fall_back_to_cpu();
                             if let Some(settings) = world.try_resource::<RenderSettings>().copied()
                             {
@@ -686,6 +775,50 @@ fn render_game_frame(world: &mut World) {
                                     height: settings.height.max(1),
                                 });
                             }
+                        } else {
+                            // The legacy Z-up raycaster's horizontal camera basis is mirrored
+                            // relative to the native right-handed Y-up mesh camera. Mirror only
+                            // the GPU world image as a game compatibility adapter so mouse/arrow
+                            // yaw and WASD strafing keep the same on-screen handedness. HUD and
+                            // overlays are composited below and therefore remain unmirrored.
+                            mirror_framebuffer_horizontal(&mut renderer.output);
+                        }
+                        plugin_rendering::cpu::renderer::composite_frame_layers(
+                            &mut renderer.output,
+                            &world_layer,
+                            brightness,
+                            &ui_layer,
+                        );
+                    } else {
+                        let error = render_cpu_frame(
+                            renderer,
+                            scene,
+                            world_layer,
+                            brightness,
+                            ui_layer,
+                        );
+                        if let Some(error) = error {
+                            world.resource_mut::<engine_app::LogBuffer>().push(
+                                engine_app::LogLevel::Warn,
+                                format!("STUDS renderer frame failed: {error}"),
+                            );
+                        }
+                    }
+
+                    #[cfg(not(feature = "gpu"))]
+                    {
+                        let error = render_cpu_frame(
+                            renderer,
+                            scene,
+                            world_layer,
+                            brightness,
+                            ui_layer,
+                        );
+                        if let Some(error) = error {
+                            world.resource_mut::<engine_app::LogBuffer>().push(
+                                engine_app::LogLevel::Warn,
+                                format!("STUDS renderer frame failed: {error}"),
+                            );
                         }
                     }
                     if world.try_resource::<WindowFrame>().is_some() {
@@ -699,6 +832,175 @@ fn render_game_frame(world: &mut World) {
             });
         });
     });
+}
+
+fn render_cpu_frame(
+    renderer: &mut StudsRenderer,
+    scene: Option<Scene<'_>>,
+    world_layer: DrawList,
+    brightness: f32,
+    ui_layer: DrawList,
+) -> Option<String> {
+    let plan = FramePlan {
+        scene,
+        world_layer,
+        brightness,
+        ui_layer,
+    };
+    let error = renderer.render_frame(&plan, studs_material_table());
+    drop(plan);
+    renderer.present();
+    error
+}
+
+#[cfg(feature = "gpu")]
+fn mirror_framebuffer_horizontal(framebuffer: &mut Framebuffer) {
+    let width = framebuffer.width;
+    if width < 2 {
+        return;
+    }
+    for row in framebuffer.pixels.chunks_exact_mut(width) {
+        row.reverse();
+    }
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod gpu_camera_compat_tests {
+    use super::mirror_framebuffer_horizontal;
+    use engine_render::Framebuffer;
+
+    #[test]
+    fn legacy_camera_compatibility_mirrors_world_rows_without_reordering_rows() {
+        let mut framebuffer = Framebuffer::new(3, 2);
+        framebuffer.pixels.copy_from_slice(&[1, 2, 3, 4, 5, 6]);
+
+        mirror_framebuffer_horizontal(&mut framebuffer);
+
+        assert_eq!(framebuffer.pixels.as_slice(), &[3, 2, 1, 6, 5, 4]);
+    }
+
+    #[test]
+    fn horizontal_camera_compatibility_is_safe_for_narrow_framebuffers() {
+        let mut framebuffer = Framebuffer::new(1, 2);
+        framebuffer.pixels.copy_from_slice(&[7, 9]);
+
+        mirror_framebuffer_horizontal(&mut framebuffer);
+
+        assert_eq!(framebuffer.pixels.as_slice(), &[7, 9]);
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn studs_camera(
+    camera: plugin_rendering::Camera,
+    width: usize,
+    height: usize,
+) -> OffscreenCamera3D {
+    let forward = engine_math::forward_vec(camera.view);
+    let aspect = width.max(1) as f32 / height.max(1) as f32;
+    let fov_y = 2.0 * ((camera.hfov * 0.5).tan() / aspect.max(1.0e-4)).atan();
+    OffscreenCamera3D {
+        position: Vec3::new(camera.eye.x, camera.eye.z, -camera.eye.y),
+        forward: Vec3::new(forward.x, forward.z, -forward.y),
+        up: Vec3::Y,
+        fov_y,
+        near: 0.08,
+        far: 160.0,
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn studs_scene_objects(
+    enemy: &Enemy,
+    pages: &[Vect],
+    got: &[bool],
+    time: f32,
+    enemy_awake: bool,
+) -> Vec<OffscreenDraw3D> {
+    // Enemy geometry is game-specific presentation; cube instances and their GPU lifecycle are
+    // generic engine services. Several simple parts avoid the single giant placeholder cuboid.
+    let mut objects = Vec::with_capacity(6 + pages.len());
+    let base = Vec3::new(enemy.pos.x, enemy.pos.z, -enemy.pos.y);
+    let yaw = Quat::from_rotation_y(enemy.yaw);
+    let walk = if enemy_awake {
+        (time * 4.5).sin() * 0.16
+    } else {
+        (time * 0.6).sin() * 0.025
+    };
+    let (torso, head, limbs) = if enemy_awake {
+        (
+            [0.48, 0.025, 0.018],
+            [0.72, 0.045, 0.025],
+            [0.30, 0.018, 0.014],
+        )
+    } else {
+        ([0.17, 0.12, 0.10], [0.24, 0.16, 0.13], [0.12, 0.085, 0.07])
+    };
+    {
+        let mut part = |offset: Vec3, scale: Vec3, local_rotation: Quat, tint: [f32; 3]| {
+            objects.push(OffscreenDraw3D {
+                model: Mat4::from_scale_rotation_translation(
+                    scale,
+                    yaw * local_rotation,
+                    base + yaw * offset,
+                ),
+                tint,
+            });
+        };
+        part(
+            Vec3::new(0.0, 1.16, 0.0),
+            Vec3::new(0.40, 0.82, 0.26),
+            Quat::IDENTITY,
+            torso,
+        );
+        part(
+            Vec3::new(0.0, 1.82, 0.0),
+            Vec3::new(0.35, 0.40, 0.32),
+            Quat::IDENTITY,
+            head,
+        );
+        part(
+            Vec3::new(-0.29, 1.10, 0.0),
+            Vec3::new(0.14, 0.72, 0.15),
+            Quat::from_rotation_z(walk),
+            limbs,
+        );
+        part(
+            Vec3::new(0.29, 1.10, 0.0),
+            Vec3::new(0.14, 0.72, 0.15),
+            Quat::from_rotation_z(-walk),
+            limbs,
+        );
+        part(
+            Vec3::new(-0.12, 0.34, 0.0),
+            Vec3::new(0.17, 0.66, 0.18),
+            Quat::from_rotation_z(-walk * 0.65),
+            limbs,
+        );
+        part(
+            Vec3::new(0.12, 0.34, 0.0),
+            Vec3::new(0.17, 0.66, 0.18),
+            Quat::from_rotation_z(walk * 0.65),
+            limbs,
+        );
+    }
+
+    for (index, page) in pages.iter().enumerate() {
+        if got.get(index).copied().unwrap_or(true) {
+            continue;
+        }
+        let phase = time * 0.9 + index as f32 * 1.7;
+        let position = Vec3::new(page.x, page.z + 0.38 + phase.sin() * 0.08, -page.y);
+        objects.push(OffscreenDraw3D {
+            model: Mat4::from_scale_rotation_translation(
+                Vec3::splat(0.22),
+                Quat::from_rotation_y(phase),
+                position,
+            ),
+            tint: [1.8, 1.35, 0.28],
+        });
+    }
+    objects
 }
 
 fn emit_audio_events(world: &mut World) {

@@ -1,5 +1,9 @@
 //! Ordered, validated render pass graph.
 
+#[cfg(feature = "gpu")]
+use crate::gpu_window::FrameTarget;
+#[cfg(feature = "gpu")]
+use engine_app::World;
 use std::any::{Any, TypeId};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -42,15 +46,41 @@ impl RenderContext {
 }
 
 /// One ordered render pass.
-pub trait RenderNode {
+pub trait RenderNode: Send + Sync {
     /// Stable diagnostic name.
     fn name(&self) -> &str;
     /// Named resources consumed by this pass.
     fn reads(&self) -> &[&str];
     /// Named resources produced by this pass.
     fn writes(&self) -> &[&str];
-    /// Execute the pass.
+
+    /// Owned read names; override this when resource names depend on node state.
+    fn read_resources(&self) -> Vec<String> {
+        self.reads().iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    /// Owned write names; override this when resource names depend on node state.
+    fn write_resources(&self) -> Vec<String> {
+        self.writes()
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect()
+    }
+
+    /// Execute the pass in a backend-neutral context.
     fn run(&mut self, context: &mut RenderContext) -> Result<(), RenderError>;
+
+    /// Execute the pass as part of a GPU window frame. Existing graph nodes remain
+    /// backend-neutral and use `run`; GPU render nodes can override this hook.
+    #[cfg(feature = "gpu")]
+    fn run_frame(
+        &mut self,
+        context: &mut RenderContext,
+        _world: &mut World,
+        _target: &FrameTarget<'_>,
+    ) -> Result<(), RenderError> {
+        self.run(context)
+    }
 }
 
 /// Validation errors for the render graph.
@@ -94,20 +124,20 @@ impl RenderGraph {
 
     /// Validate resource producers and compute a stable topological order.
     pub fn build(&mut self) -> Result<(), RenderGraphError> {
-        let mut writers: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut writers: HashMap<String, Vec<usize>> = HashMap::new();
         for (index, node) in self.nodes.iter().enumerate() {
-            for resource in node.writes() {
+            for resource in node.write_resources() {
                 writers.entry(resource).or_default().push(index);
             }
         }
         let mut edges: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); self.nodes.len()];
         let mut indegree = vec![0; self.nodes.len()];
         for (reader, node) in self.nodes.iter().enumerate() {
-            for &resource in node.reads() {
-                let Some(producers) = writers.get(resource) else {
+            for resource in node.read_resources() {
+                let Some(producers) = writers.get(&resource) else {
                     return Err(RenderGraphError::UnwrittenRead {
                         node: node.name().to_owned(),
-                        resource: resource.to_owned(),
+                        resource,
                     });
                 };
                 for &producer in producers {
@@ -154,6 +184,25 @@ impl RenderGraph {
         }
         for &index in &self.order {
             self.nodes[index].run(context)?;
+        }
+        Ok(())
+    }
+
+    /// Execute the same validated graph for one native GPU frame. The ECS world and
+    /// frame target are borrowed only for this call and are never stored in resources.
+    #[cfg(feature = "gpu")]
+    pub fn run_frame(
+        &mut self,
+        context: &mut RenderContext,
+        world: &mut World,
+        target: &FrameTarget<'_>,
+    ) -> Result<(), RenderError> {
+        if self.order.len() != self.nodes.len() {
+            self.build()
+                .map_err(|error| RenderError(error.to_string()))?;
+        }
+        for &index in &self.order {
+            self.nodes[index].run_frame(context, world, target)?;
         }
         Ok(())
     }

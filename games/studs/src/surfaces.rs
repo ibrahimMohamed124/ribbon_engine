@@ -16,6 +16,17 @@ use plugin_rendering::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
 use plugin_voxel::{face_uv, Hit};
 
 use crate::level::{CEIL, FLOOR, WALL};
+#[cfg(feature = "gpu")]
+use crate::settings::VisualStyle;
+#[cfg(feature = "gpu")]
+use plugin_render3d::{TextureData, VoxelBlockMaterial};
+
+#[cfg(feature = "gpu")]
+static GPU_FLOOR_ALBEDO: OnceLock<Option<&'static [u8]>> = OnceLock::new();
+#[cfg(feature = "gpu")]
+static GPU_WALL_ALBEDO: OnceLock<Option<&'static [u8]>> = OnceLock::new();
+#[cfg(feature = "gpu")]
+static GPU_CEILING_ALBEDO: OnceLock<Option<&'static [u8]>> = OnceLock::new();
 
 pub struct StudsSurface;
 
@@ -191,6 +202,81 @@ fn asset_roots() -> Vec<std::path::PathBuf> {
         paths.push(current.join("games/studs/assets"));
     }
     paths
+}
+
+/// Game-owned mapping from STUDS block IDs to materials consumed by the engine renderer.
+/// Geometry, texture upload, material sampling and mesh lifetime stay in `plugin_render3d`;
+/// only the game chooses its assets and per-style tint here.
+#[cfg(feature = "gpu")]
+pub(crate) fn studs_gpu_voxel_materials(style: VisualStyle) -> [VoxelBlockMaterial<'static>; 3] {
+    let (floor, wall, ceiling) = match style {
+        VisualStyle::Classic => ([0.88, 0.88, 0.88], [0.94, 0.94, 0.94], [0.82, 0.82, 0.82]),
+        VisualStyle::Moody => ([0.34, 0.38, 0.32], [0.58, 0.62, 0.52], [0.30, 0.33, 0.28]),
+        VisualStyle::Realistic => ([0.90, 0.90, 0.86], [0.96, 0.96, 0.92], [0.88, 0.88, 0.84]),
+    };
+    [
+        VoxelBlockMaterial {
+            block: FLOOR,
+            color: floor,
+            metallic: 0.0,
+            roughness: 0.9,
+            base_color_texture: gpu_albedo_texture("concrete_floor_worn_001", &GPU_FLOOR_ALBEDO),
+        },
+        VoxelBlockMaterial {
+            block: WALL,
+            color: wall,
+            metallic: 0.0,
+            roughness: 0.86,
+            base_color_texture: gpu_albedo_texture("concrete_wall_004", &GPU_WALL_ALBEDO),
+        },
+        VoxelBlockMaterial {
+            block: CEIL,
+            color: ceiling,
+            metallic: 0.0,
+            roughness: 0.94,
+            base_color_texture: gpu_albedo_texture("ceiling_interior", &GPU_CEILING_ALBEDO),
+        },
+    ]
+}
+
+#[cfg(feature = "gpu")]
+fn gpu_albedo_texture(
+    material_name: &str,
+    cache: &'static OnceLock<Option<&'static [u8]>>,
+) -> Option<TextureData<'static>> {
+    const SIZE: usize = 256;
+    const BYTES: usize = SIZE * SIZE * 4;
+    let data = (*cache.get_or_init(|| {
+        let path = asset_directories()
+            .into_iter()
+            .map(|root| root.join(material_name).join("albedo.rgba"))
+            .find(|path| path.is_file());
+        let Some(path) = path else {
+            eprintln!("warning: GPU albedo for '{material_name}' is missing; using the block tint");
+            return None;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!(
+                "warning: failed to read GPU albedo '{}'; using the block tint",
+                path.display()
+            );
+            return None;
+        };
+        if bytes.len() != BYTES {
+            eprintln!(
+                "warning: GPU albedo '{}' has {} bytes, expected {BYTES}; using the block tint",
+                path.display(),
+                bytes.len()
+            );
+            return None;
+        }
+        Some(Box::leak(bytes.into_boxed_slice()) as &'static [u8])
+    }))?;
+    Some(TextureData {
+        width: SIZE as u32,
+        height: SIZE as u32,
+        rgba8: data,
+    })
 }
 
 impl StudsSurface {

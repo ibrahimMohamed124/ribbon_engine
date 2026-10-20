@@ -5,6 +5,7 @@
 //! frame. Later renderer passes build on this surface and context.
 
 use crate::gpu::GpuContext;
+use crate::graph::{RenderContext, RenderError, RenderGraph, RenderNode};
 use engine_app::{App, LogBuffer, LogLevel, Stage, World};
 use engine_platform::WindowHandle;
 use engine_plugins::Plugin;
@@ -33,21 +34,167 @@ pub struct FrameTarget<'a> {
     pub size: (u32, u32),
 }
 
-/// A drawing step that runs after the clear, in registration order.
+/// A GPU drawing step registered in the native-window render graph.
 ///
-/// The world is passed mutably so a pass can read cameras and meshes; passes
-/// should create GPU resources lazily from the device and `format` they receive.
+/// Passes execute in resource-dependency order. By default, every pass consumes
+/// the previous surface version and produces the next one. More specialized nodes
+/// can use [`RenderGraph`] directly when they need additional named resources.
 pub trait FramePass: Send + Sync + 'static {
-    /// Draw into `target`.
+    /// Stable diagnostic label used in render-graph errors and traces.
+    fn name(&self) -> &'static str {
+        "frame pass"
+    }
+
+    /// Draw into `target`. GPU resources should be created lazily from its device.
     fn render(&mut self, world: &mut World, target: &FrameTarget<'_>);
 }
 
-/// GPU state owned by the window presenter.
-#[derive(Default)]
+const NO_RESOURCES: &[&str] = &[];
+
+struct WindowClearNode;
+
+impl RenderNode for WindowClearNode {
+    fn name(&self) -> &str {
+        "window clear"
+    }
+
+    fn reads(&self) -> &[&str] {
+        NO_RESOURCES
+    }
+
+    fn writes(&self) -> &[&str] {
+        NO_RESOURCES
+    }
+
+    fn write_resources(&self) -> Vec<String> {
+        vec!["window.color.0".to_owned()]
+    }
+
+    fn run(&mut self, _context: &mut RenderContext) -> Result<(), RenderError> {
+        Ok(())
+    }
+
+    fn run_frame(
+        &mut self,
+        _context: &mut RenderContext,
+        world: &mut World,
+        target: &FrameTarget<'_>,
+    ) -> Result<(), RenderError> {
+        let color = world
+            .try_resource::<ClearColor>()
+            .copied()
+            .unwrap_or_default()
+            .0;
+        clear_view(target.device, target.queue, target.view, color);
+        Ok(())
+    }
+}
+
+struct FramePassNode {
+    label: String,
+    input: String,
+    output: String,
+    pass: Box<dyn FramePass>,
+}
+
+impl RenderNode for FramePassNode {
+    fn name(&self) -> &str {
+        &self.label
+    }
+
+    fn reads(&self) -> &[&str] {
+        NO_RESOURCES
+    }
+
+    fn writes(&self) -> &[&str] {
+        NO_RESOURCES
+    }
+
+    fn read_resources(&self) -> Vec<String> {
+        vec![self.input.clone()]
+    }
+
+    fn write_resources(&self) -> Vec<String> {
+        vec![self.output.clone()]
+    }
+
+    fn run(&mut self, _context: &mut RenderContext) -> Result<(), RenderError> {
+        Ok(())
+    }
+
+    fn run_frame(
+        &mut self,
+        _context: &mut RenderContext,
+        world: &mut World,
+        target: &FrameTarget<'_>,
+    ) -> Result<(), RenderError> {
+        self.pass.render(world, target);
+        Ok(())
+    }
+}
+
+struct WindowPresentNode {
+    input: std::sync::Arc<std::sync::Mutex<String>>,
+}
+
+impl RenderNode for WindowPresentNode {
+    fn name(&self) -> &str {
+        "window present"
+    }
+
+    fn reads(&self) -> &[&str] {
+        NO_RESOURCES
+    }
+
+    fn writes(&self) -> &[&str] {
+        NO_RESOURCES
+    }
+
+    fn read_resources(&self) -> Vec<String> {
+        vec![self
+            .input
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()]
+    }
+
+    fn write_resources(&self) -> Vec<String> {
+        vec!["window.presented".to_owned()]
+    }
+
+    fn run(&mut self, _context: &mut RenderContext) -> Result<(), RenderError> {
+        Ok(())
+    }
+}
+
+/// GPU state owned by the window presenter. The render graph and its pass-owned GPU
+/// resources are dropped before the context (device/surface/instance).
 pub struct GpuWindow {
+    graph: RenderGraph,
+    next_pass: usize,
+    last_output: String,
+    present_input: std::sync::Arc<std::sync::Mutex<String>>,
     context: Option<GpuContext>,
     failed: bool,
-    passes: Vec<Box<dyn FramePass>>,
+}
+
+impl Default for GpuWindow {
+    fn default() -> Self {
+        let mut graph = RenderGraph::default();
+        graph.add_node(WindowClearNode);
+        let present_input = std::sync::Arc::new(std::sync::Mutex::new("window.color.0".to_owned()));
+        graph.add_node(WindowPresentNode {
+            input: std::sync::Arc::clone(&present_input),
+        });
+        Self {
+            graph,
+            next_pass: 0,
+            last_output: "window.color.0".to_owned(),
+            present_input,
+            context: None,
+            failed: false,
+        }
+    }
 }
 
 impl GpuWindow {
@@ -56,9 +203,24 @@ impl GpuWindow {
         self.context.as_ref()
     }
 
-    /// Append a pass that runs every frame after the clear.
+    /// Append a render-graph pass. Its output becomes the next pass's input, and
+    /// the present node automatically depends on the latest surface version.
     pub fn add_pass(&mut self, pass: Box<dyn FramePass>) {
-        self.passes.push(pass);
+        let output = format!("window.color.{}", self.next_pass + 1);
+        let node = FramePassNode {
+            label: format!("{} [{}]", pass.name(), self.next_pass),
+            input: self.last_output.clone(),
+            output: output.clone(),
+            pass,
+        };
+        self.graph.add_node(node);
+        self.next_pass += 1;
+        self.last_output = output.clone();
+        let mut current = self
+            .present_input
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *current = output;
     }
 }
 
@@ -115,17 +277,13 @@ pub fn gpu_window_system(world: &mut World) {
     if size.width == 0 || size.height == 0 {
         return;
     }
-    let color = world
-        .try_resource::<ClearColor>()
-        .copied()
-        .unwrap_or_default()
-        .0;
     let mut error = None;
     world.resource_scope::<GpuWindow, _>(|world, state| {
         let GpuWindow {
             context,
             failed,
-            passes,
+            graph,
+            ..
         } = state;
         if *failed {
             return;
@@ -164,7 +322,6 @@ pub fn gpu_window_system(world: &mut World) {
                 let view = frame
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
-                clear_view(context.device(), context.queue(), &view, color);
                 let target = FrameTarget {
                     device: context.device(),
                     queue: context.queue(),
@@ -172,9 +329,14 @@ pub fn gpu_window_system(world: &mut World) {
                     format,
                     size: (size.width, size.height),
                 };
-                for pass in passes.iter_mut() {
-                    pass.render(world, &target);
+                if let Err(failure) = graph.run_frame(&mut RenderContext::default(), world, &target)
+                {
+                    error = Some(format!("GPU render graph failed: {failure}"));
                 }
+                // The graph's final `window present` node acts as the resource-ordering
+                // barrier. SurfaceTexture::present itself must remain here because the
+                // frame handle belongs to the presenter, not to a render pass.
+                drop(view);
                 frame.present();
             }
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
