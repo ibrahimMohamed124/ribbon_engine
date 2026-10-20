@@ -87,6 +87,7 @@ pub fn face_ao(world: &VoxelWorld, hit: &Hit, empty: u8) -> f32 {
     (top * (1.0 - v) + bottom * v).clamp(0.0, 1.0)
 }
 
+#[derive(Clone, Debug)]
 pub struct VoxelWorld {
     width: usize,
     height: usize,
@@ -114,6 +115,22 @@ impl VoxelWorld {
 
     pub fn blocks(&self) -> &[u8] {
         &self.blocks
+    }
+
+    /// Replace one in-bounds voxel and return its previous block id.
+    /// Returns `None` when the coordinate is outside the world.
+    pub fn set(&mut self, x: i32, y: i32, z: i32, block: u8) -> Option<u8> {
+        if x < 0 || y < 0 || z < 0 {
+            return None;
+        }
+        let (x, y, z) = (x as usize, y as usize, z as usize);
+        if x >= self.width || y >= self.height || z >= self.depth {
+            return None;
+        }
+        let index = Self::idx(self.width, self.height, z, y, x);
+        let previous = self.blocks[index];
+        self.blocks[index] = block;
+        Some(previous)
     }
 
     /// Get a voxel by world coordinates `(x, y, z)`, returning `None` outside the grid.
