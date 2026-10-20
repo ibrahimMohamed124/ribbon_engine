@@ -1,25 +1,13 @@
-# Greedy Voxel Mesh Showcase
+# Dynamic voxel mesh showcase
 
-This app builds a small Z-up `VoxelWorld`, greedily meshes it in 8×6 chunks,
-converts vertices and chunk origins to the engine's right-handed Y-up convention,
-and renders the resulting `VoxelMeshInstance3D` entities through the native
-`plugin_render3d` pipeline. The path shares the depth buffer, PBR lighting,
-directional shadow map, HDR target and tone mapper used by GLB meshes.
+This engine-only example demonstrates the reusable dynamic voxel APIs without putting engine logic in a game. The world is held in `plugin_voxel::ChunkedVoxelWorld`; the example consumes `ChunkMeshUpdate` values, replaces only ECS entities belonging to dirty chunks, and attaches the resulting local meshes at each chunk's `origin_y_up`. The native `Render3dPlugin` extracts those entities and owns GPU upload/eviction.
 
-Run from the repository root:
+Run from the workspace root:
 
 ```powershell
 cargo run -p voxel_mesh_showcase
-```
-
-For an automatic capture/shutdown:
-
-```powershell
+# Optional finite run; the demo removes a floor voxel at frame 120 and restores it at frame 180.
 cargo run -p voxel_mesh_showcase -- --frames 240
 ```
 
-The sample demonstrates greedy face merging, removal of internal faces,
-block-material grouping, cross-chunk neighbor culling, and native GPU mesh
-rendering. It deliberately does not claim that STUDS has migrated: the game still
-uses its existing voxel rendering path, and live chunk edit/remesh scheduling is
-future work.
+The edit is deliberately placed on an intersection of horizontal chunk boundaries so neighboring chunk invalidation and seam handling can be inspected. Console messages identify the removal and restoration frames.

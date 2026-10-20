@@ -11,13 +11,26 @@ use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
 use engine_scene::ScenePlugin;
 use plugin_render3d::glam::Vec3;
 use plugin_render3d::{Camera3D, Render3dPlugin, SunLight, Transform3D, VoxelMeshInstance3D};
-use plugin_voxel::{greedy_mesh_chunk, VoxelWorld};
+use plugin_voxel::{ChunkCoord, ChunkMeshUpdate, ChunkedVoxelWorld, VoxelWorld};
 use std::error::Error;
-use std::sync::Arc;
 
 const EMPTY: u8 = 0;
+const FLOOR: u8 = 1;
+const EDIT_X: i32 = 7;
+const EDIT_Y: i32 = 5;
+const EDIT_Z: i32 = 0;
+const CLEAR_BLOCK_FRAME: u64 = 120;
+const RESTORE_BLOCK_FRAME: u64 = 180;
+const CHUNK_SIZE: [usize; 3] = [8, 6, 8];
 
 struct FrameLimit(Option<u64>);
+
+struct DynamicVoxelResource(ChunkedVoxelWorld);
+
+#[derive(Clone, Copy)]
+struct ChunkMeshOwner {
+    coord: ChunkCoord,
+}
 
 fn block_color(block: u8) -> [f32; 3] {
     match block {
@@ -29,17 +42,14 @@ fn block_color(block: u8) -> [f32; 3] {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn set_block(
     blocks: &mut [u8],
-    width: usize,
-    height: usize,
-    x: usize,
-    y: usize,
-    z: usize,
+    dimensions: (usize, usize),
+    cell: (usize, usize, usize),
     block: u8,
 ) {
-    blocks[VoxelWorld::idx(width, height, z, y, x)] = block;
+    let (x, y, z) = cell;
+    blocks[VoxelWorld::idx(dimensions.0, dimensions.1, z, y, x)] = block;
 }
 
 fn make_voxel_world() -> VoxelWorld {
@@ -48,51 +58,82 @@ fn make_voxel_world() -> VoxelWorld {
     // Broad floor. The voxel grid is Z-up; the renderer's mesher converts it to Y-up.
     for x in 0..width {
         for y in 0..height {
-            set_block(&mut blocks, width, height, x, y, 0, 1);
+            set_block(&mut blocks, (width, height), (x, y, 0), FLOOR);
         }
     }
     // A warm tower and a stepped blue structure.
     for z in 1..5 {
         for x in 3..6 {
             for y in 3..6 {
-                set_block(&mut blocks, width, height, x, y, z, 2);
+                set_block(&mut blocks, (width, height), (x, y, z), 2);
             }
         }
     }
     for step in 0..5 {
         for dz in 1..=step + 1 {
             for y in 7..10 {
-                set_block(&mut blocks, width, height, 8 + step, y, dz, 3);
+                set_block(&mut blocks, (width, height), (8 + step, y, dz), 3);
             }
         }
     }
     for z in 1..4 {
         for x in 12..14 {
             for y in 2..4 {
-                set_block(&mut blocks, width, height, x, y, z, 4);
+                set_block(&mut blocks, (width, height), (x, y, z), 4);
             }
         }
     }
     VoxelWorld::new(width, height, depth, blocks)
 }
 
-fn spawn_voxel_chunks(world: &mut World) {
-    let voxel_world = make_voxel_world();
-    let (width, height, depth) = voxel_world.dimensions();
-    for x in (0..width).step_by(8) {
-        for y in (0..height).step_by(6) {
-            for mesh in greedy_mesh_chunk(&voxel_world, [x, y, 0], [8, 6, depth], EMPTY) {
-                let color = block_color(mesh.block);
-                world.spawn((
-                    Transform3D::default(),
-                    VoxelMeshInstance3D {
-                        mesh: Arc::new(mesh),
-                        color,
-                    },
-                ));
+fn replace_chunk_meshes(world: &mut World, update: ChunkMeshUpdate) {
+    // Replace only ECS instances owned by the changed chunk. The renderer extraction
+    // pass observes despawns/spawns in the same frame, then releases stale GPU buffers.
+    let stale_entities: Vec<_> = world
+        .query::<&ChunkMeshOwner>()
+        .iter()
+        .filter(|(_, owner)| owner.coord == update.coord)
+        .map(|(entity, _)| entity)
+        .collect();
+    for entity in stale_entities {
+        let _ = world.despawn(entity);
+    }
+
+    for mesh in update.meshes {
+        let color = block_color(mesh.block);
+        let transform = Transform3D::from_translation(Vec3::from_array(mesh.origin_y_up));
+        world.spawn((
+            transform,
+            VoxelMeshInstance3D { mesh, color },
+            ChunkMeshOwner {
+                coord: update.coord,
+            },
+        ));
+    }
+}
+
+fn update_dynamic_voxels(world: &mut World) {
+    let frame = world.resource::<Time>().frame;
+    world.resource_scope::<DynamicVoxelResource, _>(|world, resource| {
+        let block_edit = match frame {
+            CLEAR_BLOCK_FRAME => Some((EMPTY, "opened a floor voxel on a chunk corner")),
+            RESTORE_BLOCK_FRAME => Some((FLOOR, "restored the floor voxel")),
+            _ => None,
+        };
+        if let Some((block, description)) = block_edit {
+            if resource
+                .0
+                .set_block(EDIT_X, EDIT_Y, EDIT_Z, block)
+                .is_some()
+            {
+                println!("dynamic voxel demo: {description} at frame {frame}");
             }
         }
-    }
+
+        for update in resource.0.rebuild_dirty_chunks() {
+            replace_chunk_meshes(world, update);
+        }
+    });
 }
 
 fn limit_frames(world: &mut World) {
@@ -119,7 +160,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
             }
             "--help" | "-h" => {
-                println!("voxel_mesh_showcase\n\nOptions:\n  --frames <N>  Exit after N engine frames\n  -h, --help    Show this help");
+                println!(
+                    "voxel_mesh_showcase\n\nOptions:\n  --frames <N>  Exit after N engine frames\n  -h, --help    Show this help"
+                );
                 return Ok(());
             }
             other => return Err(format!("unknown argument `{other}`").into()),
@@ -134,6 +177,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
     app.insert_resource(ClearColor([0.018, 0.026, 0.04, 1.0]));
     app.insert_resource(FrameLimit(frame_limit));
+    app.insert_resource(DynamicVoxelResource(ChunkedVoxelWorld::new(
+        make_voxel_world(),
+        CHUNK_SIZE,
+        EMPTY,
+    )));
     app.insert_resource(SunLight {
         direction: Vec3::new(-0.45, -0.85, -0.36).normalize(),
         color: Vec3::new(1.0, 0.93, 0.8),
@@ -155,11 +203,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             ..Camera3D::default()
         },
     ));
-    spawn_voxel_chunks(&mut app.world);
+    app.add_system(Stage::Update, update_dynamic_voxels);
     app.add_system(Stage::Last, limit_frames);
 
     println!("Voxelworks Greedy Voxel Mesh Showcase");
-    println!("Showing chunk meshing, hidden-face culling, material grouping, HDR, PBR lighting, shadows, and tone mapping.");
+    println!(
+        "Showing dynamic chunk meshing, boundary invalidation, GPU mesh replacement, HDR/PBR lighting, shadows, and tone mapping."
+    );
+    println!("At frame {CLEAR_BLOCK_FRAME}, a floor block on a chunk corner is removed; at frame {RESTORE_BLOCK_FRAME}, it is restored.");
     app.build()?.run();
     Ok(())
 }
