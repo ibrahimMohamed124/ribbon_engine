@@ -50,6 +50,32 @@ impl ToneMapper {
         source: &wgpu::TextureView,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
+        Self::new_with_shader(
+            device,
+            source,
+            surface_format,
+            include_str!("../shaders/tonemap.wgsl"),
+        )
+    }
+
+    /// Build a mapper for a linear UNORM output target. Unlike an sRGB surface, an
+    /// `Rgba8Unorm` texture does not encode output values automatically, so this pass
+    /// performs the linear-to-sRGB transfer after tone mapping.
+    pub fn new_offscreen_unorm(device: &wgpu::Device, source: &wgpu::TextureView) -> Self {
+        Self::new_with_shader(
+            device,
+            source,
+            wgpu::TextureFormat::Rgba8Unorm,
+            include_str!("../shaders/tonemap_unorm.wgsl"),
+        )
+    }
+
+    fn new_with_shader(
+        device: &wgpu::Device,
+        source: &wgpu::TextureView,
+        surface_format: wgpu::TextureFormat,
+        shader_source: &str,
+    ) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tone mapper layout"),
             entries: &[
@@ -96,7 +122,7 @@ impl ToneMapper {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("tone mapper shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/tonemap.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("tone mapper pipeline layout"),

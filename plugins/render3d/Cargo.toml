@@ -13,7 +13,7 @@ bytemuck = { version = "1", features = ["derive"] }
 glam = "0.30"
 plugin_gltf = { path = "../gltf" }
 plugin_voxel = { path = "../voxel" }
+pollster = "0.4"
 wgpu = "25.0.2"
 
 [dev-dependencies]
-pollster = "0.4"

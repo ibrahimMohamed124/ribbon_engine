@@ -8,6 +8,7 @@ pub mod components;
 pub mod extract;
 pub mod mesh;
 pub mod model;
+pub mod offscreen;
 pub mod post;
 pub mod renderer;
 
@@ -21,6 +22,9 @@ pub use extract::{
 };
 pub use glam;
 pub use model::{upload_model, GpuModelPart};
+pub use offscreen::{
+    OffscreenCamera3D, OffscreenDraw3D, OffscreenVoxelRenderer, VoxelBlockColor, VoxelBlockMaterial,
+};
 pub use renderer::{Draw, MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, Scene, TextureData};
 
 use crate::mesh::Vertex;
@@ -32,7 +36,7 @@ use engine_render::gpu_window::{clear_view, ClearColor, FramePass, FrameTarget, 
 use glam::Mat4;
 use plugin_voxel::VoxelChunkMesh;
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Default)]
@@ -80,6 +84,29 @@ impl MeshPass {
         if width == 0 || height == 0 {
             return;
         }
+        // Drop GPU buffers for chunk meshes that no longer appear in the extracted scene.
+        // This prevents repeated dynamic remeshes and despawns from growing the cache forever.
+        let live_voxel_keys: HashSet<usize> = extracted
+            .voxels
+            .iter()
+            .map(|placement| Arc::as_ptr(&placement.mesh) as usize)
+            .collect();
+        let stale_voxel_keys: Vec<usize> = self
+            .voxel_meshes
+            .keys()
+            .copied()
+            .filter(|key| !live_voxel_keys.contains(key))
+            .collect();
+        if !stale_voxel_keys.is_empty() {
+            for key in stale_voxel_keys {
+                if let Some(cached) = self.voxel_meshes.remove(&key) {
+                    if let Some(renderer) = self.renderer.as_mut() {
+                        renderer.release_mesh(cached.gpu_mesh);
+                    }
+                }
+            }
+        }
+
         let Some(camera) = extracted.camera else {
             return;
         };

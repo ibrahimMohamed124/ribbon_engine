@@ -138,7 +138,8 @@ pub struct MeshRenderer {
     _shadow_sampler: wgpu::Sampler,
     material_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    meshes: Vec<GpuMesh>,
+    meshes: Vec<Option<GpuMesh>>,
+    free_mesh_slots: Vec<usize>,
     materials: Vec<GpuMaterial>,
     /// Compact, frustum-visible instances used by the main color pass.
     instances: wgpu::Buffer,
@@ -640,6 +641,7 @@ impl MeshRenderer {
             material_layout,
             sampler,
             meshes: Vec::new(),
+            free_mesh_slots: Vec::new(),
             materials: Vec::new(),
             instances: instance_buffer(device, 16),
             shadow_instances: instance_buffer(device, 16),
@@ -687,14 +689,38 @@ impl MeshRenderer {
             .iter()
             .map(|vertex| (Vec3::from(vertex.position) - bounds_center).length())
             .fold(0.0_f32, f32::max);
-        self.meshes.push(GpuMesh {
+        let mesh = GpuMesh {
             vertices: vertex_buffer,
             indices: index_buffer,
             index_count: indices.len() as u32,
             bounds_center,
             bounds_radius,
-        });
-        MeshId(self.meshes.len() - 1)
+        };
+        if let Some(slot) = self.free_mesh_slots.pop() {
+            self.meshes[slot] = Some(mesh);
+            MeshId(slot)
+        } else {
+            self.meshes.push(Some(mesh));
+            MeshId(self.meshes.len() - 1)
+        }
+    }
+
+    /// Release a previously uploaded dynamic mesh. Built-in meshes are permanent, and
+    /// released slots are reused by later uploads so repeated chunk edits do not grow the
+    /// GPU mesh table without bound. A stale `MeshId` becomes invalid until that slot is reused.
+    pub fn release_mesh(&mut self, mesh: MeshId) -> bool {
+        if mesh == Self::CUBE {
+            return false;
+        }
+        let Some(slot) = self.meshes.get_mut(mesh.0) else {
+            return false;
+        };
+        if slot.take().is_some() {
+            self.free_mesh_slots.push(mesh.0);
+            true
+        } else {
+            false
+        }
     }
 
     /// Upload a dielectric material with default metallic-roughness factors.
@@ -867,7 +893,8 @@ impl MeshRenderer {
             .iter()
             .copied()
             .filter(|draw| {
-                draw.mesh.0 < self.meshes.len() && draw.material.0 < self.materials.len()
+                self.meshes.get(draw.mesh.0).is_some_and(Option::is_some)
+                    && draw.material.0 < self.materials.len()
             })
             .collect();
         draws.sort_by_key(|draw| (draw.mesh, draw.material));
@@ -879,7 +906,9 @@ impl MeshRenderer {
             .iter()
             .copied()
             .filter(|draw| {
-                let mesh = &self.meshes[draw.mesh.0];
+                let Some(mesh) = self.meshes[draw.mesh.0].as_ref() else {
+                    return false;
+                };
                 let center = draw.model.transform_point3(mesh.bounds_center);
                 let x = draw.model.x_axis.truncate();
                 let y = draw.model.y_axis.truncate();
@@ -961,7 +990,9 @@ impl MeshRenderer {
                         .iter()
                         .take_while(|draw| draw.mesh == mesh_id)
                         .count();
-                let mesh = &self.meshes[mesh_id.0];
+                let mesh = self.meshes[mesh_id.0]
+                    .as_ref()
+                    .expect("draw list was validated before recording the shadow pass");
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
@@ -1001,7 +1032,9 @@ impl MeshRenderer {
                         .iter()
                         .take_while(|d| (d.mesh, d.material) == key)
                         .count();
-                let mesh = &self.meshes[key.0 .0];
+                let mesh = self.meshes[key.0 .0]
+                    .as_ref()
+                    .expect("draw list was validated before recording the mesh pass");
                 pass.set_bind_group(1, &self.materials[key.1 .0].bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
