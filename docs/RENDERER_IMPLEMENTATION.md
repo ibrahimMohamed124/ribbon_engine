@@ -26,17 +26,29 @@ confusing integrated capabilities with features that remain in the roadmap.
 5. **Main-pass visibility.** Conservative bounding-sphere/frustum tests reduce
    the color-pass instance list. The shadow list retains valid off-screen draws
    so objects outside the camera view can still cast shadows.
-6. **Voxel mesh vertical slice.** `plugin_voxel` greedily merges equal-block
-   surface quads, drops internal faces and reads across chunk boundaries. The
-   native renderer accepts immutable `VoxelMeshInstance3D` meshes and caches
-   their GPU upload. The showcase demonstrates a real draw path, not only mesh
-   data generation.
+6. **Dynamic voxel-world integration.** `plugin_voxel::ChunkedVoxelWorld` wraps
+   mutable voxel storage, revisions and a retained CPU mesh cache. `set_block` invalidates
+   only its owning chunk plus face-neighbors when touching chunk boundaries. Dirty chunks
+   are greedily remeshed against the complete world; empty results are explicit eviction
+   updates. `plugin_render3d::OffscreenVoxelRenderer` consumes those updates, replaces GPU
+   buffers and reuses freed mesh slots while rendering through the common HDR/PBR/depth/shadow
+   pipeline. The native ECS mesh path evicts GPU meshes no longer present in the extracted
+   scene. STUDS' GPU backend uses the offscreen mesh renderer, with its game palette and visual
+   entities still defined in the game folder.
 
 ## Deliberately not claimed complete
 
-- STUDS still uses the existing voxel renderer; migration is not part of the
-  completed voxel-mesh showcase.
-- There is no automatic dirty-chunk tracking or mesh rebuild on world edits.
+- The STUDS GPU code path has moved from the legacy GPU raycaster to the engine mesh renderer,
+  but manual gameplay smoke checks remain pending. Its CPU raycaster and legacy GPU raycaster
+  implementation are deliberately retained as reference/rollback paths.
+- STUDS still presents the mesh-rendered framebuffer through offscreen readback and `WindowFrame`;
+  native-surface presentation and the old renderer's game-specific spot-light/noise effects are
+  not part of this migration.
+- The generic API supports dynamic chunk edits and GPU mesh update/eviction. The engine-only
+  `voxel_mesh_showcase` removes and restores a floor block at the corner shared by chunks to
+  exercise incremental remeshing, entity replacement and GPU-resource eviction; STUDS does not
+  gain a block-breaking mechanic just to exercise the engine. Engine-level tests cover owner-chunk
+  updates, boundary neighbors, no-op edits, out-of-bounds edits and empty-chunk eviction updates.
 - The PBR shader does not yet implement normal/occlusion/emissive textures,
   alpha modes, vertex colors, image-based lighting, or multiple point/spot lights.
 - The current shadow map is a single fixed-resolution directional map without
@@ -61,9 +73,8 @@ values.
 
 ## Local validation
 
-Run `finish-renderer-phase.ps1` on Windows from the extracted project root. It
-formats the workspace, checks dependency policy, and runs the workspace's existing
-check/clippy/build/test matrix before offering to create and push commits. The
-script intentionally does not add or generate tests. The Rust toolchain and GPU
-adapter availability vary by machine; this file does not claim those checks have
-already run on every target platform.
+Run `finish-dynamic-voxel-phase.ps1` on Windows from the extracted project root. It formats
+source, checks dependency policy, runs the workspace check/clippy/build/test matrix with and
+without default features, and builds the STUDS release GPU path. The script is validation-only:
+it does not commit or push. The Rust toolchain and GPU adapter availability vary by machine; this
+file does not claim the new phase has already compiled or passed runtime checks on every target.

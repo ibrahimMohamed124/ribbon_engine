@@ -23,17 +23,24 @@ The engine now has a usable native-surface mesh-rendering vertical slice:
 - Camera-frustum sphere culling filters color-pass instances. Off-screen models
   are still retained in the shadow draw list so they can cast shadows into the
   visible scene.
-- `plugin_voxel` has greedy surface chunk meshing. It removes faces between
-  solid voxels, merges adjacent equal-block faces, culls chunk boundary faces
-  against neighboring world cells, and converts legacy Z-up coordinates to
-  the mesh renderer's Y-up coordinates. `VoxelMeshInstance3D` sends these meshes
-  through the same GPU mesh path as built-in geometry and glTF assets.
-- `examples/graphics_showcase` and `examples/voxel_mesh_showcase` provide
-  visible samples for the mesh/material and native voxel-mesh paths.
+- `plugin_voxel` has `ChunkedVoxelWorld`: edits carry a revision, invalidate the owner chunk
+  and any face-adjacent chunks affected by a boundary change, and remesh only dirty chunks.
+  The greedy mesher reads the complete world so faces spanning adjacent chunks are hidden.
+- `plugin_render3d::OffscreenVoxelRenderer` drains chunk updates, incrementally uploads meshes,
+  releases replaced/empty GPU buffers and reuses mesh slots. It renders using the shared
+  HDR/PBR/depth/shadow pipeline and returns an engine framebuffer for `WindowFrame` users.
+- The native ECS `Render3dPlugin` path also releases stale uploaded voxel meshes when their
+  extracted instances disappear. `STUDS --renderer gpu` now uses the offscreen mesh renderer
+  bridge rather than the legacy GPU raycaster. The game's palette and entity appearances remain
+  game-owned; generic meshing, invalidation, GPU mesh storage, and rendering are engine-owned.
+- `examples/graphics_showcase` and `examples/voxel_mesh_showcase` provide visible samples for
+  the mesh/material and native voxel-mesh paths.
 
-This is a foundation, not a claim that every advanced rendering feature is done.
-STUDS still uses the legacy voxel renderer; the voxel showcase is the first
-integrated vertical slice, not the game migration.
+This is a foundation, not a claim that every advanced rendering feature is done. The STUDS GPU
+route has been migrated at the code level, but the legacy CPU/GPU raycaster code is deliberately
+retained until manual gameplay smoke checks pass on the intended Windows GPU. STUDS still
+presents through offscreen readback/`WindowFrame`; native-surface presentation, game-specific
+spotlight effects, LOD, and streaming remain separate work.
 
 ## Rendering decisions
 
@@ -80,7 +87,7 @@ implemented:
 | Lighting | Directional sun, ambient term, single 1024 directional depth map | Cascaded shadows, multi-tap PCF/soft shadows, point/spot lights, physically based image-based lighting |
 | HDR/post | `Rgba16Float` scene color and fullscreen Reinhard tonemapping | Exposure control, bloom, color grading, anti-aliasing, fog, AO/GTAO |
 | Visibility | Conservative CPU frustum sphere culling for main color pass; off-screen objects remain in shadow draws | Better bounds for animated/deformed meshes, occlusion culling, LOD, GPU culling, metrics |
-| Voxels | Greedy chunk surface meshing, block grouping, cross-chunk face culling, Y-up conversion, native GPU showcase | Dirty-chunk updates/remeshing, material atlas/texture IDs, chunk streaming, STUDS migration and raycaster deletion |
+| Voxels | Mutable `ChunkedVoxelWorld`, edit revisions, dirty-owner/neighbor invalidation, incremental greedy remeshing, boundary culling, Y-up conversion, GPU uploads/eviction/reused slots, STUDS GPU route migrated to `OffscreenVoxelRenderer` | Material atlas/texture IDs, chunk streaming/async remeshing, in-game block-edit mechanic, native-surface STUDS presentation, legacy raycaster deletion after manual runtime verification |
 | Front end | Scene hierarchy, camera component, single active extracted camera | Multi-camera/render layers, picking, editor text UI |
 | Animation | Transform animation systems and placeholder plugin | glTF skins/clips, morph targets, animation evaluation |
 | Physics | Voxel collision | Mesh/AABB colliders, broadphase, robust 3D character controller |
@@ -98,15 +105,16 @@ implemented:
 | 5a: directional shadows | Implemented baseline | Single directional depth map is rendered and sampled |
 | 5b: shadow quality | In progress | Multi-tap PCF, stable shadow bounds, acne/peter-panning regression coverage, cascades and additional light types |
 | 6: advanced post | Planned | Bloom, AO, fog, exposure and quality controls |
-| 7a: voxel-to-mesh vertical slice | Implemented | Greedy mesher and `voxel_mesh_showcase` draw chunks with native mesh pipeline |
-| 7b: STUDS migration / legacy deletion | Not complete | STUDS gameplay renders meshes on native surface; legacy raycaster and unneeded legacy crates are removed safely |
+| 7a: voxel-to-mesh vertical slice | Implemented | Greedy mesher and native mesh pipeline render chunk-local meshes at their world origins |
+| 7b: Dynamic voxel integration / STUDS migration | Code migration implemented; runtime smoke test pending | STUDS GPU route uses the engine mesh renderer, dynamic edits refresh only affected chunks (and face neighbors), empty meshes release GPU buffers, overlays/gameplay remain game-owned, CPU reference and legacy raycasters remain until manual comparison passes |
 | 8: advanced gameplay support | Planned | Skeletal animation, mesh colliders, 3D audio, state machines and profiling |
 | 9: advanced renderer | Planned | IBL, TAA, LOD, GPU culling tracked individually |
 
 ## Repository hygiene
 
-- Do not claim STUDS migration complete until `docs/PHASE9.md` and compatibility
-  constraints have been resolved and the old voxel path has actually been removed.
+- Do not claim legacy raycaster deletion complete until the GPU gameplay smoke checks in
+  `docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md` pass on the target hardware and remaining compatibility
+  constraints have been resolved. This phase intentionally keeps rollback/reference code.
 - Split large renderer modules further when that improves API boundaries and
   resource ownership; avoid a cosmetic rewrite that breaks the working samples.
 - Keep dependency rules in `tools/allowed_deps.toml`; run
