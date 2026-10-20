@@ -2610,6 +2610,7 @@ dependencies = [
  "image",
  "plugin_audio",
  "plugin_physics",
+ "plugin_render3d",
  "plugin_rendering",
  "plugin_voxel",
  "voxelworks-platform",

@@ -38,6 +38,32 @@ fn default_bindings_map_to_controls() {
 }
 
 #[test]
+fn wasd_are_the_default_walk_and_strafe_bindings() {
+    let bindings = KeyBindings::default();
+    assert_eq!(bindings.keys(Action::Forward), &[Key::W]);
+    assert_eq!(bindings.keys(Action::Back), &[Key::S]);
+    assert_eq!(bindings.keys(Action::Left), &[Key::A]);
+    assert_eq!(bindings.keys(Action::Right), &[Key::D]);
+
+    let mut input = Input::new(bindings, 0.0);
+    let forward = input.poll(&FakeKeys(vec![Key::W]), None);
+    assert!(forward.controls.forward);
+    assert!(!forward.controls.back && !forward.controls.left && !forward.controls.right);
+
+    let back = input.poll(&FakeKeys(vec![Key::S]), None);
+    assert!(back.controls.back);
+    assert!(!back.controls.forward && !back.controls.left && !back.controls.right);
+
+    let left = input.poll(&FakeKeys(vec![Key::A]), None);
+    assert!(left.controls.left);
+    assert!(!left.controls.forward && !left.controls.back && !left.controls.right);
+
+    let right = input.poll(&FakeKeys(vec![Key::D]), None);
+    assert!(right.controls.right);
+    assert!(!right.controls.forward && !right.controls.back && !right.controls.left);
+}
+
+#[test]
 fn arrows_look_and_wasd_move() {
     let mut i = input();
     assert!(i.poll(&FakeKeys(vec![Key::Left]), None).controls.look_left);

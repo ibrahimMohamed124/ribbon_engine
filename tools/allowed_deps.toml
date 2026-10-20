@@ -154,7 +154,7 @@ external = []
 # STUDS runtime now uses the ECS runner; legacy crates remain dev-dependencies
 # for existing compatibility tests/examples until Phase 9 steps 6-7 are completed.
 [allowed.legacy."studs"]
-workspace = ["engine_app", "engine_events", "engine_math", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_audio", "plugin_physics", "plugin_rendering", "plugin_voxel", "voxelworks-platform", "voxelworks-render-cpu"]
+workspace = ["engine_app", "engine_events", "engine_math", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_audio", "plugin_physics", "plugin_render3d", "plugin_rendering", "plugin_voxel", "voxelworks-platform", "voxelworks-render-cpu"]
 external = ["image"]
 
 [allowed.legacy."studs-bake-sprites"]
