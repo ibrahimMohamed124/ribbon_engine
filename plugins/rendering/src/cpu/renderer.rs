@@ -46,9 +46,12 @@ impl<S: SurfaceShader + Sync> Renderer<MaterialTable> for CpuRenderer<S> {
             );
         }
         self.render_scene(plan.scene.as_ref(), materials);
-        apply_draw_list(&mut self.framebuffer, &plan.world_layer);
-        adjust_brightness(&mut self.framebuffer, plan.brightness);
-        apply_draw_list(&mut self.framebuffer, &plan.ui_layer);
+        composite_frame_layers(
+            &mut self.framebuffer,
+            &plan.world_layer,
+            plan.brightness,
+            &plan.ui_layer,
+        );
     }
 
     fn present(&mut self, out: &mut Framebuffer) {
@@ -59,6 +62,19 @@ impl<S: SurfaceShader + Sync> Renderer<MaterialTable> for CpuRenderer<S> {
         }
         out.pixels.copy_from_slice(&self.framebuffer.pixels);
     }
+}
+
+/// Apply a frame's world overlay, brightness adjustment, and UI commands to a rendered
+/// framebuffer. Shared by reference CPU rendering and offscreen GPU-backed applications.
+pub fn composite_frame_layers(
+    framebuffer: &mut Framebuffer,
+    world_layer: &DrawList,
+    brightness: f32,
+    ui_layer: &DrawList,
+) {
+    apply_draw_list(framebuffer, world_layer);
+    adjust_brightness(framebuffer, brightness);
+    apply_draw_list(framebuffer, ui_layer);
 }
 
 pub fn apply_draw_list(framebuffer: &mut Framebuffer, draw_list: &DrawList) {
