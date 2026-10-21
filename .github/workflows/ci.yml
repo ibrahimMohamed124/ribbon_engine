@@ -12,6 +12,8 @@ jobs:
   test:
     name: Build & test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'ubuntu-latest' && '-C link-arg=-fuse-ld=bfd' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -163,6 +165,8 @@ jobs:
     name: Release binary (${{ matrix.os }})
     needs: test
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'ubuntu-latest' && '-C link-arg=-fuse-ld=bfd' || '' }}
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
