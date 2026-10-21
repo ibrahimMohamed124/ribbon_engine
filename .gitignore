@@ -1,5 +1,6 @@
 /target/
 /dist/
+/.github-actions-runner/
 /settings.cfg
 /games/studs/settings.cfg
 *.zip

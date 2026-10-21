@@ -11,7 +11,7 @@ env:
 jobs:
   test:
     name: Build & test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'ribbon-windows' || matrix.os }}
     env:
       RUSTFLAGS: ${{ matrix.os == 'ubuntu-latest' && '-C link-arg=-fuse-ld=bfd' || '' }}
       CARGO_PROFILE_DEV_DEBUG: ${{ matrix.os == 'ubuntu-latest' && '0' || '2' }}
@@ -166,7 +166,7 @@ jobs:
   release-build:
     name: Release binary (${{ matrix.os }})
     needs: test
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'ribbon-windows' || matrix.os }}
     env:
       RUSTFLAGS: ${{ matrix.os == 'ubuntu-latest' && '-C link-arg=-fuse-ld=bfd' || '' }}
     strategy:
