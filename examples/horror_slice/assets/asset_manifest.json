@@ -1,0 +1,318 @@
+{
+  "schema_version": 1,
+  "notice": "All nine 1K source maps were downloaded from the official Poly Haven API and embedded in the self-contained GLBs; procedural PLACEHOLDER source maps remain in the placeholder folder for fallback/testing.",
+  "references": [
+    {
+      "path": "examples/horror_slice/assets/reference/horror_room_concept_reference.png",
+      "sha256": "acbb547a7809079004c77203a96b2f69b201d0c4af4a8371a9cff0b7fde31044",
+      "status": "GENERATED_CONCEPT_REFERENCE",
+      "note": "Visual target reference only; not loaded by the game at runtime."
+    }
+  ],
+  "sources": [
+    {
+      "asset": "Concrete Wall 003",
+      "url": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal",
+      "recommended_resolution": "1K",
+      "replacements": [
+        "concrete_wall_003_diff_1k.jpg",
+        "concrete_wall_003_arm_1k.jpg",
+        "concrete_wall_003_nor_gl_1k.jpg"
+      ]
+    },
+    {
+      "asset": "Concrete Floor Damaged 01",
+      "url": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "recommended_resolution": "1K",
+      "replacements": [
+        "concrete_floor_damaged_01_diff_1k.jpg",
+        "concrete_floor_damaged_01_arm_1k.jpg",
+        "concrete_floor_damaged_01_nor_gl_1k.jpg"
+      ]
+    },
+    {
+      "asset": "Rusty Metal 02",
+      "url": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "recommended_resolution": "1K",
+      "replacements": [
+        "rusty_metal_02_diff_1k.jpg",
+        "rusty_metal_02_arm_1k.jpg",
+        "rusty_metal_02_nor_gl_1k.jpg"
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/concrete_wall_003_diff_PLACEHOLDER.png",
+      "sha256": "1e1aaf1bf6731477a3fc31b3d1405c4626f26690992ccb1ab1108e3a0d3ead8a",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Wall 003",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/concrete_wall_003_arm_PLACEHOLDER.png",
+      "sha256": "fc1c496b05bc3b4794c86d9babb28ab1909a833d2d7a22bc0150cfa34783da14",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Wall 003",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/concrete_wall_003_normal_PLACEHOLDER.png",
+      "sha256": "649e85397a12bf5eca74c47943532e7bd7fd91a362ef0687a503ac23379cd619",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Wall 003",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/concrete_floor_damaged_01_diff_PLACEHOLDER.png",
+      "sha256": "adbe8c262c47369ec563c7f32927752f280200379b984eed777612037e67f2f3",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Floor Damaged 01",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/concrete_floor_damaged_01_arm_PLACEHOLDER.png",
+      "sha256": "3686acc95f22f417ba51303694593e447bd6e650681cb9f9946eecddda5897e1",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Floor Damaged 01",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/concrete_floor_damaged_01_normal_PLACEHOLDER.png",
+      "sha256": "d941bbb58e11bf39a90ae02de16678bdbe18a80e27d69edbb05a9fd212742ea1",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Floor Damaged 01",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/rusty_metal_02_diff_PLACEHOLDER.png",
+      "sha256": "2a69b8297c51184daf5a7f21108a45c1cd1fb5879629266807081475121be36b",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Rusty Metal 02",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/rusty_metal_02_arm_PLACEHOLDER.png",
+      "sha256": "501fb346c2898f20bc338db3fd2d4d23558b34ef1f4fefd154121b2bbe8ca02d",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Rusty Metal 02",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/rusty_metal_02_normal_PLACEHOLDER.png",
+      "sha256": "37ae69afe9ebe0ab7da0db1d202690dab184f6bfdea6f5b1b6ac8a54f1910e68",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Rusty Metal 02",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/emissive_white_PLACEHOLDER.png",
+      "sha256": "7252e79f7df8e63a3eb5c7fed4a25749ca3e87e9098ad50c5d08a219996a1716",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "neutral white emissive texture (no external source)"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_wall_003_diff_1k.jpg",
+      "sha256": "7d1d4b9f5ed1aa3e6385ef3232e26e123a3dac5f364e44f9f34784e39bf8d6bb",
+      "status": "DOWNLOADED",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal",
+      "map": "diff"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_wall_003_arm_1k.jpg",
+      "sha256": "55987cae8c5d6eb0bb09bf4cf65d45267a747294eb63b291757501e1664af51f",
+      "status": "DOWNLOADED",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal",
+      "map": "arm"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_wall_003_nor_gl_1k.jpg",
+      "sha256": "9ab358a9d51aa2a361103cf6587ee0b598fa57ad8f38b40cccc8015b867938ac",
+      "status": "DOWNLOADED",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal",
+      "map": "normal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_floor_damaged_01_diff_1k.jpg",
+      "sha256": "9b41f6e1f66804c3cface2365a7d246618ad8814a5864be43bb9349fc3fb6db6",
+      "status": "DOWNLOADED",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "map": "diff"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_floor_damaged_01_arm_1k.jpg",
+      "sha256": "b73ad44f6b8c34b791e77ed60777b477fa33d9da21596b2ea56b7f4bbf6c75cb",
+      "status": "DOWNLOADED",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "map": "arm"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_floor_damaged_01_nor_gl_1k.jpg",
+      "sha256": "9f6d4282857b23daf2d9c87e567047a8f6ede4cc9eb8ec35ebd053bab4e457a0",
+      "status": "DOWNLOADED",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "map": "normal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/rusty_metal_02_diff_1k.jpg",
+      "sha256": "adaf094391518b6afe787a123942110aa88ef521c844f970b124420f5ed5d3d9",
+      "status": "DOWNLOADED",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "map": "diff"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/rusty_metal_02_arm_1k.jpg",
+      "sha256": "2982943ffe3273a65bf788b77fc0c7a4fd8227824386d065d13a8c8c0e07db10",
+      "status": "DOWNLOADED",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "map": "arm"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/rusty_metal_02_nor_gl_1k.jpg",
+      "sha256": "995197a62cac6fbb000e6e6591a3330a3b77ef069c4ac58f505b586b9bdbd97b",
+      "status": "DOWNLOADED",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "map": "normal"
+    }
+  ],
+  "asset_records": [
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_wall_003_diff_1k.jpg",
+      "sha256": "7d1d4b9f5ed1aa3e6385ef3232e26e123a3dac5f364e44f9f34784e39bf8d6bb",
+      "status": "DOWNLOADED",
+      "asset": "Concrete Wall 003",
+      "map": "diff"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_wall_003_arm_1k.jpg",
+      "sha256": "55987cae8c5d6eb0bb09bf4cf65d45267a747294eb63b291757501e1664af51f",
+      "status": "DOWNLOADED",
+      "asset": "Concrete Wall 003",
+      "map": "arm"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_wall_003_nor_gl_1k.jpg",
+      "sha256": "9ab358a9d51aa2a361103cf6587ee0b598fa57ad8f38b40cccc8015b867938ac",
+      "status": "DOWNLOADED",
+      "asset": "Concrete Wall 003",
+      "map": "normal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_floor_damaged_01_diff_1k.jpg",
+      "sha256": "9b41f6e1f66804c3cface2365a7d246618ad8814a5864be43bb9349fc3fb6db6",
+      "status": "DOWNLOADED",
+      "asset": "Concrete Floor Damaged 01",
+      "map": "diff"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_floor_damaged_01_arm_1k.jpg",
+      "sha256": "b73ad44f6b8c34b791e77ed60777b477fa33d9da21596b2ea56b7f4bbf6c75cb",
+      "status": "DOWNLOADED",
+      "asset": "Concrete Floor Damaged 01",
+      "map": "arm"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/concrete_floor_damaged_01_nor_gl_1k.jpg",
+      "sha256": "9f6d4282857b23daf2d9c87e567047a8f6ede4cc9eb8ec35ebd053bab4e457a0",
+      "status": "DOWNLOADED",
+      "asset": "Concrete Floor Damaged 01",
+      "map": "normal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/rusty_metal_02_diff_1k.jpg",
+      "sha256": "adaf094391518b6afe787a123942110aa88ef521c844f970b124420f5ed5d3d9",
+      "status": "DOWNLOADED",
+      "asset": "Rusty Metal 02",
+      "map": "diff"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/rusty_metal_02_arm_1k.jpg",
+      "sha256": "2982943ffe3273a65bf788b77fc0c7a4fd8227824386d065d13a8c8c0e07db10",
+      "status": "DOWNLOADED",
+      "asset": "Rusty Metal 02",
+      "map": "arm"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/source/rusty_metal_02_nor_gl_1k.jpg",
+      "sha256": "995197a62cac6fbb000e6e6591a3330a3b77ef069c4ac58f505b586b9bdbd97b",
+      "status": "DOWNLOADED",
+      "asset": "Rusty Metal 02",
+      "map": "normal"
+    },
+    {
+      "path": "examples/horror_slice/assets/textures/placeholders/emissive_white_PLACEHOLDER.png",
+      "sha256": "7252e79f7df8e63a3eb5c7fed4a25749ca3e87e9098ad50c5d08a219996a1716",
+      "status": "PLACEHOLDER",
+      "asset": "white emissive multiplier"
+    }
+  ],
+  "models": [
+    {
+      "path": "examples/horror_slice/assets/models/room_shell.glb",
+      "sha256": "58c31a3cd63043f36d0bf2b6a31332cc579188f2d82bd222cd23038e03513e2d",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "examples/horror_slice/assets/models/door.glb",
+      "sha256": "52d3a0d767521899e22cc0778c0860937382d2bd877396b549cb65fadd34fe8b",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "examples/horror_slice/assets/models/key.glb",
+      "sha256": "330349e921b3140d0adfba51cd40d3a6f84594c00cc8d87b8d53176c646a0e03",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "examples/horror_slice/assets/models/save_point.glb",
+      "sha256": "ab6be6ff1f403372f4df0f5cb71233520d017d7db804982a812ce3b8e704116a",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "examples/horror_slice/assets/models/monster_placeholder.glb",
+      "sha256": "fc3709475bcccb8bf1876389423b1340a90c6a4ab582c721a0f185ec4a1b7b88",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    }
+  ]
+}

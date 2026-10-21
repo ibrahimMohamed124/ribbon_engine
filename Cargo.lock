@@ -1107,6 +1107,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "horror_slice"
+version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_assets",
+ "engine_events",
+ "engine_platform",
+ "engine_plugins",
+ "engine_render",
+ "engine_scene",
+ "plugin_gltf",
+ "plugin_physics",
+ "plugin_render3d",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2059,8 +2077,10 @@ dependencies = [
  "engine_render",
  "engine_scene",
  "glam",
+ "naga",
  "plugin_gltf",
  "plugin_voxel",
+ "png",
  "pollster",
  "wgpu",
 ]

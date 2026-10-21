@@ -91,11 +91,15 @@ external = []
 
 [allowed."plugin_render3d"]
 workspace = ["engine_app", "engine_assets", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_voxel"]
-external = ["bytemuck", "glam", "wgpu", "pollster"]
+external = ["bytemuck", "glam", "wgpu", "pollster", "naga", "png"]
 
 [allowed."plugin_gltf"]
 workspace = ["engine_assets"]
 external = ["glam", "gltf"]
+
+[allowed."horror_slice"]
+workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_physics", "plugin_render3d"]
+external = ["ron", "serde"]
 
 [allowed."model_viewer"]
 workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_render3d"]

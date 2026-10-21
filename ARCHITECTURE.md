@@ -50,7 +50,7 @@ The names are close, so for the record:
 | --- | --- |
 | `engine_render` | Backend-neutral frame/draw contracts, resource-validated render graph, CPU presenter and optional wgpu context. Owns no scene knowledge. |
 | `plugin_rendering` | Voxel scene/material data, CPU/GPU voxel raycasters, and the ECS bridge. Its `cpu` and `gpu` features are independently selectable; GPU mode uses offscreen rendering/readback. |
-| `plugin_render3d` | Native-surface indexed/instanced mesh renderer with ECS extraction, depth buffering, metallic-roughness PBR, HDR tone mapping, directional shadows, frustum culling, glTF assets, greedy voxel mesh support, dynamic GPU mesh eviction and `OffscreenVoxelRenderer`. |
+| `plugin_render3d` | Native-surface indexed/instanced mesh renderer with ECS extraction, depth buffering, metallic-roughness PBR, HDR tone mapping, directional and one spotlight shadow map (3x3 PCF), up to eight point lights, glTF base/normal/AO/emissive maps, exponential fog, bloom, frustum culling, greedy voxel mesh support, dynamic GPU mesh eviction and `OffscreenVoxelRenderer`. |
 
 ## Layers and responsibilities
 
@@ -110,6 +110,7 @@ workspace.
   `--renderer cpu` remains the legacy software reference/fallback. STUDS owns no engine
   remeshing or GPU-resource policy. The old raycaster isn't removed until manual gameplay
   verification passes; remaining legacy-tree cleanup is tracked in [`docs/PHASE9.md`](docs/PHASE9.md).
+- `examples/horror_slice` is a native-surface visual acceptance example. Its `room.ron` describes one concrete room, door/key placements, a lantern save-point prop, monster spawn/path data, and AABB colliders. The player can move with WASD and look with the mouse; `plugin_physics::slide_capsule_xz` provides reusable static-AABB capsule sliding, while the example owns its first-person input/camera system. Door/key interaction, skeletal animation, positional audio, and save logic remain later phases. Bundled GLBs contain the downloaded Poly Haven CC0 maps; separately marked procedural placeholders remain available as fallbacks.
 - The neutral renderer fixture, the CPU golden test and the CPU/GPU parity test
   live in `plugins/rendering/tests/` (`docs/PHASE9.md` step 2).
 - `examples/voxel_mesh_showcase` demonstrates dynamic block edits, chunk-boundary invalidation and GPU mesh replacement on the native mesh pipeline. Dynamic editing is provided by `ChunkedVoxelWorld::set_block` and `rebuild_dirty_chunks`; STUDS exercises GPU upload/update/eviction through `OffscreenVoxelRenderer`.

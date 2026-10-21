@@ -12,10 +12,9 @@ application built on it.
 > and page pickups are now ECS resources/entities with scheduled simulation systems.
 > STUDS supports `--renderer cpu|gpu|auto`. Its GPU backend now uses the
 > engine-owned `plugin_render3d::OffscreenVoxelRenderer`, which consumes dynamically
-> remeshed voxel chunks and draws through the PBR/HDR mesh pipeline with STUDS albedo textures;
-> CPU raycasting remains the reference/fallback. The GPU creature is currently a multipart mesh
-> proxy while the CPU path uses the baked sprite atlas. Legacy raycaster code is retained until
-> manual Windows GPU gameplay smoke checks pass. See [docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md](docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md)
+> remeshed voxel chunks and draws through the PBR/HDR mesh pipeline; CPU raycasting remains
+> the reference/fallback. Legacy raycaster code is retained until manual Windows GPU gameplay
+> smoke checks pass. See [docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md](docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md)
 > and [docs/PHASE9.md](docs/PHASE9.md).
 
 ## Layout
@@ -24,7 +23,7 @@ application built on it.
 | --- | --- |
 | `crates/` | Engine core (`engine_*`): math, ECS, events, schedule, app, plugins, platform, assets, scene, render, reflection, commands, editor |
 | `plugins/` | Optional features (`plugin_*`): voxel, physics, rendering, render3d, gltf, animation, audio, editor tools |
-| `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `gpu_window`, `editor_demo`, `graphics_showcase`, `scene_hierarchy_3d`, `voxel_mesh_showcase` |
+| `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `gpu_window`, `editor_demo`, `graphics_showcase`, `scene_hierarchy_3d`, `voxel_mesh_showcase`, `horror_slice` |
 | `games/studs/` | The game, now launched through the ECS app and plugin runner; some gameplay migration and compatibility cleanup remain. |
 | `engine/` | **Legacy** `voxelworks-*` crates, to be deleted |
 | `docs/`, `tools/` | Plans, decisions, dependency policy and checker |
@@ -42,6 +41,7 @@ cargo run -p model_viewer                   # glTF model on the wgpu mesh render
 cargo run -p graphics_showcase              # PBR / HDR / directional-shadow graphics showcase
 cargo run -p scene_hierarchy_3d             # visible 3D parent/child transform example
 cargo run -p voxel_mesh_showcase             # dynamic greedy voxel chunks on the native 3D renderer
+cargo run -p horror_slice                    # native-surface single-room horror visual slice
 cargo run -p voxelworks-minimal -- --headless --renderer cpu   # legacy engine-only example
 ```
 
@@ -57,9 +57,18 @@ rasterization and copies the tone-mapped framebuffer through `WindowFrame`. The 
 raycaster remains available as a fallback/reference; legacy GPU raycaster source is kept
 until manual gameplay checks on the target Windows hardware are complete.
 
+## Horror Slice visual acceptance example
+
+`cargo run -p horror_slice` opens the native-surface single-room horror scene. The room is RON-authored and uses a flashlight spotlight with a perspective shadow map, concrete/floor/rusted-metal PBR maps, a locked-door prop, a key, a small lantern/save-point prop and a monster silhouette. The bundled GLBs contain the nine downloaded Poly Haven CC0 maps; deterministic procedural maps remain separately marked `PLACEHOLDER` fallbacks. Provenance and regeneration steps are documented in [`examples/horror_slice/README.md`](examples/horror_slice/README.md). The example supports first-person WASD movement, mouse look and static AABB wall/prop collision via `plugin_physics`; Shift sprints, Escape releases the cursor and left-click recaptures it. It remains a rendering/movement slice: door/key interaction, skeletal animation, positional audio and save/load are not implemented yet. Interactive visual acceptance still requires review on the target Windows GPU.
+
 ## Dependency rules
 
 `tools/allowed_deps.toml` lists every allowed dependency edge per package.
 `python tools/check_deps.py` checks it and runs in CI. Engine crates never
 depend on games, and nothing outside `engine/` and `games/studs` depends on the
 legacy `voxelworks-*` crates.
+
+
+## Window and launcher identity
+
+The Ribbon Engine icon source and setup for titlebar, taskbar, and Windows executable icons are documented in [`docs/WINDOW_ICON.md`](docs/WINDOW_ICON.md).

@@ -30,6 +30,7 @@ members = [
   "examples/gpu_window",
   "examples/cube_spin",
   "examples/model_viewer",
+  "examples/horror_slice",
   "engine/crates/core",
   "engine/crates/scene",
   "engine/crates/api",

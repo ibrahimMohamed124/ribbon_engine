@@ -5,3 +5,7 @@
 *.zip
 /games/studs/assets/source/
 scripts/
+
+# Python asset-generator caches
+__pycache__/
+*.py[cod]
