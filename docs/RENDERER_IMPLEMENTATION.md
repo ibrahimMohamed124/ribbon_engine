@@ -21,7 +21,8 @@ confusing integrated capabilities with features that remain in the roadmap.
    Reinhard tone mapper writes the acquired surface image.
 4. **Directional shadows.** A depth-only directional-light pass creates a single
    shadow map; the material pass samples it with a depth-comparison sampler and
-   depth bias. Cascades, PCF kernels, point/spot shadows and production-grade
+   depth bias and 3x3 PCF filtering. One spotlight shadow map is also supported.
+   Cascades, point shadows, multiple spotlight shadows and production-grade
    stability work remain incomplete.
 5. **Main-pass visibility.** Conservative bounding-sphere/frustum tests reduce
    the color-pass instance list. The shadow list retains valid off-screen draws
@@ -49,10 +50,10 @@ confusing integrated capabilities with features that remain in the roadmap.
   exercise incremental remeshing, entity replacement and GPU-resource eviction; STUDS does not
   gain a block-breaking mechanic just to exercise the engine. Engine-level tests cover owner-chunk
   updates, boundary neighbors, no-op edits, out-of-bounds edits and empty-chunk eviction updates.
-- The PBR shader does not yet implement normal/occlusion/emissive textures,
-  alpha modes, vertex colors, image-based lighting, or multiple point/spot lights.
-- The current shadow map is a single fixed-resolution directional map without
-  cascades or a multi-tap PCF kernel.
+- The PBR shader does not yet implement alpha modes, vertex colors, image-based
+  lighting, or multiple shadow-casting spotlights.
+- Directional shadows use a single fixed-resolution map without cascades;
+  directional and spotlight shadows use 3x3 PCF filtering.
 - The render graph is a scheduling/dependency graph, not a transient GPU resource
   allocator or complete graph of every internal render subpass.
 - Normal/AO/emissive texture sampling, height/distance fog, and a compact bright-pass
