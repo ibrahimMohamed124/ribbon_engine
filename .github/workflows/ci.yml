@@ -157,7 +157,7 @@ jobs:
         run: cargo run --locked -p voxelworks-minimal -- --headless
       - name: Level probe
         if: runner.os == 'Linux'
-        run: cargo run --release --locked -p voxelworks-render-cpu --example level_probe
+        run: cargo run --release --locked -p plugin_rendering --example level_probe
 
   release-build:
     name: Release binary (${{ matrix.os }})
