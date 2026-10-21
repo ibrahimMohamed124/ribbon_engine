@@ -45,6 +45,8 @@ struct MeshPass {
     tonemapper: Option<(wgpu::TextureFormat, ToneMapper)>,
     /// Uploaded models keyed by asset handle id and generation.
     models: HashMap<(u64, u32), Vec<GpuModelPart>>,
+    /// Last CPU-content revision observed for each model handle.
+    asset_revisions: HashMap<(u64, u32), u64>,
     /// Retain immutable CPU chunk meshes so pointer keys cannot be reused while cached.
     voxel_meshes: HashMap<usize, CachedVoxelMesh>,
 }
@@ -83,6 +85,45 @@ impl MeshPass {
         if width == 0 || height == 0 {
             return;
         }
+
+        // A successful hot reload retains its weak handle ID/generation but advances the CPU asset
+        // revision. Rebuild this pass's GPU-side caches when an already-observed model changes.
+        // Recreating the pass-owned renderer here releases old model/material/texture allocations
+        // together and keeps all replacement uploads on this renderer-owning thread.
+        let current_revisions: Vec<_> = world
+            .try_resource::<AssetServer>()
+            .map(|server| {
+                extracted
+                    .models
+                    .iter()
+                    .filter_map(|placement| {
+                        server.revision(placement.model).map(|revision| {
+                            (
+                                (placement.model.id(), placement.model.generation()),
+                                revision,
+                            )
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let revision_changed = current_revisions.iter().any(|(key, revision)| {
+            self.asset_revisions
+                .get(key)
+                .is_some_and(|previous| previous != revision)
+        });
+        if revision_changed {
+            self.models.clear();
+            self.asset_revisions.clear();
+            self.voxel_meshes.clear();
+            self.renderer = None;
+            self.hdr = None;
+            self.tonemapper = None;
+        }
+        for (key, revision) in current_revisions {
+            self.asset_revisions.insert(key, revision);
+        }
+
         // Drop GPU buffers for chunk meshes that no longer appear in the extracted scene.
         // This prevents repeated dynamic remeshes and despawns from growing the cache forever.
         let live_voxel_keys: HashSet<usize> = extracted

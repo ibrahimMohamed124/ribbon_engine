@@ -1211,9 +1211,6 @@ impl MeshRenderer {
             .unwrap_or(Mat4::IDENTITY);
         let (point_positions_range, point_colors_intensity) = pack_point_lights(scene.point_lights);
         let spot = active_spot.unwrap_or_default();
-        // max/min also maps NaN to the lower bound.
-        #[allow(clippy::manual_clamp)]
-        let outer_cone_angle = spot.outer_cone_angle.max(0.01).min(1.55);
         let globals = Globals {
             view_proj: scene.view_proj.to_cols_array_2d(),
             light_view_proj: light_view_proj.to_cols_array_2d(),
@@ -1237,7 +1234,7 @@ impl MeshRenderer {
                 spot.direction.normalize_or_zero().x,
                 spot.direction.normalize_or_zero().y,
                 spot.direction.normalize_or_zero().z,
-                outer_cone_angle.cos(),
+                spot.outer_cone_angle.clamp(0.01, 1.55).cos(),
             ],
             spot_color_intensity: [
                 spot.color.x,
@@ -1246,7 +1243,9 @@ impl MeshRenderer {
                 spot.intensity.max(0.0),
             ],
             spot_params: [
-                spot.inner_cone_angle.max(0.0).min(outer_cone_angle).cos(),
+                spot.inner_cone_angle
+                    .clamp(0.0, spot.outer_cone_angle)
+                    .cos(),
                 if shadow_spot.is_some() { 1.0 } else { 0.0 },
                 if active_spot.is_some() { 1.0 } else { 0.0 },
                 0.0,
