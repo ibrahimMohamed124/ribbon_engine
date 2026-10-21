@@ -17,14 +17,26 @@ it is documented.
 
 ## Priority 1 — transform invalidation
 
-**Current limit:** `propagate_transforms` and `propagate_transforms_3d` rebuild the transform maps and
-resolve the hierarchy in `PostUpdate`. Public mutable fields mean the engine cannot reliably know which
-component changed without an explicit change-detection contract.
+**Status:** first incremental-resolution milestone implemented; profiling and lower-cost mutation tracking remain.
 
-**Design:** add component change ticks or controlled transform mutation APIs, invalidate descendants when a
-local transform or parent link changes, recompute only dirty branches, and write `GlobalTransform` only when
-its resolved value differs. Preserve deterministic parent-before-child order, cycle safeguards, 2D/voxel vs
-quaternion-based 3D conventions, and the existing golden/render baselines. Benchmark sparse and all-dirty scenes.
+**Prior limit:** both propagation systems resolved every transform-bearing entity at `PostUpdate` and wrote
+all outputs each frame. Since local transform fields are public and are commonly modified through `query_mut`,
+there was no reliable way to depend on an explicit change tick without breaking existing caller patterns.
+
+**Implemented design:** `engine_scene` now snapshots local transforms and parent links, detects added/removed/changed
+values, and invalidates descendants across the union of the previous and current hierarchy edges. The old graph
+is included so reparenting or removing a transform does not leave descendants with stale globals. Dirty branches
+are resolved parent-first with deterministic entity ordering; clean ancestors reuse cached global transforms.
+Global components are only written when the resolved value differs, and the derived global is removed when its
+local transform component disappears. The 2D/voxel angle convention and quaternion-based 3D composition remain
+separate, and the existing cycle fallback behavior is retained.
+
+**Known bound:** because `Transform`, `Transform3D`, and `Parent` remain directly mutable, each pass still needs
+an O(N) snapshot scan to detect changes safely. The current improvement skips hierarchy composition and component
+writes for clean branches; it does not claim sublinear total frame cost or benchmark-proven gains. The next step
+within this milestone is target-side sparse/all-dirty profiling. Only after these measurements should the project
+consider ECS change ticks or controlled transform mutation APIs that can avoid full scans without breaking current
+callers. See [`TRANSFORM_INVALIDATION.md`](TRANSFORM_INVALIDATION.md) for the implementation contract and verification status.
 
 ## Priority 2 — asset lifetime and streaming
 

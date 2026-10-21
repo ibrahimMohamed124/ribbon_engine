@@ -104,7 +104,7 @@ workspace.
   an HWND already used by `wgpu`, because competing native surfaces can crash on shutdown.
 - The editor has no text input and is compiled only with its `editor` feature
   in debug builds. The glyph table limits available UI characters.
-- Local 2D/voxel transforms and 3D quaternion transforms share the same entity hierarchy; global transforms currently recompute each `PostUpdate` (dirty propagation is not implemented). `plugin_render3d` consumes `GlobalTransform3D`. When entity counts warrant it, add change ticks or explicit transform mutation APIs plus descendant dirty propagation; public mutable transform fields make correct implicit change tracking difficult.
+- Local 2D/voxel transforms and 3D quaternion transforms share the same entity hierarchy. `engine_scene` snapshots local transforms and parent links, invalidates changed branches plus descendants, reuses cached globals for clean ancestors, and only writes changed global components. Public mutable fields mean detection still requires an O(N) snapshot scan each `PostUpdate`; this is an incremental-composition milestone, not a claim of sublinear update cost. See `docs/TRANSFORM_INVALIDATION.md` and `docs/SCALABILITY_ROADMAP.md`. `plugin_render3d` consumes `GlobalTransform3D`.
 - `examples/scene_hierarchy_3d` demonstrates this `Transform3D` parent-child composition in the GPU mesh renderer and reports runtime diagnostics for global transform propagation.
 - STUDS uses `engine_app::App`, `WinitRunner`, and the platform/scene/rendering/audio/game
   plugins. Live gameplay uses `MazeResource` and `RunState` resources plus `Player`, `Enemy`,

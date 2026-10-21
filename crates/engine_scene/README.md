@@ -4,11 +4,15 @@ Provides 2D/voxel-oriented and 3D transform components, shared entity hierarchy,
 reflected prefab capture/instantiation, and RON scene documents. `Transform3D`
 uses right-handed, Y-up `glam` translation/quaternion/per-axis scale data;
 `GlobalTransform3D` is recomputed from the same `Parent`/`Children` hierarchy
-by `ScenePlugin` during `PostUpdate`. Ancestors participate in the 3D chain only
-when they also carry `Transform3D`; the legacy `Transform` and 3D transform
-conventions are not implicitly mixed. Transform composition uses decomposed TRS
-and therefore does not preserve shear caused by a rotated child under a
-non-uniformly scaled parent.
+by `ScenePlugin` during `PostUpdate`. Propagation snapshots local transforms and
+parent links, recomputes only changed branches and descendants, reuses cached
+ancestor globals, and avoids writing unchanged globals. Since transform fields
+remain publicly mutable, detecting changes still requires scanning component
+values each frame; see [the transform invalidation design](../../docs/TRANSFORM_INVALIDATION.md). Ancestors participate in
+the 3D chain only when they also carry `Transform3D`; the legacy `Transform` and
+3D transform conventions are not implicitly mixed. Transform composition uses
+decomposed TRS and therefore does not preserve shear caused by a rotated child
+under a non-uniformly scaled parent.
 
 Allowed workspace dependencies: `engine_ecs`, `engine_reflect`, `engine_math`,
 `engine_app`, and `engine_plugins`.

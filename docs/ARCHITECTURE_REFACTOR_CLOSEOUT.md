@@ -26,7 +26,7 @@ Removing legacy architecture and cleaning dependency/CI boundaries improves main
 
 1. Schedule systems run serially and receive exclusive `&mut World`. Safe parallel scheduling needs declared component/resource access and conflict validation.
 2. Asset loading is synchronous; handles are non-owning identifiers and storage has no strong-reference retention/eviction policy.
-3. Global transforms are recomputed each `PostUpdate`; correct dirty propagation needs explicit change ticks or mutation/invalidation contracts.
+3. Transform propagation now skips clean-branch composition and unchanged global writes using snapshot-diff invalidation; detecting edits still requires an O(N) scan while local fields remain public, and target-side profiling is pending. See `docs/TRANSFORM_INVALIDATION.md`.
 4. `RenderGraph` validates dependencies and ordering but has no transient GPU resource allocator/aliasing or GPU timestamp profiler.
 5. `plugin_rendering` still owns voxel scene/material data, CPU/GPU voxel rendering, and an ECS bridge. Its split/rename is deliberately deferred until those public API ownership boundaries have a concrete design.
 
@@ -44,3 +44,18 @@ Source-level checks performed while preparing this archive:
 - The source archive contains no `.github-actions-runner/`, `.git/`, `target/`, or generated delivery ZIPs.
 
 Rust formatting, Clippy, Rust compilation, tests, GPU rendering, and CI were **not run in this environment** because the Rust toolchain (`cargo`) is unavailable here. Run the documented command matrix in a Rust-enabled Windows checkout before merging this archive.
+
+## Transform invalidation implementation
+
+Date: 2026-10-22
+
+- Added per-world snapshot caches for 2D/voxel `Transform` propagation and quaternion-based `Transform3D` propagation.
+- Detects added, removed, and changed local transforms and parent links without relying on change ticks, preserving existing code that mutates public fields through ECS queries.
+- Invalidates descendants over the union of previous and current parent graphs, so reparenting/removal updates affected branches; clean ancestors use cached global values.
+- Resolves dirty entities in stable entity order, retains the separate 2D and 3D composition conventions, writes global components only when values differ, and removes a derived global when its corresponding local transform is removed.
+- Added `docs/TRANSFORM_INVALIDATION.md` and updated the scalability roadmap, architecture overview, and `engine_scene` README.
+- No tests were added, in accordance with the project instruction. The source was not built, formatted, linted, benchmarked, or tested in this environment. The user's earlier Windows verification results cover the pre-change archive only, not this transform-invalidation change.
+
+### Remaining qualification
+
+The caches avoid full hierarchy resolution and unchanged global writes, but current public mutable fields require an O(N) snapshot scan every propagation pass. Performance improvement is therefore an expected optimization for sparse changes, not a measured claim; run the documented target-side verification and benchmark before treating the milestone as fully validated. A later ECS change-tick or controlled-mutation design could remove the full scan, but must preserve compatibility with current `query_mut` callers.
