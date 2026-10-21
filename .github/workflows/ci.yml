@@ -31,6 +31,7 @@ jobs:
             libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev mesa-vulkan-drivers
 
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment != 'self-hosted'
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
@@ -183,6 +184,7 @@ jobs:
             libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
 
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment != 'self-hosted'
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release
