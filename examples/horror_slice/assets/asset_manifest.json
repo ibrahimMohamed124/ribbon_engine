@@ -201,27 +201,27 @@
   "models": [
     {
       "path": "examples/horror_slice/assets/models/room_shell.glb",
-      "sha256": "284f05fc9c575f5069c20d48fba5efd976349ca478e75802550238cbecc759ed",
+      "sha256": "6c7424d2ee6031ccc4686fe60481bddd28cf47d31d3446b9b83e14e013191d06",
       "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
     },
     {
       "path": "examples/horror_slice/assets/models/door.glb",
-      "sha256": "ddfacef9294b96bfb9f674c829a82d444f052f2a21dd7ab459f97f6613dbf027",
+      "sha256": "3a4988102064d8f297ee277b2c03d79ee0efb9b4bbc6245bd57de87224f7d75a",
       "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
     },
     {
       "path": "examples/horror_slice/assets/models/key.glb",
-      "sha256": "b9cd44c27a190fd533827723a74fb3f638d0f617e11956d7bc065d2524098920",
+      "sha256": "b0d7b8947927b1581f0c95c80e33be8625910e152e56f5d3f664b79c18efbc25",
       "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
     },
     {
       "path": "examples/horror_slice/assets/models/save_point.glb",
-      "sha256": "af0de1f93a0d5dafa245026e0a2ac82a04d809aa0372833c5d6c7dab758409ab",
+      "sha256": "9fca8b685c2ce5c1d5db41019bd51525f13e2adef23ca6b4f5b722ca34f1b891",
       "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
     },
     {
       "path": "examples/horror_slice/assets/models/monster_placeholder.glb",
-      "sha256": "1397502cc50928be96cc30bc101352bdbe04fd6b47a52759cda98b8d265fd243",
+      "sha256": "ceefde23c06a8808074ba7cf4931b6e7645d0c106e65fd7d1853cc1ee7b966e9",
       "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
     }
   ]
