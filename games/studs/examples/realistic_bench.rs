@@ -1,10 +1,10 @@
 use std::time::Instant;
 
 use engine_render::Framebuffer;
+use plugin_rendering::cpu::render::render_with_materials;
 use studs::config::DEFAULT_HFOV;
 use studs::game::Game;
 use studs::surfaces::{studs_material_table, StudsSurface};
-use voxelworks_render_cpu::render::render_with_materials;
 
 fn main() {
     let frames = std::env::args()

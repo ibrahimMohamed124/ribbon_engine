@@ -18,7 +18,7 @@ The previous CPU raycaster remains selectable as a reference/fallback. The old G
 
 ### GPU mesh lifecycle (`plugins/render3d`)
 
-`OffscreenVoxelRenderer` is a reusable engine API. It accepts a `ChunkedVoxelWorld`, a camera, a block-id color palette or texture-backed `VoxelBlockMaterial` descriptors, lighting and optional cube instances. The material descriptor carries a neutral linear tint, metallic/roughness factors and optional sRGB albedo texture data. The renderer caches GPU materials per block ID, uploads textures once, and leaves asset selection/tint policy to the application. It then:
+`OffscreenVoxelRenderer` is a reusable engine API. It accepts a `ChunkedVoxelWorld`, a camera, a block-id color palette, lighting and optional cube instances. It then:
 
 1. drains dirty chunk updates;
 2. releases superseded mesh IDs and uploads only new non-empty chunk meshes;
@@ -33,7 +33,7 @@ The normal ECS `Render3dPlugin` path also evicts uploaded voxel mesh buffers whe
 
 - The generated maze is held in `ChunkedVoxelWorld` with 8x8xfull-height chunks. The engine-only `voxel_mesh_showcase` also exercises dynamic removal/restoration of a floor voxel at a chunk corner on the native ECS surface renderer, with only the owner and face-neighbor chunks rebuilt.
 - `--renderer gpu` uses `plugin_render3d::OffscreenVoxelRenderer`; it no longer routes through the legacy `plugin_rendering::gpu::voxel::GpuRenderer` raycaster.
-- The game supplies only its block IDs, albedo assets, linear RGB style tints, camera values, flashlight-derived scene lighting, enemy/page visual instances and game UI/overlay draw lists. The materials are loaded in `games/studs`; texture upload/sampling and cache lifetime are engine services. A visible scene uses the real STUDS albedo textures instead of flat palette colors, and the game uses a multipart cube-mesh creature proxy rather than a single large cuboid. The CPU sprite atlas is not yet used by the new GPU mesh path, so exact creature animation parity remains outstanding.
+- The game supplies only its block IDs, linear RGB palette, camera values, flashlight-derived scene lighting, enemy/page visual instances and game UI/overlay draw lists.
 - `plugin_rendering` owns the shared world-overlay/brightness/UI compositing used by the CPU renderer and the GPU-backed game route.
 - The game CPU renderer remains the reference/fallback implementation. The legacy renderer source is retained elsewhere in the workspace until the manual GPU runtime checklist below has been completed.
 
@@ -45,7 +45,7 @@ The normal ECS `Render3dPlugin` path also evicts uploaded voxel mesh buffers whe
 | Build chunk meshes | `rebuild_dirty_chunks` uses greedy chunk meshing and retains CPU snapshots | `cargo test -p plugin_voxel` |
 | Edit one block and update affected chunks | `set_block` tracks revisions/dirty chunks; interior edits dirty one chunk, face edits dirty the owner and adjacent chunk | Full workspace test matrix |
 | Handle chunk boundaries | Mesher reads neighboring world cells; tests cover cross-boundary interface culling and boundary invalidation | Visual check for seams in a live scene |
-| Render through new GPU renderer | STUDS GPU backend uses `plugin_render3d::OffscreenVoxelRenderer`, cached per-block albedo textures and the HDR/PBR mesh pipeline | Manual GPU run, because CI unit tests do not guarantee adapter/window presentation or visual legibility |
+| Render through new GPU renderer | STUDS GPU backend uses `plugin_render3d::OffscreenVoxelRenderer` and the HDR/PBR mesh pipeline | Manual GPU run, because CI unit tests do not guarantee an adapter/window presentation is available |
 | Retain game stability during migration | CPU fallback and the legacy implementation remain available; the game's controls/simulation modules were not migrated into the engine | Compare `--renderer gpu` and `--renderer cpu` in a full play session |
 | Preserve engine/game separation | `games/studs/README.md` states the boundary and this file maps responsibilities | Review any future feature against that boundary |
 
@@ -54,10 +54,14 @@ The normal ECS `Render3dPlugin` path also evicts uploaded voxel mesh buffers whe
 Run from the repository root:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\finish-dynamic-voxel-phase.ps1
+cargo fmt --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo test --locked --workspace --no-default-features
+python tools/check_deps.py
 ```
 
-The script formats Rust code and runs dependency policy, `cargo check`, Clippy with warnings denied, example build, workspace tests and a no-default-features build/test pass. The no-default-features matrix and final STUDS release-GPU build run with one Cargo job, incremental compilation disabled and debug info disabled to lower peak memory on Windows. If rustc reports OS error 1455 / a paging-file allocation failure, close memory-heavy applications and ensure the Windows paging file is system-managed or large enough before retrying. It does not create commits or push changes.
+The GitHub Actions workflow runs the cross-platform build/test and dependency-policy matrix. These local commands do not include the manual GPU gameplay review below.
 
 ## Manual runtime smoke checks
 
@@ -68,11 +72,8 @@ cargo run --release -p studs -- --renderer gpu
 cargo run --release -p studs -- --renderer cpu
 ```
 
-Check that the maze floor, walls and ceiling have correct orientation and material detail, the flashlight keeps nearby surfaces readable while shadows remain intentional, the camera moves/looks in the expected direction, the creature is not rendered as an oversized placeholder block, uncollected pages appear and collected pages disappear, overlays and menus remain legible, resize/restart work, and a GPU initialization/render error falls back to CPU. Compare GPU and CPU from the same seed and similar camera position so differences are meaningful. Do not remove the legacy raycaster until the GPU path has passed these checks on the intended target hardware.
+Check that the maze floor, walls and ceiling have correct orientation, the camera moves/looks in the expected direction, the creature and uncollected pages appear, collected pages disappear, overlays and menus remain legible, resize/restart work, and a GPU initialization/render error falls back to CPU. Do not remove the legacy raycaster until the GPU path has passed these checks on the intended target hardware.
 
 ## Scope deliberately not claimed
 
-This path still presents through an offscreen framebuffer/readback because STUDS uses the backend-neutral `WindowFrame` presentation contract. Native-surface presentation for STUDS, a textured/animated billboard path for the GPU creature, spot-light/flashlight cone rendering, rebuilding based on streaming world loads, asynchronous mesh jobs, LOD and occlusion culling remain separate follow-on improvements. The existing directional light and shadows are consumed by the mesh renderer, but are not a replacement for all of the game's old raycaster-specific flashlight effects.
-## STUDS camera handedness compatibility
-
-STUDS retains its legacy Z-up gameplay/camera convention while the native mesh renderer uses a right-handed Y-up camera. The GPU route mirrors only the rendered world framebuffer horizontally before screen-space overlays are composed. This preserves the game's existing screen-left/right semantics for mouse and arrow turning and for WASD movement without inverting raw platform input or moving game controls into engine crates. The CPU reference renderer is unchanged. A runtime smoke check should verify mouse-right, arrow-right, W/S movement, A/D strafing, HUD orientation, and GPU/CPU behavior.
+This path still presents through an offscreen framebuffer/readback because STUDS uses the backend-neutral `WindowFrame` presentation contract. The native `plugin_render3d` path now has a reusable spotlight component with a perspective shadow map, PCF filtering, up to eight point lights, map-based normal/AO/emissive shading, height/distance fog and a compact bloom pass; see `examples/horror_slice` for the separate native-surface acceptance scene. This generic renderer feature is not yet parity with the legacy STUDS raycaster's game-specific flashlight effects. Streaming-world loads, asynchronous mesh jobs, LOD and occlusion culling remain future work.

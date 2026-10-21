@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "refactor/**"]
+    branches: [main, "feat/**", "refactor/**"]
   pull_request:
 
 env:
@@ -11,13 +11,24 @@ env:
 jobs:
   test:
     name: Build & test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'ribbon-windows' || matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'ubuntu-latest' && '-C link-arg=-fuse-ld=bfd' || '' }}
+      CARGO_PROFILE_DEV_DEBUG: ${{ matrix.os == 'macos-latest' && '2' || '0' }}
+      CARGO_PROFILE_TEST_DEBUG: ${{ matrix.os == 'macos-latest' && '2' || '0' }}
+      CARGO_BUILD_JOBS: ${{ matrix.os == 'windows-latest' && '2' || '' }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Use runner temporary directory for Windows builds
+        if: runner.os == 'Windows'
+        run: |
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
 
       - name: Linux windowing libraries
         if: runner.os == 'Linux'
@@ -27,7 +38,9 @@ jobs:
             libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev mesa-vulkan-drivers
 
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment != 'self-hosted'
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment != 'self-hosted'
 
       - name: Build
         run: cargo build --locked --workspace --all-targets
@@ -38,13 +51,11 @@ jobs:
           cargo run --locked -p hello_ecs
           cargo run --locked -p voxel_room -- --renderer cpu --headless
           cargo run --locked -p editor_demo
-      - name: GPU fixture parity and engine-only headless examples
+      - name: GPU fixture parity and renderer regressions
         if: runner.os == 'Linux'
         run: |
           WGPU_BACKEND=vulkan cargo test --locked -p plugin_rendering --test parity -- --nocapture
           WGPU_BACKEND=vulkan cargo test --locked -p plugin_rendering --lib gpu -- --nocapture
-          cargo run --locked -p voxelworks-minimal -- --headless --renderer cpu
-          WGPU_BACKEND=vulkan cargo run --locked -p voxelworks-minimal -- --headless --renderer gpu
 
   test-no-default-features:
     name: Build & test without optional platform features
@@ -72,8 +83,16 @@ jobs:
       - name: Verify platform optional dependencies are absent
         shell: bash
         run: |
-          if cargo tree --locked -p voxelworks-platform --no-default-features -e normal | grep -E '(wgpu|rodio) v[0-9]'; then
-            echo "GPU and audio dependencies must be optional platform features"
+          if cargo tree --locked -p engine_render --no-default-features -e normal | grep -E 'wgpu v[0-9]'; then
+            echo "engine_render must not pull wgpu when its gpu feature is disabled"
+            exit 1
+          fi
+          if cargo tree --locked -p plugin_audio --no-default-features -e normal | grep -E 'rodio v[0-9]'; then
+            echo "plugin_audio must not pull rodio when its audio feature is disabled"
+            exit 1
+          fi
+          if cargo tree --locked -p plugin_rendering --no-default-features -e normal | grep -E '(wgpu|rayon) v[0-9]'; then
+            echo "plugin_rendering must not pull optional GPU/CPU backends when all features are disabled"
             exit 1
           fi
 
@@ -98,19 +117,6 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
 
-      - name: Legacy crates do not pull optional backends by default-off
-        shell: bash
-        run: |
-          # Direct edges are policed by tools/check_deps.py. This step checks the
-          # transitive result: without the gpu/audio features no legacy crate may
-          # compile wgpu, rodio or the CPU thread pool unless it owns the CPU renderer.
-          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-platform; do
-            if cargo tree --locked -p "$crate" --no-default-features -e normal | grep -E '(wgpu|rodio|rayon|minifb|enigo) v[0-9]'; then
-              echo "$crate must not depend on GPU, audio or rayon without the matching feature"
-              exit 1
-            fi
-          done
-
       - name: New workspace dependency policy
         run: python tools/check_deps.py
 
@@ -133,17 +139,14 @@ jobs:
       - name: Engine game-content boundary
         shell: bash
         run: |
-          if grep -riE 'studs|warden|page|enemy|monster|crawl|flashlight|maze|jumpscare' \
-            crates plugins engine/crates/core engine/crates/scene engine/crates/api engine/crates/render-cpu engine/crates/render-gpu engine/crates/platform; then
+          if grep -riE 'studs|warden|page|enemy|monster|crawl|flashlight|maze|jumpscare' crates plugins; then
             echo "Engine crates contain game-specific vocabulary"
             exit 1
           fi
-          for crate in voxelworks-core voxelworks-scene voxelworks-api voxelworks-render-cpu voxelworks-render-gpu voxelworks-platform; do
-            if cargo tree -p "$crate" -e normal | grep -i 'studs'; then
-              echo "$crate must not depend on the studs game"
-              exit 1
-            fi
-          done
+          if rg -n 'voxelworks-(core|scene|api|render-cpu|render-gpu|platform|minimal)' Cargo.toml crates plugins examples games tools .github; then
+            echo "Retired compatibility packages must not re-enter active source or CI"
+            exit 1
+          fi
 
       - name: rustfmt
         run: cargo fmt --all -- --check
@@ -153,21 +156,28 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build examples
         run: cargo build --locked --workspace --examples
-      - name: Engine-only minimal app
-        run: cargo run --locked -p voxelworks-minimal -- --headless
       - name: Level probe
         if: runner.os == 'Linux'
-        run: cargo run --release --locked -p voxelworks-render-cpu --example level_probe
+        run: cargo run --release --locked -p plugin_rendering --example level_probe
 
   release-build:
     name: Release binary (${{ matrix.os }})
     needs: test
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'ribbon-windows' || matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'ubuntu-latest' && '-C link-arg=-fuse-ld=bfd' || '' }}
+      CARGO_BUILD_JOBS: ${{ matrix.os == 'windows-latest' && '1' || '' }}
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Use runner temporary directory for Windows builds
+        if: runner.os == 'Windows'
+        run: |
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
 
       - name: Linux windowing libraries
         if: runner.os == 'Linux'
@@ -177,7 +187,9 @@ jobs:
             libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
 
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.environment != 'self-hosted'
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment != 'self-hosted'
 
       - name: Build release
         run: cargo build --locked --workspace --release

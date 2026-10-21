@@ -132,4 +132,7 @@ if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "checker_cube.glb").write_bytes(checker_cube())
     (OUT / "bare_triangle.glb").write_bytes(bare_triangle())
+    # Also (re)generate the single-room horror example's explicit placeholder meshes/maps.
+    from horror_room_assets import generate_assets
+    generate_assets()
     print("wrote", sorted(p.name for p in OUT.iterdir()))

@@ -1,38 +1,39 @@
 # Phase 9: retire the legacy `engine/` tree
 
-Goal: `games/studs` runs on the ECS engine (`crates/` + `plugins/`), and
-`engine/` (the `voxelworks-*` crates) and the shims in `docs/SHIMS.md` are deleted.
+> **Historical migration record.** This phase is complete. The old `engine/` directory,
+> all `voxelworks-*` packages, and active shim dependency edges are removed from the current workspace.
+> The step-by-step notes below preserve the state at the time each migration step ran; descriptions
+> of a temporary shim or legacy package are historical, not current package/dependency guidance.
 
-Status: steps 1-6 are complete. Step 5 replaces the STUDS executable's legacy
-immediate-mode runner with the ECS app and plugins. Step 6 moves live gameplay state
-into `MazeResource` and `RunState` resources plus `Player`, `Enemy`, and `PagePickup`
-entities, with player movement, pickup collection, enemy behavior, and run resolution
-in separate schedule systems. STUDS can select CPU or GPU rendering; the GPU path uses
-the existing offscreen voxel renderer and `WindowFrame` readback bridge. Steps 7-8
-remain open because compatibility examples and other legacy packages still reference
-shim crates.
+Status: steps 1-8 are complete. Steps 1-6 moved the renderer, fixtures, STUDS runtime, and
+gameplay ownership onto the current ECS/plugin architecture. Step 7 removed the retired compatibility
+workspace after migrating the final STUDS tests/benchmark and dropping the old minimal runner example.
+Step 8 recorded a naming decision: keep `engine_render`, `plugin_rendering`, and `plugin_render3d` as
+distinct packages with explicit role documentation; do not rename/split packages without an API-focused
+change proposal and dependency migration plan. STUDS can select CPU or GPU rendering; the GPU path
+uses the offscreen voxel renderer and `WindowFrame` readback bridge.
 
 ## Why it is not a rename
 
 The ECS engine is built around `engine_app::App`, plugins, and a staged schedule.
 The STUDS binary now uses that app and no longer calls
 `voxelworks_platform::run_with_mode` or implements the immediate-mode `App`/`Ctx`
-traits. The migration remains incremental: `Game` is retained as a compatibility/domain facade
-and new-run generator so existing API consumers and rendering fixtures need not change.
+traits. The compatibility-tree migration is complete, while gameplay decomposition remains incremental: `Game`
+is retained as a domain facade and new-run generator so existing API consumers and rendering fixtures need not change.
 The live runtime does not store `Game`; it installs the generated maze and run state as
 resources and player/enemy/pages as entities, advanced by dedicated systems. Settings,
 menu state, buffered input, and renderer state remain application/plugin resources. The GPU
 route is offscreen voxel raycasting plus readback, not native-surface or mesh rendering.
 
-Current direct legacy dependency use in `games/studs`:
+The following records the **pre-cleanup migration snapshot** and the destination of each former package. None of these `voxelworks-*` packages remains an active workspace member:
 
-| Legacy crate | Current role | Migration target |
+| Former package | Former responsibility | Current destination |
 | --- | --- | --- |
-| `voxelworks-core` | No direct STUDS dependency; retained transitively by legacy shim crates | `engine_math`, `plugin_voxel`, `plugin_physics`, `engine_platform::input`, `plugin_audio` |
-| `voxelworks-scene` | No direct STUDS dependency; current source uses `plugin_rendering` types | `plugin_rendering` scene/material/style types |
-| `voxelworks-render-cpu` | Dev-dependency for unchanged renderer/golden integration coverage and `realistic_bench` | `plugin_rendering` (`cpu` feature) |
-| `voxelworks-api` | No direct STUDS dependency or runtime use; legacy compatibility packages still use it | `engine_render` frame contracts and `engine_app` |
-| `voxelworks-platform` | Dev-dependency for existing audio decoding coverage; no runtime runner use | `engine_platform` + `App`/`Plugin` setup |
+| `voxelworks-core` | Shared math/voxel/input/time facade; audio and physics exports had been removed earlier | `engine_math`, `plugin_voxel`, `engine_platform`, `plugin_audio`, `plugin_physics` |
+| `voxelworks-scene` | Renderer-neutral scene/material/style data | `plugin_rendering` scene/material/style types |
+| `voxelworks-render-cpu` | CPU voxel raycasting, rasterization, and reference renderer | `plugin_rendering::cpu` (`cpu` feature) |
+| `voxelworks-api` | Immediate-mode app/frame/renderer contracts | `engine_app` and `engine_render` contracts |
+| `voxelworks-platform` | Legacy window runner and audio decode helper | `engine_platform` window runner and `plugin_audio::rodio_backend` |
 
 ## The former blocker: the GPU backend
 
@@ -47,15 +48,14 @@ and replacement by the mesh rasterizer remain separate renderer roadmap work.
 
 ## Steps
 
-Each step is its own PR and must leave CI green. Do not remove `games/studs`
-from the build while migrating.
+The migration plan is complete. The checklist below records the final state of each step.
 
 - [x] **1. Port the GPU voxel backend** into `plugin_rendering` (feature `gpu`).
   Done: the renderer, presenter, WGSL shaders and inline tests now live in
   `plugin_rendering::gpu::voxel` / `plugins/rendering/shaders/voxel/`. It
   implements the shared `engine_render::Renderer<MaterialTable>` contract, so
   the legacy `Renderer` trait still applies through its blanket impl.
-  `voxelworks-render-gpu` is now a re-export shim. Two deliberate choices: the
+  At this migration step `voxelworks-render-gpu` was temporarily a re-export shim; it was retired with the other legacy packages in step 7. Two deliberate choices: the
   code is moved, not rewritten (it keeps its own wgpu device instead of
   `engine_render::gpu::GpuContext`), because `RENDERER_PLAN.md` freezes this
   raymarcher and replaces it in phase 7; and the parity test stayed in the shim
@@ -95,17 +95,17 @@ from the build while migrating.
   `voxelworks-core` and names the new crates directly (`plugin_audio` with default
   features off, as before). Only imports changed, so no golden value moved.
   The `audio` and `physics` re-exports are deleted from `voxelworks-core` along
-  with their dependencies. `math`, `voxel`, `input` and `time` stay because the
-  legacy `api`, `platform` and `minimal` crates still use them; they go with those
-  crates in step 7.
+  with their dependencies. `math`, `voxel`, `input` and `time` stayed temporarily because the
+  legacy `api`, `platform` and `minimal` crates still used them at this stage; those
+  crates were removed in step 7.
 - [x] **5. Replace the runner.** `games/studs/src/main.rs` now builds an
   `engine_app::App` and registers `PlatformPlugin`, `ScenePlugin`,
   `RenderingPlugin`, `AudioPlugin`, and `StudsPlugin`. `voxelworks_platform::run_with_mode`,
   `RendererMode`, and the immediate-mode `App`/`Ctx` implementation are removed
   from the executable path. `engine_platform` presents a neutral `WindowFrame`
   through its softbuffer-backed winit runner; the game submits the selected CPU or
-  offscreen GPU voxel renderer output from `Stage::Render`. The old platform and
-  render-CPU shims are retained only as dev-dependencies for compatibility tests/examples.
+  offscreen GPU voxel renderer output from `Stage::Render`. At that migration stage, the old platform and
+  render-CPU shims were retained as dev-dependencies; step 7 subsequently removed these final edges.
 - [x] **6. Convert gameplay to ECS-owned state and systems.** `MazeResource` and
   `RunState` own world/run-level data; `Player`, `Enemy`, and each `PagePickup` are
   independent entities. `update_player`, `collect_pages`, `update_enemy`, and
@@ -118,22 +118,29 @@ from the build while migrating.
   GPU frames are still rendered offscreen and copied through `WindowFrame`; this
   is not native-surface GPU presentation and does not make the old voxel raymarcher
   the newer mesh renderer. `plugin_render3d` integration remains in the renderer plan.
-- [ ] **7. Delete `engine/`.** Move `engine/examples/minimal` to `examples/`
-  (rewritten on the ECS engine) or drop it. Remove the `[allowed.legacy]`
-  section from `tools/allowed_deps.toml`, `docs/SHIMS.md`, the `voxelworks-*`
-  references in `.github/workflows/ci.yml`, and `docs/LEGACY_ARCHITECTURE.md`.
-- [ ] **8. Naming pass.** With the legacy crates gone, decide whether
-  `plugin_rendering` should be split (data types vs CPU raycaster vs ECS bridge)
-  and renamed; its name is currently too close to `engine_render` and
-  `plugin_render3d`.
+- [x] **7. Delete `engine/`.** The old `engine/examples/minimal` immediate-mode sample was retired
+  rather than rewritten, avoiding a second long-lived application/window/rendering architecture.
+  Workspace members, active CI references and dependency allowlist entries were removed. Final STUDS
+  test/benchmark imports now reference `plugin_rendering::cpu`; audio decode coverage uses
+  `plugin_audio::rodio_backend` under the existing optional `audio` feature.
+- [x] **8. Naming pass.** Keep `engine_render` for shared frame/draw/render-graph contracts,
+  `plugin_rendering` for voxel scene/material data plus CPU/GPU voxel backends and the ECS bridge,
+  and `plugin_render3d` for native-surface mesh rendering. A split/rename is intentionally deferred
+  until there is a concrete public API boundary proposal; a mechanical rename now would add churn
+  without separating material ownership and backend responsibilities.
 
 ## Done when
 
+Expected closeout checks (run in CI or a Rust-enabled developer environment):
+
 ```sh
-cargo tree -i voxelworks-core        # error: package not found
 test ! -d engine
-python tools/check_deps.py           # passes with no [allowed.legacy] section
-cargo test --workspace && cargo test --workspace --no-default-features
+! cargo tree --workspace | grep -E 'voxelworks-(core|scene|api|render-cpu|render-gpu|platform|minimal)'
+python tools/check_deps.py
+cargo test --workspace
+cargo test --workspace --no-default-features
 ```
 
-and the STUDS golden tests pass with unchanged expected values.
+The migration did not alter or re-bless any STUDS golden constants. These commands are documented
+as required verification; this source-overlay environment does not contain Cargo, so their post-change
+results are not claimed here.

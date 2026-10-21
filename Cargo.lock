@@ -1107,6 +1107,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "horror_slice"
+version = "0.1.0"
+dependencies = [
+ "engine_app",
+ "engine_assets",
+ "engine_events",
+ "engine_platform",
+ "engine_plugins",
+ "engine_render",
+ "engine_scene",
+ "plugin_gltf",
+ "plugin_physics",
+ "plugin_render3d",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2059,8 +2077,10 @@ dependencies = [
  "engine_render",
  "engine_scene",
  "glam",
+ "naga",
  "plugin_gltf",
  "plugin_voxel",
+ "png",
  "pollster",
  "wgpu",
 ]
@@ -2613,8 +2633,6 @@ dependencies = [
  "plugin_render3d",
  "plugin_rendering",
  "plugin_voxel",
- "voxelworks-platform",
- "voxelworks-render-cpu",
 ]
 
 [[package]]
@@ -2924,79 +2942,6 @@ dependencies = [
  "plugin_rendering",
  "plugin_voxel",
  "ron",
-]
-
-[[package]]
-name = "voxelworks-api"
-version = "0.1.0"
-dependencies = [
- "engine_platform",
- "engine_render",
- "voxelworks-core",
- "voxelworks-scene",
-]
-
-[[package]]
-name = "voxelworks-core"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_math",
- "engine_platform",
- "plugin_voxel",
-]
-
-[[package]]
-name = "voxelworks-minimal"
-version = "0.1.0"
-dependencies = [
- "voxelworks-api",
- "voxelworks-core",
- "voxelworks-platform",
- "voxelworks-render-cpu",
- "voxelworks-render-gpu",
- "voxelworks-scene",
-]
-
-[[package]]
-name = "voxelworks-platform"
-version = "0.1.0"
-dependencies = [
- "engine_platform",
- "engine_render",
- "plugin_audio",
- "softbuffer",
- "voxelworks-api",
- "voxelworks-core",
- "voxelworks-render-cpu",
- "voxelworks-render-gpu",
- "voxelworks-scene",
- "winit",
-]
-
-[[package]]
-name = "voxelworks-render-cpu"
-version = "0.1.0"
-dependencies = [
- "plugin_rendering",
- "rayon",
- "voxelworks-api",
- "voxelworks-core",
- "voxelworks-scene",
-]
-
-[[package]]
-name = "voxelworks-render-gpu"
-version = "0.1.0"
-dependencies = [
- "plugin_rendering",
-]
-
-[[package]]
-name = "voxelworks-scene"
-version = "0.1.0"
-dependencies = [
- "plugin_rendering",
 ]
 
 [[package]]

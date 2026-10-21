@@ -1,5 +1,6 @@
 use engine_math::Rng;
 use engine_render::Framebuffer;
+use plugin_rendering::cpu::render::render_with_materials;
 use studs::config::DEFAULT_HFOV;
 use studs::entities::WARDEN;
 use studs::game::{Game, State};
@@ -7,7 +8,6 @@ use studs::input::{Controls, InputFrame};
 use studs::settings::Settings;
 use studs::surfaces::studs_material_table;
 use studs::world::World;
-use voxelworks_render_cpu::render::render_with_materials;
 
 fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
     bytes.into_iter().fold(0xcbf29ce484222325, |hash, byte| {
@@ -49,7 +49,7 @@ fn simulation_fingerprint(game: &Game) -> u64 {
 fn golden_render_world_simulation_and_settings() {
     let game = Game::new(42);
     let mut framebuffer = Framebuffer::new(160, 90);
-    // Golden output is intentionally pinned to the legacy renderer path.
+    // Golden output is intentionally pinned to the canonical CPU reference renderer.
     game.draw_styled(
         &mut framebuffer,
         137,
@@ -189,7 +189,7 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
         .iter()
         .find(|entity| entity.kind == WARDEN)
         .unwrap();
-    let sprite_hit = voxelworks_render_cpu::render::entities::SpriteView::new(
+    let sprite_hit = plugin_rendering::cpu::render::entities::SpriteView::new(
         *warden,
         scene.entity_registry.get(warden.kind).unwrap(),
         scene.camera.eye,

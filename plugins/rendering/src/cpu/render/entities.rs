@@ -137,8 +137,12 @@ impl SpriteView {
             return None;
         }
         let wrapped = self.camera_angle.rem_euclid(std::f32::consts::TAU);
-        let view =
-            (wrapped / std::f32::consts::TAU * atlas.views as f32).floor() as usize % atlas.views;
+        // Camera angles that land exactly on an atlas boundary can differ by a few
+        // f32 ulps across targets (for example, atan2(0, -1) around PI). Bias by a
+        // tiny fraction of one view so the same boundary selects the same cell.
+        let view = ((wrapped / std::f32::consts::TAU * atlas.views as f32) + 1.0e-5).floor()
+            as usize
+            % atlas.views;
         let state = self.instance.params[1]
             .round()
             .clamp(0.0, (atlas.states - 1) as f32) as usize;

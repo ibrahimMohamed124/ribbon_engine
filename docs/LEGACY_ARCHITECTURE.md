@@ -1,13 +1,9 @@
-# Legacy architecture (`voxelworks-*`, under `engine/`)
+> **Historical archive.** The `voxelworks-*` packages and `engine/crates/` paths described below
+> belonged to the pre-Phase-9 workspace and have been removed. This file preserves old renderer
+> measurements and migration context only; do not copy its package paths, build commands, or dependency
+> descriptions into new code. The supported architecture is documented in [`ARCHITECTURE.md`](../ARCHITECTURE.md).
 
-> **Deprecated.** This describes the original engine crates in `engine/crates/`.
-> New work goes into the ECS engine described in [`ARCHITECTURE.md`](../ARCHITECTURE.md).
-> The STUDS runtime now uses the ECS app/platform/plugin path. Legacy crates
-> remain for compatibility dev-dependencies and other legacy packages; see
-> [`PHASE9.md`](PHASE9.md) for the removal plan and [`SHIMS.md`](SHIMS.md) for
-> the remaining compatibility re-exports.
-> The CPU/GPU parity results below are still the reference measurements for the
-> legacy renderers and must be reproduced by their replacements.
+# Legacy architecture (pre-Phase 9)
 
 ## Dependency layers
 

@@ -1,4 +1,4 @@
-# Allowed direct dependency edges. Legacy tables are removed as crates migrate.
+# Explicit allowed direct dependency edges for every workspace package. Wildcard allowances are forbidden.
 [allowed]
 
 [allowed."engine_math"]
@@ -91,11 +91,15 @@ external = []
 
 [allowed."plugin_render3d"]
 workspace = ["engine_app", "engine_assets", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_voxel"]
-external = ["bytemuck", "glam", "wgpu", "pollster"]
+external = ["bytemuck", "glam", "wgpu", "pollster", "naga", "png"]
 
 [allowed."plugin_gltf"]
 workspace = ["engine_assets"]
 external = ["glam", "gltf"]
+
+[allowed."horror_slice"]
+workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_physics", "plugin_render3d"]
+external = ["ron", "serde"]
 
 [allowed."model_viewer"]
 workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_render3d"]
@@ -121,42 +125,10 @@ external = []
 workspace = ["engine_app", "engine_ecs", "engine_editor", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_rendering", "plugin_editor_tools"]
 external = []
 
-[allowed.legacy]
-
-[allowed.legacy."voxelworks-core"]
-workspace = ["engine_app", "engine_math", "engine_platform", "plugin_voxel"]
-external = []
-
-[allowed.legacy."voxelworks-scene"]
-workspace = ["plugin_rendering"]
-external = []
-
-[allowed.legacy."voxelworks-api"]
-workspace = ["engine_platform", "engine_render", "voxelworks-core", "voxelworks-scene"]
-external = []
-
-[allowed.legacy."voxelworks-render-cpu"]
-workspace = ["plugin_rendering", "voxelworks-api", "voxelworks-core", "voxelworks-scene"]
-external = ["rayon"]
-
-[allowed.legacy."voxelworks-render-gpu"]
-workspace = ["plugin_rendering"]
-external = []
-
-[allowed.legacy."voxelworks-platform"]
-workspace = ["engine_platform", "engine_render", "plugin_audio", "voxelworks-api", "voxelworks-core", "voxelworks-render-cpu", "voxelworks-render-gpu", "voxelworks-scene"]
-external = ["softbuffer", "winit"]
-
-[allowed.legacy."voxelworks-minimal"]
-workspace = ["voxelworks-api", "voxelworks-core", "voxelworks-platform", "voxelworks-render-cpu", "voxelworks-render-gpu", "voxelworks-scene"]
-external = []
-
-# STUDS runtime now uses the ECS runner; legacy crates remain dev-dependencies
-# for existing compatibility tests/examples until Phase 9 steps 6-7 are completed.
-[allowed.legacy."studs"]
-workspace = ["engine_app", "engine_events", "engine_math", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_audio", "plugin_physics", "plugin_render3d", "plugin_rendering", "plugin_voxel", "voxelworks-platform", "voxelworks-render-cpu"]
+[allowed."studs"]
+workspace = ["engine_app", "engine_events", "engine_math", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_audio", "plugin_physics", "plugin_render3d", "plugin_rendering", "plugin_voxel"]
 external = ["image"]
 
-[allowed.legacy."studs-bake-sprites"]
+[allowed."studs-bake-sprites"]
 workspace = []
 external = ["image", "ufbx"]

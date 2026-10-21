@@ -7,11 +7,14 @@ frame-pass / `RenderGraph` path.
 ## Current path
 
 - Instanced indexed mesh rendering with a depth buffer.
-- ECS extraction for camera, built-in mesh, glTF model, voxel mesh, and sun data.
+- ECS extraction for camera, built-in mesh, glTF model, voxel mesh, directional/spot/point lights, and fog settings.
 - Cook-Torrance/GGX metallic-roughness shading with base-color factors/textures
   and glTF packed metallic-roughness textures.
 - Linear HDR scene target (`Rgba16Float`) and fullscreen Reinhard tone mapping.
-- A single directional depth shadow map.
+- A directional depth shadow map plus one perspective shadow map for the first shadow-casting spotlight; both use 3x3 PCF and depth bias.
+- Up to eight non-shadowed point lights.
+- glTF base-color, metallic-roughness, tangent-space normal, occlusion and emissive maps.
+- Exponential height/distance fog and a quarter-resolution bright-pass bloom contribution before tone mapping.
 - Conservative CPU camera-frustum culling for the color pass; objects not in the
   camera view remain in the shadow pass list.
 - Cached immutable voxel-mesh GPU uploads keyed by retained `Arc` ownership, with eviction
@@ -19,9 +22,6 @@ frame-pass / `RenderGraph` path.
 - `OffscreenVoxelRenderer`, a backend-neutral framebuffer bridge that incrementally consumes
   `ChunkedVoxelWorld` updates, uploads/releases GPU chunk meshes, renders through the same PBR/
   HDR/depth/shadow pipeline, and returns engine framebuffer pixels for existing presenters.
-- `VoxelBlockMaterial`, an application-provided per-block descriptor for a linear tint, roughness,
-  metallic factor and optional sRGB albedo data. GPU texture/material upload is cached by block ID;
-  games choose assets and tint, while the engine owns sampling and GPU lifetime.
 
 ## Dynamic voxel use
 
@@ -34,7 +34,7 @@ The offscreen output is tone-mapped and converted to sRGB before readback into
 `engine_render::Framebuffer`. `GpuContext`/adapter initialization can fail on a target without
 a usable GPU adapter, so callers should retain a fallback renderer.
 
-This adapter exists for applications such as STUDS that still present through
+This adapter exists for applications that still present through
 `WindowFrame`. Applications using `GpuWindowPlugin` can continue to use the native-surface
 `Render3dPlugin` and `VoxelMeshInstance3D` ECS components directly.
 
@@ -49,13 +49,13 @@ show these paths in context.
 
 ## Limitations
 
-This is an intentionally focused first PBR implementation, not a complete
-production renderer. It does not yet support normal/occlusion/emissive maps,
-alpha blend/mask modes, cascaded or point/spot shadows, soft multi-tap PCF,
-IBL, bloom, AO, fog, GPU-driven culling, skinned meshes, external glTF resource
-resolution, or native-surface presentation through the `WindowFrame` adapter. STUDS' GPU route now uses
-`OffscreenVoxelRenderer`; its CPU reference backend and the old `plugin_rendering` raycaster
-source remain available during rollout. Manual GPU gameplay smoke checks must pass before
-that compatibility implementation is removed. See
+This is an intentionally focused PBR implementation, not a complete production
+renderer. It does not yet support alpha blend/mask modes, multiple shadow-casting
+spotlights, cascaded shadows, image-based lighting, screen-space ambient occlusion,
+GPU-driven culling, skinned meshes, or external glTF resource resolution. The
+spotlight-shadow and bloom implementations still need validation across a range of
+Windows GPU adapters; a headless spot-lit corridor test writes `target/spotlight_corridor.png`
+when an adapter is available. Applications can use `OffscreenVoxelRenderer` for offscreen
+voxel rendering; `plugin_rendering` also retains its CPU and GPU voxel raycasters. See
 [`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md) and
 [`../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md`](../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md).

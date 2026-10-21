@@ -1,6 +1,6 @@
 //! wgpu pipeline that draws instanced, textured meshes with a depth buffer.
 
-use crate::components::SunLight;
+use crate::components::{FogSettings, PointLight, SpotLight, SunLight};
 use crate::mesh::{self, Vertex};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
@@ -41,6 +41,16 @@ pub struct PbrMaterialDesc<'a> {
     pub base_color_texture: Option<TextureData<'a>>,
     /// Optional linear glTF metallic-roughness texture (G=roughness, B=metallic).
     pub metallic_roughness_texture: Option<TextureData<'a>>,
+    /// Optional tangent-space normal texture (linear RGB).
+    pub normal_texture: Option<TextureData<'a>>,
+    /// Optional red-channel ambient occlusion texture (linear).
+    pub occlusion_texture: Option<TextureData<'a>>,
+    /// Multiplier for the occlusion texture (0..=1).
+    pub occlusion_strength: f32,
+    /// Optional emissive texture, sampled in sRGB.
+    pub emissive_texture: Option<TextureData<'a>>,
+    /// Linear emissive color factor.
+    pub emissive_factor: [f32; 3],
 }
 
 /// One object to draw.
@@ -64,6 +74,12 @@ pub struct Scene<'a> {
     pub camera_position: Vec3,
     /// Directional light and ambient term.
     pub sun: &'a SunLight,
+    /// World-space spot lights. The renderer uses at most one shadow-casting light.
+    pub spot_lights: &'a [SpotLight],
+    /// Non-shadowed point lights; only the first eight are consumed.
+    pub point_lights: &'a [PointLight],
+    /// Exponential height/distance fog.
+    pub fog: FogSettings,
     /// Objects to draw.
     pub draws: &'a [Draw],
 }
@@ -80,10 +96,20 @@ struct RawInstance {
 struct Globals {
     view_proj: [[f32; 4]; 4],
     light_view_proj: [[f32; 4]; 4],
+    spot_view_proj: [[f32; 4]; 4],
     sun_dir: [f32; 4],
     sun_color: [f32; 4],
     ambient: [f32; 4],
     camera_pos: [f32; 4],
+    spot_position_range: [f32; 4],
+    spot_direction_outer: [f32; 4],
+    spot_color_intensity: [f32; 4],
+    spot_params: [f32; 4],
+    point_positions_range: [[f32; 4]; 8],
+    point_colors_intensity: [[f32; 4]; 8],
+    point_count: [f32; 4],
+    fog_color_density: [f32; 4],
+    fog_params: [f32; 4],
 }
 
 #[repr(C)]
@@ -96,8 +122,9 @@ struct ShadowGlobals {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct MaterialUniform {
     base_color: [f32; 4],
-    /// x: metallic, y: perceptual roughness, remaining channels reserved.
+    /// x: metallic, y: perceptual roughness, z: AO strength.
     surface: [f32; 4],
+    emissive: [f32; 4],
 }
 
 struct DepthTarget {
@@ -124,17 +151,24 @@ struct GpuMaterial {
     _uniform: wgpu::Buffer,
     _texture: wgpu::Texture,
     _metallic_roughness_texture: wgpu::Texture,
+    _normal_texture: wgpu::Texture,
+    _occlusion_texture: wgpu::Texture,
+    _emissive_texture: wgpu::Texture,
 }
 
 /// Owns the pipeline, uploaded meshes and materials, and the depth target.
 pub struct MeshRenderer {
     pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
+    spot_shadow_pipeline: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
     globals_group: wgpu::BindGroup,
     shadow_globals: wgpu::Buffer,
     shadow_globals_group: wgpu::BindGroup,
+    spot_shadow_globals: wgpu::Buffer,
+    spot_shadow_globals_group: wgpu::BindGroup,
     shadow_target: ShadowTarget,
+    spot_shadow_target: ShadowTarget,
     _shadow_sampler: wgpu::Sampler,
     material_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -329,6 +363,32 @@ fn sphere_visible(planes: &[Vec4; 6], center: Vec3, radius: f32) -> bool {
         .all(|plane| plane.truncate().dot(center) + plane.w >= -radius)
 }
 
+fn pack_point_lights(lights: &[PointLight]) -> ([[f32; 4]; 8], [[f32; 4]; 8]) {
+    let mut positions_range = [[0.0; 4]; 8];
+    let mut colors_intensity = [[0.0; 4]; 8];
+    for (index, light) in lights.iter().take(8).enumerate() {
+        positions_range[index] = [
+            light.position.x,
+            light.position.y,
+            light.position.z,
+            light.range.max(0.0),
+        ];
+        colors_intensity[index] = [
+            light.color.x,
+            light.color.y,
+            light.color.z,
+            light.intensity.max(0.0),
+        ];
+    }
+    (positions_range, colors_intensity)
+}
+
+fn select_spot_lights(lights: &[SpotLight]) -> (Option<SpotLight>, Option<SpotLight>) {
+    let shadow = lights.iter().copied().find(|light| light.casts_shadows);
+    let active = shadow.or_else(|| lights.first().copied());
+    (active, shadow)
+}
+
 fn valid_texture<'a>(texture: Option<TextureData<'a>>, fallback: &'a [u8; 4]) -> TextureData<'a> {
     match texture {
         Some(texture)
@@ -379,6 +439,22 @@ impl MeshRenderer {
             view_formats: &[],
         });
         let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let spot_shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("spotlight perspective shadow map"),
+            size: wgpu::Extent3d {
+                width: shadow_size,
+                height: shadow_size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let spot_shadow_view =
+            spot_shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("directional shadow comparison sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -393,6 +469,10 @@ impl MeshRenderer {
         let shadow_target = ShadowTarget {
             _texture: shadow_texture,
             view: shadow_view,
+        };
+        let spot_shadow_target = ShadowTarget {
+            _texture: spot_shadow_texture,
+            view: spot_shadow_view,
         };
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mesh globals layout"),
@@ -419,6 +499,22 @@ impl MeshRenderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
@@ -478,6 +574,36 @@ impl MeshRenderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -527,6 +653,48 @@ impl MeshRenderer {
                     slope_scale: 2.0,
                     clamp: 0.0,
                 },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: None,
+            multiview: None,
+            cache: None,
+        });
+        // A spotlight commonly sits inside closed room geometry. Render both
+        // sides into its depth map so inward-facing corridor surfaces still write
+        // depth when viewed from inside the room. Keep the directional pipeline's
+        // back-face culling and its tuned bias independent.
+        let spot_shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("spotlight shadow pipeline"),
+            layout: Some(&shadow_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shadow_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &VERTEX_ATTRIBUTES,
+                    },
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<RawInstance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &INSTANCE_ATTRIBUTES,
+                    },
+                ],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..wgpu::PrimitiveState::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
             fragment: None,
@@ -602,6 +770,14 @@ impl MeshRenderer {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&shadow_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&spot_shadow_target.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
             ],
         });
         let shadow_globals = device.create_buffer(&wgpu::BufferDescriptor {
@@ -618,6 +794,20 @@ impl MeshRenderer {
                 resource: shadow_globals.as_entire_binding(),
             }],
         });
+        let spot_shadow_globals = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("spotlight shadow globals"),
+            size: std::mem::size_of::<ShadowGlobals>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let spot_shadow_globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("spotlight shadow globals bind group"),
+            layout: &shadow_globals_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: spot_shadow_globals.as_entire_binding(),
+            }],
+        });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("mesh sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -632,11 +822,15 @@ impl MeshRenderer {
         let mut renderer = Self {
             pipeline,
             shadow_pipeline,
+            spot_shadow_pipeline,
             globals,
             globals_group,
             shadow_globals,
             shadow_globals_group,
+            spot_shadow_globals,
+            spot_shadow_globals_group,
             shadow_target,
+            spot_shadow_target,
             _shadow_sampler: shadow_sampler,
             material_layout,
             sampler,
@@ -753,6 +947,11 @@ impl MeshRenderer {
                 roughness,
                 base_color_texture: texture,
                 metallic_roughness_texture: None,
+                normal_texture: None,
+                occlusion_texture: None,
+                occlusion_strength: 1.0,
+                emissive_texture: None,
+                emissive_factor: [0.0; 3],
             },
         )
     }
@@ -770,6 +969,11 @@ impl MeshRenderer {
             roughness,
             base_color_texture,
             metallic_roughness_texture,
+            normal_texture,
+            occlusion_texture,
+            occlusion_strength,
+            emissive_texture,
+            emissive_factor,
         } = material;
         let white = [255_u8; 4];
         let base_source = valid_texture(base_color_texture, &white);
@@ -784,13 +988,42 @@ impl MeshRenderer {
             "material metallic roughness map",
             false,
         );
+        let flat_normal = [128_u8, 128, 255, 255];
+        let white_occlusion = [255_u8; 4];
+        // With no emissive map, white leaves the glTF emissiveFactor unmodified.
+        let white_emissive = [255_u8; 4];
+        let normal_source = valid_texture(normal_texture, &flat_normal);
+        let occlusion_source = valid_texture(occlusion_texture, &white_occlusion);
+        let emissive_source = valid_texture(emissive_texture, &white_emissive);
+        let (normal_gpu_texture, normal_view) =
+            upload_rgba_texture(device, queue, normal_source, "material normal map", false);
+        let (occlusion_gpu_texture, occlusion_view) = upload_rgba_texture(
+            device,
+            queue,
+            occlusion_source,
+            "material ambient occlusion map",
+            false,
+        );
+        let (emissive_gpu_texture, emissive_view) = upload_rgba_texture(
+            device,
+            queue,
+            emissive_source,
+            "material emissive map",
+            true,
+        );
         let factors = MaterialUniform {
             base_color,
             surface: [
                 metallic.clamp(0.0, 1.0),
                 roughness.clamp(0.04, 1.0),
+                occlusion_strength.clamp(0.0, 1.0),
                 0.0,
-                0.0,
+            ],
+            emissive: [
+                emissive_factor[0].max(0.0),
+                emissive_factor[1].max(0.0),
+                emissive_factor[2].max(0.0),
+                1.0,
             ],
         };
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -818,6 +1051,18 @@ impl MeshRenderer {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&surface_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&occlusion_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&emissive_view),
+                },
             ],
         });
         self.materials.push(GpuMaterial {
@@ -825,6 +1070,9 @@ impl MeshRenderer {
             _uniform: uniform,
             _texture: gpu_texture,
             _metallic_roughness_texture: surface_texture,
+            _normal_texture: normal_gpu_texture,
+            _occlusion_texture: occlusion_gpu_texture,
+            _emissive_texture: emissive_gpu_texture,
         });
         MaterialId(self.materials.len() - 1)
     }
@@ -871,8 +1119,25 @@ impl MeshRenderer {
             * Mat4::look_at_rh(eye, focus, up)
     }
 
-    /// Draw `scene` over the existing contents of `view`. The directional shadow map
-    /// is rendered first, then sampled by the physically based forward material pass.
+    fn spot_shadow_matrix(light: SpotLight) -> Mat4 {
+        let direction = light.direction.normalize_or_zero();
+        let direction = if direction.length_squared() > 0.5 {
+            direction
+        } else {
+            Vec3::NEG_Z
+        };
+        let up = if direction.dot(Vec3::Y).abs() > 0.95 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        let half_angle = light.outer_cone_angle.clamp(0.05, 1.48);
+        Mat4::perspective_rh(half_angle * 2.0, 1.0, 0.05, light.range.max(0.1))
+            * Mat4::look_at_rh(light.position, light.position + direction, up)
+    }
+
+    /// Draw `scene` over the existing contents of `view`. Directional and (optional)
+    /// spotlight shadow maps are rendered before the PBR color pass.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -940,24 +1205,82 @@ impl MeshRenderer {
         queue.write_buffer(&self.shadow_instances, 0, bytemuck::cast_slice(&shadow_raw));
         queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&visible_raw));
         let light_view_proj = Self::directional_shadow_matrix(scene);
+        let (active_spot, shadow_spot) = select_spot_lights(scene.spot_lights);
+        let spot_view_proj = shadow_spot
+            .map(Self::spot_shadow_matrix)
+            .unwrap_or(Mat4::IDENTITY);
+        let (point_positions_range, point_colors_intensity) = pack_point_lights(scene.point_lights);
+        let spot = active_spot.unwrap_or_default();
         let globals = Globals {
             view_proj: scene.view_proj.to_cols_array_2d(),
             light_view_proj: light_view_proj.to_cols_array_2d(),
+            spot_view_proj: spot_view_proj.to_cols_array_2d(),
             sun_dir: scene
                 .sun
                 .direction
                 .normalize_or_zero()
                 .extend(0.0)
                 .to_array(),
-            sun_color: scene.sun.color.extend(1.0).to_array(),
-            ambient: scene.sun.ambient.extend(1.0).to_array(),
+            sun_color: scene.sun.color.max(Vec3::ZERO).extend(1.0).to_array(),
+            ambient: scene.sun.ambient.max(Vec3::ZERO).extend(1.0).to_array(),
             camera_pos: scene.camera_position.extend(1.0).to_array(),
+            spot_position_range: [
+                spot.position.x,
+                spot.position.y,
+                spot.position.z,
+                spot.range.max(0.0),
+            ],
+            spot_direction_outer: [
+                spot.direction.normalize_or_zero().x,
+                spot.direction.normalize_or_zero().y,
+                spot.direction.normalize_or_zero().z,
+                spot.outer_cone_angle.clamp(0.01, 1.55).cos(),
+            ],
+            spot_color_intensity: [
+                spot.color.x,
+                spot.color.y,
+                spot.color.z,
+                spot.intensity.max(0.0),
+            ],
+            spot_params: [
+                spot.inner_cone_angle
+                    .clamp(0.0, spot.outer_cone_angle)
+                    .cos(),
+                if shadow_spot.is_some() { 1.0 } else { 0.0 },
+                if active_spot.is_some() { 1.0 } else { 0.0 },
+                0.0,
+            ],
+            point_positions_range,
+            point_colors_intensity,
+            point_count: [scene.point_lights.len().min(8) as f32, 0.0, 0.0, 0.0],
+            fog_color_density: [
+                scene.fog.color.x,
+                scene.fog.color.y,
+                scene.fog.color.z,
+                scene.fog.density.max(0.0),
+            ],
+            fog_params: [
+                scene.fog.base_height,
+                scene.fog.height_falloff.max(0.0),
+                0.0,
+                0.0,
+            ],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let shadow_globals = ShadowGlobals {
             light_view_proj: light_view_proj.to_cols_array_2d(),
         };
         queue.write_buffer(&self.shadow_globals, 0, bytemuck::bytes_of(&shadow_globals));
+        if let Some(light) = shadow_spot {
+            let spot_globals = ShadowGlobals {
+                light_view_proj: Self::spot_shadow_matrix(light).to_cols_array_2d(),
+            };
+            queue.write_buffer(
+                &self.spot_shadow_globals,
+                0,
+                bytemuck::bytes_of(&spot_globals),
+            );
+        }
         let Some(depth) = self.depth.as_ref() else {
             return;
         };
@@ -993,6 +1316,41 @@ impl MeshRenderer {
                 let mesh = self.meshes[mesh_id.0]
                     .as_ref()
                     .expect("draw list was validated before recording the shadow pass");
+                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
+                start = end;
+            }
+        }
+        if shadow_spot.is_some() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("spotlight perspective shadow map"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.spot_shadow_target.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.spot_shadow_pipeline);
+            pass.set_bind_group(0, &self.spot_shadow_globals_group, &[]);
+            pass.set_vertex_buffer(1, self.shadow_instances.slice(..));
+            let mut start = 0;
+            while start < draws.len() {
+                let mesh_id = draws[start].mesh;
+                let end = start
+                    + draws[start..]
+                        .iter()
+                        .take_while(|draw| draw.mesh == mesh_id)
+                        .count();
+                let mesh = self.meshes[mesh_id.0]
+                    .as_ref()
+                    .expect("draw list was validated before recording spotlight shadows");
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
@@ -1048,11 +1406,15 @@ impl MeshRenderer {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_mips, Draw, MeshRenderer, Scene, TextureData};
-    use crate::components::{Camera3D, SunLight, Transform3D};
+    use super::{
+        build_mips, pack_point_lights, select_spot_lights, Draw, MeshRenderer, Scene, TextureData,
+    };
+    use crate::components::{Camera3D, FogSettings, PointLight, SpotLight, SunLight, Transform3D};
     use engine_render::gpu::GpuContext;
     use engine_render::gpu_window::clear_view;
     use glam::{Mat4, Vec3};
+    use std::fs::File;
+    use std::path::PathBuf;
 
     const SIZE: u32 = 64;
 
@@ -1096,6 +1458,9 @@ mod tests {
                     view_proj: Camera3D::default().projection(1.0) * view,
                     camera_position: eye.translation,
                     sun: &SunLight::default(),
+                    spot_lights: &[],
+                    point_lights: &[],
+                    fog: FogSettings::default(),
                     draws,
                 },
             );
@@ -1115,6 +1480,70 @@ mod tests {
             model,
             tint,
         }
+    }
+
+    #[test]
+    fn lighting_post_and_shadow_wgsl_shaders_validate_without_a_gpu_adapter() {
+        let shaders = [
+            include_str!("../shaders/mesh.wgsl"),
+            include_str!("../shaders/shadow.wgsl"),
+            include_str!("../shaders/bloom.wgsl"),
+            include_str!("../shaders/tonemap.wgsl"),
+            include_str!("../shaders/tonemap_unorm.wgsl"),
+        ];
+        for (index, source) in shaders.iter().enumerate() {
+            let module = naga::front::wgsl::parse_str(source)
+                .unwrap_or_else(|error| panic!("WGSL shader {index} failed to parse: {error:?}"));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|error| panic!("WGSL shader {index} failed validation: {error:?}"));
+        }
+    }
+
+    #[test]
+    fn spotlight_selection_prefers_the_shadow_casting_light() {
+        let non_shadow = SpotLight {
+            position: Vec3::new(1.0, 2.0, 3.0),
+            casts_shadows: false,
+            ..SpotLight::default()
+        };
+        let shadow = SpotLight {
+            position: Vec3::new(4.0, 5.0, 6.0),
+            casts_shadows: true,
+            ..SpotLight::default()
+        };
+        let (active, caster) = select_spot_lights(&[non_shadow, shadow]);
+        assert_eq!(active, Some(shadow));
+        assert_eq!(caster, Some(shadow));
+        let (active, caster) = select_spot_lights(&[non_shadow]);
+        assert_eq!(active, Some(non_shadow));
+        assert_eq!(caster, None);
+    }
+
+    #[test]
+    fn point_light_packing_caps_at_eight_and_clamps_negative_ranges() {
+        let lights: Vec<_> = (0..10)
+            .map(|index| PointLight {
+                position: Vec3::new(index as f32, 2.0, 3.0),
+                color: Vec3::new(0.1 * index as f32, 0.25, 0.75),
+                intensity: if index == 3 { -4.0 } else { index as f32 },
+                range: if index == 4 {
+                    -2.0
+                } else {
+                    10.0 + index as f32
+                },
+            })
+            .collect();
+        let (positions, colors) = pack_point_lights(&lights);
+        assert_eq!(positions.len(), 8);
+        assert_eq!(positions[0], [0.0, 2.0, 3.0, 10.0]);
+        assert_eq!(positions[4][3], 0.0);
+        assert_eq!(positions[7][0], 7.0);
+        assert_eq!(colors[3][3], 0.0);
+        assert_eq!(colors[7][3], 7.0);
     }
 
     #[test]
@@ -1201,6 +1630,197 @@ mod tests {
             colors.len() >= 3,
             "texture should produce several colors, saw {}",
             colors.len()
+        );
+    }
+
+    #[test]
+    fn spotlight_only_corridor_writes_a_headless_png() {
+        const WIDTH: u32 = 160;
+        const HEIGHT: u32 = 90;
+        let context = match pollster::block_on(GpuContext::new_offscreen(WIDTH, HEIGHT)) {
+            Ok(context) => context,
+            Err(error) => {
+                eprintln!(
+                    "skipping spotlight screenshot test: no usable GPU adapter/device: {}",
+                    error.0
+                );
+                return;
+            }
+        };
+        let (device, queue) = (context.device(), context.queue());
+        let mut renderer = MeshRenderer::new(device, queue, wgpu::TextureFormat::Rgba8Unorm);
+        let cube_model = |position: Vec3, scale: Vec3| {
+            Mat4::from_scale_rotation_translation(scale, glam::Quat::IDENTITY, position)
+        };
+        let draws = [
+            cube(
+                cube_model(Vec3::new(0.0, -0.12, -0.6), Vec3::new(8.0, 0.24, 14.0)),
+                [0.66, 0.69, 0.65],
+            ),
+            cube(
+                cube_model(Vec3::new(-3.9, 1.5, -0.6), Vec3::new(0.2, 3.0, 14.0)),
+                [0.34, 0.40, 0.35],
+            ),
+            cube(
+                cube_model(Vec3::new(3.9, 1.5, -0.6), Vec3::new(0.2, 3.0, 14.0)),
+                [0.34, 0.40, 0.35],
+            ),
+            cube(
+                cube_model(Vec3::new(0.0, 1.5, -7.3), Vec3::new(8.0, 3.0, 0.2)),
+                [0.30, 0.35, 0.31],
+            ),
+            cube(
+                // Move the occluder off the camera centerline so its floor shadow
+                // remains visible instead of being hidden behind the blocking cube.
+                cube_model(Vec3::new(-1.2, 0.75, -2.0), Vec3::new(1.1, 1.5, 0.9)),
+                [0.08, 0.10, 0.08],
+            ),
+        ];
+        let camera = Transform3D::looking_at(
+            Vec3::new(0.0, 2.05, 4.2),
+            Vec3::new(0.0, 0.65, -2.3),
+            Vec3::Y,
+        );
+        let view = Mat4::from_rotation_translation(camera.rotation, camera.translation).inverse();
+        let spotlight = SpotLight {
+            // Place the test light close enough to the central blocker that its
+            // floor shadow receives enough linear-light energy to survive RGBA8
+            // quantization in this headless regression target.
+            position: Vec3::new(0.0, 2.0, 1.5),
+            // Aim the cone through the off-center blocker so its floor shadow is
+            // illuminated strongly enough to be measured by the regression test.
+            direction: Vec3::new(-0.31, -0.32, -0.91).normalize(),
+            color: Vec3::new(0.82, 0.93, 0.80),
+            // Keep the offscreen test signal above RGBA8 quantization and cover
+            // the visible floor-shadow region on the side of the occluder.
+            intensity: 320.0,
+            range: 13.0,
+            inner_cone_angle: 16.0_f32.to_radians(),
+            outer_cone_angle: 32.0_f32.to_radians(),
+            casts_shadows: true,
+        };
+        let render_corridor = |renderer: &mut MeshRenderer, spot: SpotLight| {
+            clear_view(
+                device,
+                queue,
+                context.target().view(),
+                [0.002, 0.003, 0.003, 1.0],
+            );
+            renderer.render(
+                device,
+                queue,
+                context.target().view(),
+                (WIDTH, HEIGHT),
+                &Scene {
+                    view_proj: Camera3D {
+                        fov_y: 70.0_f32.to_radians(),
+                        near: 0.05,
+                        far: 24.0,
+                    }
+                    .projection(WIDTH as f32 / HEIGHT as f32)
+                        * view,
+                    camera_position: camera.translation,
+                    sun: &SunLight {
+                        direction: Vec3::NEG_Y,
+                        color: Vec3::ZERO,
+                        ambient: Vec3::splat(0.0005),
+                    },
+                    spot_lights: std::slice::from_ref(&spot),
+                    point_lights: &[],
+                    fog: FogSettings {
+                        color: Vec3::new(0.015, 0.023, 0.020),
+                        density: 0.035,
+                        base_height: 0.0,
+                        height_falloff: 0.08,
+                    },
+                    draws: &draws,
+                },
+            );
+            context
+                .readback()
+                .expect("read back spotlight corridor")
+                .pixels
+        };
+        let framebuffer_pixels = render_corridor(&mut renderer, spotlight);
+        // A second frame with the exact same light and geometry but disabled shadows
+        // makes this a regression check for the shadow map, not merely a dark-corner check.
+        let unshadowed_pixels = render_corridor(
+            &mut renderer,
+            SpotLight {
+                casts_shadows: false,
+                ..spotlight
+            },
+        );
+        let mut shadow_changed_pixels = 0usize;
+        let mut shadow_difference_energy = 0_u64;
+        for (shadowed, unshadowed) in framebuffer_pixels.iter().zip(&unshadowed_pixels) {
+            let shadowed = *shadowed;
+            let unshadowed = *unshadowed;
+            let shadowed_rgb = (
+                (shadowed >> 16) & 0xff,
+                (shadowed >> 8) & 0xff,
+                shadowed & 0xff,
+            );
+            let unshadowed_rgb = (
+                (unshadowed >> 16) & 0xff,
+                (unshadowed >> 8) & 0xff,
+                unshadowed & 0xff,
+            );
+            let difference = shadowed_rgb.0.abs_diff(unshadowed_rgb.0)
+                + shadowed_rgb.1.abs_diff(unshadowed_rgb.1)
+                + shadowed_rgb.2.abs_diff(unshadowed_rgb.2);
+            shadow_difference_energy += u64::from(difference);
+            if difference > 12 {
+                shadow_changed_pixels += 1;
+            }
+        }
+        let mut bright_pixels = 0usize;
+        let mut dark_pixels = 0usize;
+        let mut rgba = Vec::with_capacity(framebuffer_pixels.len() * 4);
+        for packed_pixel in framebuffer_pixels {
+            let r = ((packed_pixel >> 16) & 0xff) as u8;
+            let g = ((packed_pixel >> 8) & 0xff) as u8;
+            let b = (packed_pixel & 0xff) as u8;
+            let luminance = (u32::from(r) * 3 + u32::from(g) * 6 + u32::from(b)) / 10;
+            if luminance > 24 {
+                bright_pixels += 1;
+            }
+            if luminance < 6 {
+                dark_pixels += 1;
+            }
+            rgba.extend_from_slice(&[r, g, b, 255]);
+        }
+        let output =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/spotlight_corridor.png");
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent).expect("create target directory for screenshot");
+        }
+        let file = File::create(&output).expect("create spotlight screenshot PNG");
+        let mut encoder = png::Encoder::new(file, WIDTH, HEIGHT);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("write PNG header");
+        writer
+            .write_image_data(&rgba)
+            .expect("write screenshot image data");
+        eprintln!("spotlight corridor screenshot: {}", output.display());
+
+        // Persist the screenshot before asserting so a failing GPU regression still leaves
+        // an inspectable artifact in target/ on the developer machine.
+        assert!(
+            shadow_changed_pixels > 16 && shadow_difference_energy > 800,
+            "spotlight shadow map should darken a measurable corridor region; changed pixels={shadow_changed_pixels}, difference energy={shadow_difference_energy}; inspect {}",
+            output.display()
+        );
+        assert!(
+            bright_pixels > 80,
+            "spotlight-only corridor should contain a lit region; bright pixels={bright_pixels}; inspect {}",
+            output.display()
+        );
+        assert!(
+            dark_pixels > 80,
+            "spotlight-only corridor should retain deep shadow; dark pixels={dark_pixels}; inspect {}",
+            output.display()
         );
     }
 

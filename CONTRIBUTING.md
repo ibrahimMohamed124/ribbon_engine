@@ -10,10 +10,8 @@ Keep reusable engine code and game-specific code in their respective layers.
 - `plugins/*` (package `plugin_*`): optional behavior installed into an `App`. A
   plugin declares its dependencies on other plugins, never owns the app loop and
   never contains game rules.
-- `examples/*`: engine-only demos. They must build without `games/` or `engine/`.
+- `examples/*`: engine-only demos. They may depend on `crates/` and reusable `plugins/`, never on `games/` or another example.
 - `games/*`: game rules, levels, content, UI and game-owned assets.
-- `engine/`: **legacy**, frozen. Only bug fixes needed to keep `games/studs`
-  building. New code goes in `crates/` or `plugins/`.
 
 ## Rules
 
@@ -42,3 +40,11 @@ python games/studs/tools/fetch_assets.py --check
 
 Also run the CPU and GPU headless examples where an adapter is available. Keep the
 existing game golden values unchanged.
+
+## Architecture and repository hygiene
+
+- Add new engine runtime/features only under `crates/` or `plugins/`; add demos under `examples/` and game-specific logic under `games/`. The retired `engine/` compatibility tree must not be recreated.
+- Keep dependencies flowing toward foundations. The enforced layers are `crates/` → `crates/`; `plugins/` → `crates/` + `plugins/`; and `examples/`/`games/` → `crates/` + `plugins/`. No workspace package may depend on a game. These boundaries are enforced by `tools/check_deps.py` in addition to the explicit allowlist; update `tools/allowed_deps.toml` alongside intentional direct dependency changes.
+- Do not place self-hosted GitHub Actions runner installations, `_work` checkouts, runner logs, `target/`, or generated ZIP deliveries in source control. The local `.github-actions-runner/` folder is ignored deliberately.
+- Keep runtime/platform code separate from OS-specific PE-resource compilation: window icon selection belongs in `engine_platform`; Windows executable resource embedding belongs in `build_support/windows/`.
+- For scalability changes, measure before adding scheduler parallelism. Current schedule systems mutate a shared `World` serially; parallel execution requires declared resource/component access and conflict validation. Asset loading/retention and transform dirty tracking likewise need explicit ownership/invalidation contracts before they can safely become asynchronous or cached. Record such design decisions in `docs/DECISIONS.md` and update this architecture guide.

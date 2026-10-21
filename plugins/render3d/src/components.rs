@@ -93,3 +93,76 @@ impl Default for SunLight {
         }
     }
 }
+
+/// A world-space cone light. The direction points from the light into the scene.
+/// At most one light with `casts_shadows` is rendered with a perspective shadow map.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpotLight {
+    pub position: Vec3,
+    pub direction: Vec3,
+    pub color: Vec3,
+    /// Radiometric intensity multiplier in linear space.
+    pub intensity: f32,
+    /// Maximum useful distance in world units.
+    pub range: f32,
+    /// Full-strength cone half-angle, in radians.
+    pub inner_cone_angle: f32,
+    /// Maximum cone half-angle, in radians.
+    pub outer_cone_angle: f32,
+    pub casts_shadows: bool,
+}
+
+impl Default for SpotLight {
+    fn default() -> Self {
+        Self {
+            position: Vec3::ZERO,
+            direction: Vec3::NEG_Z,
+            color: Vec3::splat(1.0),
+            intensity: 18.0,
+            range: 12.0,
+            inner_cone_angle: 22.0_f32.to_radians(),
+            outer_cone_angle: 32.0_f32.to_radians(),
+            casts_shadows: true,
+        }
+    }
+}
+
+/// A non-shadowed point light. The renderer evaluates the first eight extracted lights.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PointLight {
+    pub position: Vec3,
+    pub color: Vec3,
+    pub intensity: f32,
+    pub range: f32,
+}
+
+impl Default for PointLight {
+    fn default() -> Self {
+        Self {
+            position: Vec3::ZERO,
+            color: Vec3::splat(1.0),
+            intensity: 2.0,
+            range: 5.0,
+        }
+    }
+}
+
+/// Exponential distance/height fog parameters. `density = 0` disables fog.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FogSettings {
+    pub color: Vec3,
+    pub density: f32,
+    pub base_height: f32,
+    pub height_falloff: f32,
+}
+
+impl Default for FogSettings {
+    fn default() -> Self {
+        Self {
+            color: Vec3::new(0.025, 0.035, 0.032),
+            density: 0.0,
+            base_height: 0.0,
+            height_falloff: 0.0,
+        }
+    }
+}

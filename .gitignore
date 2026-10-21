@@ -1,7 +1,13 @@
 /target/
 /dist/
+/.github-actions-runner/
 /settings.cfg
 /games/studs/settings.cfg
 *.zip
 /games/studs/assets/source/
+/examples/horror_slice/assets/textures/source/
 scripts/
+
+# Python asset-generator caches
+__pycache__/
+*.py[cod]

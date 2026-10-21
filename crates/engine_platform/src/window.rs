@@ -2,13 +2,45 @@
 
 use crate::config::WindowConfig;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::window::{Window, WindowAttributes};
+use winit::window::{Icon, Window, WindowAttributes};
+
+/// Build the Ribbon Engine window icon from the checked-in RGBA asset.
+///
+/// The raw RGBA representation avoids a runtime image-decoder dependency and keeps
+/// the icon available in every application using this platform crate.
+pub fn engine_window_icon() -> Option<Icon> {
+    const SIZE: u32 = 64;
+    const RGBA: &[u8] = include_bytes!("../../../assets/engine_icon.rgba");
+    Icon::from_rgba(RGBA.to_vec(), SIZE, SIZE).ok()
+}
+
+/// Apply the engine icon to both the titlebar and (on Windows) the taskbar.
+///
+/// Winit's generic `with_window_icon` sets the small Windows window icon (`ICON_SMALL`),
+/// which appears in the titlebar. Windows taskbar buttons use the large icon (`ICON_BIG`),
+/// configured with the Windows-specific `with_taskbar_icon` extension.
+pub fn with_engine_icons(attributes: WindowAttributes) -> WindowAttributes {
+    let attributes = attributes.with_window_icon(engine_window_icon());
+
+    #[cfg(target_os = "windows")]
+    {
+        use winit::platform::windows::WindowAttributesExtWindows;
+        attributes.with_taskbar_icon(engine_window_icon())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        attributes
+    }
+}
 
 pub fn attributes(config: &WindowConfig) -> WindowAttributes {
-    Window::default_attributes()
-        .with_title(config.title.clone())
-        .with_inner_size(physical_size(config))
-        .with_resizable(true)
+    with_engine_icons(
+        Window::default_attributes()
+            .with_title(config.title.clone())
+            .with_inner_size(physical_size(config))
+            .with_resizable(true),
+    )
 }
 
 pub fn physical_size(config: &WindowConfig) -> PhysicalSize<u32> {

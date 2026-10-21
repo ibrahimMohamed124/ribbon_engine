@@ -31,8 +31,3 @@ plugin_rendering = { path = "../../plugins/rendering", default-features = false,
 plugin_render3d = { path = "../../plugins/render3d", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-[dev-dependencies]
-# Existing audio decode integration coverage still reads this compatibility helper; runtime code
-# no longer depends on the immediate-mode platform runner.
-voxelworks-platform = { path = "../../engine/crates/platform", default-features = false, features = ["audio"] }
-voxelworks-render-cpu = { path = "../../engine/crates/render-cpu" }
