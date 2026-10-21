@@ -1,8 +1,8 @@
 use engine_render::Framebuffer;
+use plugin_rendering::cpu::render::entities::ray_box;
 use studs::config::DEFAULT_HFOV;
 use studs::game::{Game, PAGES_TOTAL};
 use studs::ui::hud::{draw_caught, draw_hud, draw_won, fill_rect};
-use voxelworks_render_cpu::render::entities::ray_box;
 
 #[test]
 fn ray_box_front_face() {

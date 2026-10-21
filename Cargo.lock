@@ -2633,8 +2633,6 @@ dependencies = [
  "plugin_render3d",
  "plugin_rendering",
  "plugin_voxel",
- "voxelworks-platform",
- "voxelworks-render-cpu",
 ]
 
 [[package]]
@@ -2944,79 +2942,6 @@ dependencies = [
  "plugin_rendering",
  "plugin_voxel",
  "ron",
-]
-
-[[package]]
-name = "voxelworks-api"
-version = "0.1.0"
-dependencies = [
- "engine_platform",
- "engine_render",
- "voxelworks-core",
- "voxelworks-scene",
-]
-
-[[package]]
-name = "voxelworks-core"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_math",
- "engine_platform",
- "plugin_voxel",
-]
-
-[[package]]
-name = "voxelworks-minimal"
-version = "0.1.0"
-dependencies = [
- "voxelworks-api",
- "voxelworks-core",
- "voxelworks-platform",
- "voxelworks-render-cpu",
- "voxelworks-render-gpu",
- "voxelworks-scene",
-]
-
-[[package]]
-name = "voxelworks-platform"
-version = "0.1.0"
-dependencies = [
- "engine_platform",
- "engine_render",
- "plugin_audio",
- "softbuffer",
- "voxelworks-api",
- "voxelworks-core",
- "voxelworks-render-cpu",
- "voxelworks-render-gpu",
- "voxelworks-scene",
- "winit",
-]
-
-[[package]]
-name = "voxelworks-render-cpu"
-version = "0.1.0"
-dependencies = [
- "plugin_rendering",
- "rayon",
- "voxelworks-api",
- "voxelworks-core",
- "voxelworks-scene",
-]
-
-[[package]]
-name = "voxelworks-render-gpu"
-version = "0.1.0"
-dependencies = [
- "plugin_rendering",
-]
-
-[[package]]
-name = "voxelworks-scene"
-version = "0.1.0"
-dependencies = [
- "plugin_rendering",
 ]
 
 [[package]]

@@ -31,13 +31,6 @@ members = [
   "examples/cube_spin",
   "examples/model_viewer",
   "examples/horror_slice",
-  "engine/crates/core",
-  "engine/crates/scene",
-  "engine/crates/api",
-  "engine/crates/render-cpu",
-  "engine/crates/render-gpu",
-  "engine/crates/platform",
-  "engine/examples/minimal",
   "games/studs",
   "games/studs/tools/bake_sprites",
 ]

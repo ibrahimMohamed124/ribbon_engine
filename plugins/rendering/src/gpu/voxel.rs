@@ -1,6 +1,6 @@
 //! Voxel raymarching GPU backend: offscreen renderer and window presenter.
 //!
-//! Moved here unchanged in behavior from the legacy `voxelworks-render-gpu` crate.
+//! GPU voxel rendering backend, owned by `plugin_rendering` and shared by the ECS bridge.
 //! Per `docs/RENDERER_PLAN.md` this raymarcher is frozen and is replaced by the
 //! mesh renderer in phase 7; do not extend it.
 

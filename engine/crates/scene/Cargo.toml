@@ -1,7 +1,0 @@
-[package]
-name = "voxelworks-scene"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-plugin_rendering = { path = "../../../plugins/rendering", default-features = false }
