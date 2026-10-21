@@ -31,6 +31,10 @@ The camera now moves and is constrained by the static room/prop colliders. The d
 interactive yet; the monster is not skeletal-animated or AI-controlled; positional audio and save
 serialization remain future phases and are not claimed as implemented.
 
+## Asset streaming
+
+The room queues its distinct glTF models with `AssetServer::request_ref` rather than blocking the startup thread on each decode. The example retains one strong `AssetRef` per distinct room model for the gameplay lifetime, so the weak handles on model instances stay resident even if automatic eviction is enabled by a host application. CPU IO/decode runs on asset workers; `plugin_render3d` remains responsible for GPU uploads on the render thread. Initial-load and hot-reload failures are reported in the console.
+
 ## Run
 
 ```powershell

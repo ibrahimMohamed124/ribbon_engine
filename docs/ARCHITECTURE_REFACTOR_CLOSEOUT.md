@@ -25,7 +25,7 @@ Date: 2026-10-21
 Removing legacy architecture and cleaning dependency/CI boundaries improves maintainability, but it does not make every runtime subsystem scale without further work. The current engine still has these known limits:
 
 1. Schedule systems run serially and receive exclusive `&mut World`. Safe parallel scheduling needs declared component/resource access and conflict validation.
-2. Asset loading is synchronous; handles are non-owning identifiers and storage has no strong-reference retention/eviction policy.
+2. At the 2026-10-21 closeout, asset loading was synchronous and no strong-reference eviction policy existed. The follow-up asset-streaming milestone below adds an async initial-load path and opt-in lease-based eviction; that follow-up still requires target-side verification.
 3. Transform propagation now skips clean-branch composition and unchanged global writes using snapshot-diff invalidation; detecting edits still requires an O(N) scan while local fields remain public, and target-side profiling is pending. See `docs/TRANSFORM_INVALIDATION.md`.
 4. `RenderGraph` validates dependencies and ordering but has no transient GPU resource allocator/aliasing or GPU timestamp profiler.
 5. `plugin_rendering` still owns voxel scene/material data, CPU/GPU voxel rendering, and an ECS bridge. Its split/rename is deliberately deferred until those public API ownership boundaries have a concrete design.
@@ -59,3 +59,20 @@ Date: 2026-10-22
 ### Remaining qualification
 
 The caches avoid full hierarchy resolution and unchanged global writes, but current public mutable fields require an O(N) snapshot scan every propagation pass. Performance improvement is therefore an expected optimization for sparse changes, not a measured claim; run the documented target-side verification and benchmark before treating the milestone as fully validated. A later ECS change-tick or controlled-mutation design could remove the full scan, but must preserve compatibility with current `query_mut` callers.
+
+
+
+## Asset lifetime and streaming implementation
+
+Date: 2026-10-22
+
+- Added `AssetId`, weak generation-aware `Handle<T>`, strong `AssetRef<T>` leases, reference accounting, explicit `Unloaded` state, generation-safe eviction, revision tracking, and retry support while retaining the existing synchronous API.
+- Added bounded worker-backed IO/CPU decoding for regular requests and bounded decoded completions, lifecycle events, and an owner-thread commit path. GPU upload remains inside the rendering plugin.
+- Kept a failed hot reload's last-good asset resident and observable through `ReloadFailed`/`last_reload_error`; a successful replacement keeps its generation and advances its revision.
+- Migrated the `model_viewer` and `horror_slice` examples to asynchronous GLTF requests with explicit strong leases and load diagnostics.
+- Added `docs/ASSET_LIFETIME_STREAMING.md` and updated the roadmap, architecture overview, and `engine_assets` README.
+- No new tests were written. No Rust compiler, formatter, linter, runtime, test, or benchmark command was run in this environment; the new API and integration still require Windows-side verification.
+
+### Remaining qualification
+
+The initial-load path and hot-reload read/decode are asynchronous for AssetPlugin/request users; modification timestamp polling still runs on the server thread. Queue counts are bounded, but byte budgets, priority, cancellation, progress events, LRU eviction, and asset dependency-graph scheduling are not included. Automatic eviction defaults off to preserve clients that still keep only weak handles. The milestone should not be considered validated until the workspace command matrix passes on the target checkout.

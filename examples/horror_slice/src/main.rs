@@ -4,8 +4,8 @@
 //! the pointer, and left-click to capture it again. Run `cargo run -p horror_slice`.
 
 use engine_app::{App, AppExit, Stage, Time, World};
-use engine_assets::{AssetPlugin, AssetServer, FsSource};
-use engine_events::WorldEventsExt;
+use engine_assets::{AssetEvent, AssetPlugin, AssetRef, AssetServer, FsSource};
+use engine_events::{EventCursor, WorldEventsExt};
 use engine_platform::input::Key;
 use engine_platform::runtime::CursorGrabState;
 use engine_platform::{Input, PlatformConfig, PlatformPlugin};
@@ -25,6 +25,35 @@ use std::error::Error;
 use std::path::Path;
 
 struct FrameLimit(Option<u64>);
+
+/// Pins room models while they stream in and throughout gameplay.
+struct RoomModelLeases {
+    _leases: Vec<AssetRef<ModelAsset>>,
+}
+
+/// Per-system cursor for asynchronous load failures and hot-reload diagnostics.
+struct AssetEventCursor(EventCursor<AssetEvent>);
+
+fn report_asset_failures(world: &mut World) {
+    world.resource_scope::<AssetEventCursor, _>(|world, cursor| {
+        let messages: Vec<_> = cursor
+            .0
+            .read(world.events::<AssetEvent>())
+            .filter_map(|event| match event {
+                AssetEvent::Failed { path, error, .. } => {
+                    Some(format!("asset load failed for `{path}`: {error}"))
+                }
+                AssetEvent::ReloadFailed { path, error, .. } => Some(format!(
+                    "asset hot reload failed for `{path}`; keeping last good asset: {error}"
+                )),
+                _ => None,
+            })
+            .collect();
+        for message in messages {
+            eprintln!("{message}");
+        }
+    });
+}
 
 fn enforce_frame_limit(world: &mut World) {
     let should_exit = world
@@ -308,21 +337,27 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_plugin(GpuWindowPlugin)?;
     app.add_plugin(Render3dPlugin)?;
 
-    let handles = {
+    let (handles, leases) = {
         let server = app.world.resource_mut::<AssetServer>();
         server.register_loader(GltfLoader);
         server.add_source(0, FsSource::new(asset_root));
         let mut map = HashMap::new();
+        let mut leases = Vec::new();
         for entity in &room.entities {
             if !map.contains_key(&entity.asset) {
-                let handle = server.load::<ModelAsset>(&entity.asset).map_err(|error| {
-                    format!("could not load `{}`: {}", entity.asset, error.message)
-                })?;
-                map.insert(entity.asset.clone(), handle);
+                let lease = server
+                    .request_ref::<ModelAsset>(&entity.asset)
+                    .map_err(|error| {
+                        format!("could not queue `{}`: {}", entity.asset, error.message)
+                    })?;
+                map.insert(entity.asset.clone(), lease.handle());
+                leases.push(lease);
             }
         }
-        map
+        (map, leases)
     };
+    app.insert_resource(RoomModelLeases { _leases: leases });
+    app.insert_resource(AssetEventCursor(EventCursor::default()));
 
     let spawn = Vec3::from_array(room.player_spawn);
     let camera_rotation =
@@ -403,6 +438,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "Controls: WASD walk, mouse look, Shift faster, Esc release pointer; click to recapture."
     );
     app.add_system(Stage::Update, first_person_controller);
+    app.add_system(Stage::Update, report_asset_failures);
     app.add_system(Stage::Update, enforce_frame_limit);
     app.build()?.run();
     Ok(())

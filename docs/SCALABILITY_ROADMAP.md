@@ -40,13 +40,15 @@ callers. See [`TRANSFORM_INVALIDATION.md`](TRANSFORM_INVALIDATION.md) for the im
 
 ## Priority 2 — asset lifetime and streaming
 
-**Current limit:** loads are synchronous; `Handle<T>` is a copyable non-owning ID and the server owns cached
-values without a strong-reference unload/eviction policy.
+**Status:** first worker-backed loading and lease/eviction API implemented; target-side compilation, lifecycle verification, and memory/performance measurement remain mandatory.
 
-**Design:** introduce an explicit `AssetId` + strong `AssetRef<T>`/weak `Handle<T>` ownership distinction,
-reference or lease counting, generation-safe eviction, load-state events, and worker-thread IO/decode. GPU upload
-should remain on the renderer/device-owning thread. Hot-reload events must keep stable IDs only on successful
-replacement; failed reloads must retain or explicitly invalidate the previous value by documented policy.
+**Prior limit:** loads were synchronous; `Handle<T>` was only a copyable non-owning ID and cached assets could not be evicted safely.
+
+**Implemented design:** `AssetId` identifies the path entry, weak `Handle<T>` carries a generation, and strong `AssetRef<T>` leases pin a generation against eviction. Regular source IO and CPU decode can run on worker threads; `AssetPlugin` commits completed results and emits lifecycle events on the server-owning thread. The task queue and pending decoded-completion queue are bounded, with explicit `QueueFull` feedback and retry support. The legacy synchronous APIs remain available. Successful hot reload keeps the handle generation, advances a content revision, and emits `Modified`; failed hot reload retains the last-good value and emits `ReloadFailed`. Model viewer and Horror Slice now request glTF models asynchronously and retain strong leases. GPU upload remains inside the rendering plugin's render pass.
+
+**Boundaries:** auto-eviction is opt-in because legacy consumers use weak handles; callers must pin assets with `AssetRef<T>` when they need residency. Hot-reload timestamp detection still polls synchronously, but source reads/decode run on workers for AssetPlugin/request users; direct synchronous-only users can preserve immediate reload behavior. There is no request priority/cancellation, progress reporting, byte budget, or LRU policy. Queue capacities bound counts, not decoded bytes. See [`ASSET_LIFETIME_STREAMING.md`](ASSET_LIFETIME_STREAMING.md).
+
+**Verification:** no Rust formatter/compiler/linter, runtime, benchmark, or test command was run for this delivery, and no new tests were added. Existing tests were left unchanged. Run the target-side command matrix before treating this milestone as accepted.
 
 ## Priority 3 — access-declared scheduling
 
