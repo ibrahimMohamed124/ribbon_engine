@@ -13,11 +13,11 @@ policy; run `python tools/check_deps.py` after changing a manifest.
 | `plugins/` | Optional domain behavior installed into an `App` | `plugin_*` (folder name omits the prefix: `plugins/physics` is `plugin_physics`) |
 | `examples/` | Small engine-only applications built on the ECS engine | none |
 | `games/` | Games composed from the engine and plugins | none |
-| `engine/` | **Legacy** `voxelworks-*` crates, kept only for `games/studs`; scheduled for deletion | `voxelworks-*` |
 | `docs/`, `tools/`, `assets/` | Plans and decisions, dependency policy tooling, engine sample assets | |
 
-New code never goes into `engine/`. Nothing outside `engine/` and `games/studs`
-may depend on a `voxelworks-*` crate, and `tools/check_deps.py` fails the build if it does.
+The deprecated `engine/` compatibility tree has been removed after moving the final STUDS test and
+benchmark imports to their canonical packages. `tools/check_deps.py` rejects any reintroduction of
+the retired `voxelworks-*` packages or engine-to-game dependency edges.
 
 ## Dependency graph
 
@@ -65,7 +65,11 @@ The names are close, so for the record:
 The permitted package edges are listed in `tools/allowed_deps.toml`. Math and
 ECS are leaves; schedule/events build on ECS; app builds on those foundations;
 platform, assets, scene, and rendering build on app contracts; plugins add
-reusable domain behavior; games compose plugins.
+reusable domain behavior; games compose plugins. Dependency policy is checked against every Cargo dependency class (normal, build, dev, and
+optional). In addition to explicit allowlist edges, `tools/check_deps.py` enforces owner-layer rules:
+engine crates depend only on engine crates; plugins depend on engine crates/other plugins; examples
+depend on engine crates/plugins; games depend on engine crates/plugins; no workspace package depends
+on a game. This catches forbidden edges even if someone tries to add them to the allowlist.
 
 ## Frame order and plugins
 
@@ -90,34 +94,36 @@ workspace.
 
 ## Current limits and migration state
 
-- Systems run serially; system parameter injection is not implemented.
-- Asset loading is synchronous and handles are weak.
-- The render graph validates named-resource dependencies and orders native window frame passes, but is not yet a transient resource allocator, async scheduler, or GPU profiler.
-- `plugin_voxel::ChunkedVoxelWorld` now owns edit revisions, dirty chunk invalidation and incremental greedy remeshing. `plugin_render3d::OffscreenVoxelRenderer` consumes those updates and uploads/releases chunk GPU meshes; the native ECS `Render3dPlugin` path also releases voxel meshes removed from the extracted scene. STUDS' GPU backend uses the offscreen mesh renderer bridge, while the CPU raycaster remains a reference/fallback and legacy raycaster source is retained pending manual runtime checks. See `docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md`.
+- Systems run serially and systems currently receive exclusive `&mut World`; there is no system-parameter access declaration yet. Parallel scheduling must wait for declared read/write access sets and conflict validation rather than parallelizing arbitrary `World` access.
+- Asset decoding/loading is synchronous. `Handle<T>` is a copyable, non-owning ID and storage currently has no strong-reference retention/unload policy; large games should add an explicit lease/reference-count and eviction design before streaming large worlds.
+- The render graph validates named-resource dependencies and orders native window frame passes, but is not yet a transient resource allocator, async scheduler, or GPU profiler. Resource aliasing/lifetime and GPU timing should be added as separate measured milestones.
+- `plugin_voxel::ChunkedVoxelWorld` owns edit revisions, dirty chunk invalidation and incremental greedy remeshing. `plugin_render3d::OffscreenVoxelRenderer` consumes those updates and uploads/releases chunk GPU meshes; the native ECS `Render3dPlugin` path also releases voxel meshes removed from the extracted scene. STUDS' GPU backend uses the offscreen mesh renderer bridge, while the CPU raycaster remains the deterministic reference/fallback. See `docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md`.
 - `WinitRunner` must create the `softbuffer` CPU presenter only after `WindowFrame`
   contains a complete non-empty image. `PlatformPlugin` registers the resource for every
   app, including GPU-only apps; resource presence alone must not create a CPU surface for
   an HWND already used by `wgpu`, because competing native surfaces can crash on shutdown.
 - The editor has no text input and is compiled only with its `editor` feature
   in debug builds. The glyph table limits available UI characters.
-- Local 2D/voxel transforms and 3D quaternion transforms share the same entity hierarchy; their global transforms are recomputed each `PostUpdate` (dirty tracking is not implemented). `plugin_render3d` consumes `GlobalTransform3D`.
+- Local 2D/voxel transforms and 3D quaternion transforms share the same entity hierarchy; global transforms currently recompute each `PostUpdate` (dirty propagation is not implemented). `plugin_render3d` consumes `GlobalTransform3D`. When entity counts warrant it, add change ticks or explicit transform mutation APIs plus descendant dirty propagation; public mutable transform fields make correct implicit change tracking difficult.
 - `examples/scene_hierarchy_3d` demonstrates this `Transform3D` parent-child composition in the GPU mesh renderer and reports runtime diagnostics for global transform propagation.
 - STUDS uses `engine_app::App`, `WinitRunner`, and the platform/scene/rendering/audio/game
   plugins. Live gameplay uses `MazeResource` and `RunState` resources plus `Player`, `Enemy`,
   and `PagePickup` entities, advanced by dedicated schedule systems. `Game` remains a
-  compatibility/domain facade rather than a runtime resource. Its GPU route now invokes
+  compatibility/domain facade rather than a runtime resource. Its GPU route invokes
   `plugin_render3d::OffscreenVoxelRenderer`, with pixels read back through `WindowFrame`;
-  `--renderer cpu` remains the legacy software reference/fallback. STUDS owns no engine
-  remeshing or GPU-resource policy. The old raycaster isn't removed until manual gameplay
-  verification passes; remaining legacy-tree cleanup is tracked in [`docs/PHASE9.md`](docs/PHASE9.md).
+  `--renderer cpu` remains the deterministic reference/fallback. STUDS owns no engine
+  remeshing or GPU-resource policy. Manual gameplay verification on target Windows hardware remains
+  required for final visual acceptance; the compatibility-tree migration itself is complete in
+  [`docs/PHASE9.md`](docs/PHASE9.md).
 - `examples/horror_slice` is a native-surface visual acceptance example. Its `room.ron` describes one concrete room, door/key placements, a lantern save-point prop, monster spawn/path data, and AABB colliders. The player can move with WASD and look with the mouse; `plugin_physics::slide_capsule_xz` provides reusable static-AABB capsule sliding, while the example owns its first-person input/camera system. Door/key interaction, skeletal animation, positional audio, and save logic remain later phases. Bundled GLBs contain the downloaded Poly Haven CC0 maps; separately marked procedural placeholders remain available as fallbacks.
 - The neutral renderer fixture, the CPU golden test and the CPU/GPU parity test
   live in `plugins/rendering/tests/` (`docs/PHASE9.md` step 2).
 - `examples/voxel_mesh_showcase` demonstrates dynamic block edits, chunk-boundary invalidation and GPU mesh replacement on the native mesh pipeline. Dynamic editing is provided by `ChunkedVoxelWorld::set_block` and `rebuild_dirty_chunks`; STUDS exercises GPU upload/update/eviction through `OffscreenVoxelRenderer`.
 
-See `docs/SHIMS.md` for transitional imports, `docs/DECISIONS.md` for
-choices made where the refactor plan left behavior unspecified, and
-`docs/LEGACY_ARCHITECTURE.md` for renderer verification results.
+See `docs/DECISIONS.md` for choices made where the refactor plan left behavior unspecified,
+`docs/SCALABILITY_ROADMAP.md` for future scaling work, `docs/ARCHITECTURE_REFACTOR_CLOSEOUT.md`
+for the cleanup/verification record, `docs/PHASE9.md` for the legacy-tree retirement record, and
+`docs/LEGACY_ARCHITECTURE.md` for historical renderer-migration verification results.
 
 
 ## 3D Rendering

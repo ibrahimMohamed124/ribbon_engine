@@ -4,6 +4,6 @@ The PE resource embedding helper lives at `build_support/windows/icon.rs` becaus
 
 Runtime window icons remain part of `crates/engine_platform`, where window creation sets both the small titlebar icon and the Windows taskbar icon. The resource helper does not own runtime window behavior.
 
-`build_support/windows_icon.rs` is retained as a tiny compatibility shim for any older build script that still includes the former path. Workspace build scripts use the new `build_support/windows/icon.rs` path.
+All active executable build scripts include the single canonical implementation at `build_support/windows/icon.rs`. The former `build_support/windows_icon.rs` shim was removed when the last legacy package was retired, so future build changes have one supported path.
 
 No Rust build or tests were run while creating this source overlay.

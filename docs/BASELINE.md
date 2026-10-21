@@ -1,3 +1,5 @@
+> **Historical baseline.** These measurements and package paths describe the pre-ECS/legacy renderer snapshot. They are retained for historical comparison and are not instructions to restore the retired `voxelworks-*` packages.
+
 # Pre-refactor baseline
 
 Captured before Phase 1 at starting commit `ca26ea97b9b221e36ca768f02186e63e1305bdeb` (`pre-refactor`) on Windows, rustc 1.99.0, cargo 1.99.0. Branch: `refactor/engine-workspace-layout`.

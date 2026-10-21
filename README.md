@@ -24,12 +24,13 @@ application built on it.
 | `crates/` | Engine core (`engine_*`): math, ECS, events, schedule, app, plugins, platform, assets, scene, render, reflection, commands, editor |
 | `plugins/` | Optional features (`plugin_*`): voxel, physics, rendering, render3d, gltf, animation, audio, editor tools |
 | `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `gpu_window`, `editor_demo`, `graphics_showcase`, `scene_hierarchy_3d`, `voxel_mesh_showcase`, `horror_slice` |
-| `games/studs/` | The game, now launched through the ECS app and plugin runner; some gameplay migration and compatibility cleanup remain. |
-| `engine/` | **Legacy** `voxelworks-*` crates, to be deleted |
-| `docs/`, `tools/` | Plans, decisions, dependency policy and checker |
+| `games/studs/` | A game composed from the ECS app, engine runtime, and plugins |
+| `docs/`, `tools/` | Architecture decisions, migration records, dependency policy, and tooling |
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for the dependency graph, frame order and
-known limits, and [CONTRIBUTING.md](CONTRIBUTING.md) before adding code.
+known limits, [docs/SCALABILITY_ROADMAP.md](docs/SCALABILITY_ROADMAP.md) for future work,
+and [CONTRIBUTING.md](CONTRIBUTING.md) before adding code. The cleanup summary and verification
+boundary are in [docs/ARCHITECTURE_REFACTOR_CLOSEOUT.md](docs/ARCHITECTURE_REFACTOR_CLOSEOUT.md).
 
 ## Running
 
@@ -42,7 +43,6 @@ cargo run -p graphics_showcase              # PBR / HDR / directional-shadow gra
 cargo run -p scene_hierarchy_3d             # visible 3D parent/child transform example
 cargo run -p voxel_mesh_showcase             # dynamic greedy voxel chunks on the native 3D renderer
 cargo run -p horror_slice                    # native-surface single-room horror visual slice
-cargo run -p voxelworks-minimal -- --headless --renderer cpu   # legacy engine-only example
 ```
 
 `cargo run` runs the game because `default-members` is `games/studs`; use
@@ -52,10 +52,10 @@ Audio and GPU rendering are optional Cargo features for STUDS. The defaults enab
 both; `--no-default-features` selects the CPU renderer and disables Rodio output.
 Choose a backend with `cargo run -p studs -- --renderer gpu` or `--renderer cpu`;
 `auto` currently prefers GPU when that feature is compiled in and falls back to CPU
-if GPU initialization fails. The STUDS GPU path uses `plugin_render3d::OffscreenVoxelRenderer` for native GPU mesh
-rasterization and copies the tone-mapped framebuffer through `WindowFrame`. The CPU
-raycaster remains available as a fallback/reference; legacy GPU raycaster source is kept
-until manual gameplay checks on the target Windows hardware are complete.
+if GPU initialization fails. The STUDS GPU path uses `plugin_render3d::OffscreenVoxelRenderer`
+for GPU mesh rasterization and copies the tone-mapped framebuffer through `WindowFrame`.
+The CPU path remains the deterministic reference/fallback; native-surface voxel rendering
+is a separate future milestone.
 
 ## Horror Slice visual acceptance example
 
@@ -64,9 +64,9 @@ until manual gameplay checks on the target Windows hardware are complete.
 ## Dependency rules
 
 `tools/allowed_deps.toml` lists every allowed dependency edge per package.
-`python tools/check_deps.py` checks it and runs in CI. Engine crates never
-depend on games, and nothing outside `engine/` and `games/studs` depends on the
-legacy `voxelworks-*` crates.
+`python tools/check_deps.py` checks normal, build, development, and optional dependency edges in CI.
+Engine crates never depend on games or examples. The retired `voxelworks-*` workspace has been
+removed; the checker rejects reintroducing legacy workspace package names.
 
 
 ## Window and launcher identity

@@ -1,3 +1,5 @@
+> **Historical implementation plan.** This plan was authored against the earlier `voxelworks-*` package names. Implemented renderer/material work now lives in `plugin_rendering`; those names below are migration-history references, not active Cargo packages. Use `ARCHITECTURE.md` and `SCALABILITY_ROADMAP.md` for the current package map and future work.
+
 # STUDS realism upgrade plan
 
 ## Audit and baseline (2026-10-16)

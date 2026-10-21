@@ -1,3 +1,5 @@
+> **Decision log.** Rows referring to compatibility stages record the migration decision at that time. The Phase 9 retirement is complete; use `docs/PHASE9.md` for the current final state.
+
 # Decisions
 
 Only decisions needed to resolve details left unspecified by the staged refactor plan are recorded here.

@@ -1,3 +1,14 @@
-# Temporary compatibility shims
+# Compatibility-shim retirement record
 
-The legacy `voxelworks-core` crate temporarily re-exports `engine_math` as `math`, `plugin_voxel::voxel` as `voxel`, `engine_app::time` as `time`, and `engine_platform::input` as `input` (the `physics` and `audio` shims were removed in Phase 9 step 4). The legacy API re-exports `MouseButtons`, `MouseInput`, and `WindowConfig` from `engine_platform`; drawing data and font glyphs from `engine_render`; and aliases the generic `engine_render::FramePlan` for the old scene type. Its renderer trait remains an adapter because its methods expose scene/material types scheduled to move in Phase 7. The legacy scene crate re-exports render data from `plugin_rendering`, retaining the `Scene` alias for `RenderScene`. The legacy CPU renderer crate re-exports the moved CPU renderer. The legacy platform crate re-exports the moved `cursor`, `keyboard`, `keys`, `timer`, `window`, CPU `present`, audio mixer, and Rodio backend modules. `voxelworks-render-gpu` re-exports `GpuRenderer` and `GpuPresenter` from `plugin_rendering::gpu::voxel` (the implementation moved in Phase 9 step 1). These preserve existing imports while code moves. The STUDS runtime executable no longer uses the legacy `voxelworks-platform` runner or the immediate-mode `voxelworks-api` traits; its app is assembled from `engine_app`, `engine_platform`, `engine_scene`, `plugin_rendering`, `plugin_audio`, and the game's plugin. Some shims remain as dev-dependencies for existing compatibility tests/examples, and the remaining legacy packages still depend on each other. Phase 9 step 7 removes them after those references are migrated or retired.
+The `voxelworks-*` compatibility packages were retired from the workspace as part of Phase 9.
+The active engine API is now provided by `crates/` and `plugins/`; games and examples import those
+packages directly. There are no compatibility-shim packages in the workspace.
+
+The prior shims re-exported `engine_math`, `plugin_voxel`, `engine_platform`, `engine_render`, and
+`plugin_rendering` types for the immediate-mode runner. The old minimal runner example was removed
+rather than maintaining a parallel app/window/rendering architecture. The last STUDS test and
+benchmark references were migrated to `plugin_rendering::cpu` and `plugin_audio::rodio_backend`.
+
+This file is kept as a short migration record for repository history. Do not add new shim crates; if
+external compatibility ever becomes a product requirement, define a separately versioned adapter with
+an explicit owner and a removal/deprecation policy.

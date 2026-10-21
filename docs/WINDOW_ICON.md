@@ -8,7 +8,7 @@ The engine uses `assets/engine_icon.jpg` as the original supplied logo. Three de
 
 ## Runtime windows
 
-`crates/engine_platform/src/window.rs` applies the icon through a shared `with_engine_icons` helper. The generic Winit `with_window_icon` sets the small Windows icon (`ICON_SMALL`) used in the titlebar. On Windows, the helper also uses Winit's `WindowAttributesExtWindows::with_taskbar_icon` to set the large icon (`ICON_BIG`) used by the taskbar. Both the main runner and the compatibility `voxelworks-platform` runner use this helper.
+`crates/engine_platform/src/window.rs` applies the icon through a shared `with_engine_icons` helper. The generic Winit `with_window_icon` sets the small Windows icon (`ICON_SMALL`) used in the titlebar. On Windows, the helper also uses Winit's `WindowAttributesExtWindows::with_taskbar_icon` to set the large icon (`ICON_BIG`) used by the taskbar. All active windowed applications use this helper through the shared `WinitRunner`.
 
 ## Launcher / executable icon on Windows
 
@@ -24,7 +24,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p horror_slice
 ```
 
-For another windowed target, substitute its package name (for example `gpu_window`, `graphics_showcase`, `voxel_mesh_showcase`, `model_viewer`, `cube_spin`, `scene_hierarchy_3d`, `editor_demo`, `voxel_room`, `studs`, or `voxelworks-minimal`). Look for the icon in the titlebar and taskbar. The runtime taskbar icon is configured independently from the executable's embedded Explorer icon; the latter still requires a working Windows resource compiler. After rebuilding, the package executable should also carry the icon resource when the Windows resource compiler is available.
+For another windowed target, substitute its package name (for example `gpu_window`, `graphics_showcase`, `voxel_mesh_showcase`, `model_viewer`, `cube_spin`, `scene_hierarchy_3d`, `editor_demo`, `voxel_room`, or `studs`). Look for the icon in the titlebar and taskbar. The runtime taskbar icon is configured independently from the executable's embedded Explorer icon; the latter still requires a working Windows resource compiler. After rebuilding, the package executable should also carry the icon resource when the Windows resource compiler is available.
 
 ### Build-script lint compatibility
 
