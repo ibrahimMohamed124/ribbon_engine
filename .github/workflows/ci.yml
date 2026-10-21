@@ -34,6 +34,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         if: runner.environment != 'self-hosted'
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment != 'self-hosted'
 
       - name: Build
         run: cargo build --locked --workspace --all-targets
@@ -188,6 +189,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         if: runner.environment != 'self-hosted'
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment != 'self-hosted'
 
       - name: Build release
         run: cargo build --locked --workspace --release
