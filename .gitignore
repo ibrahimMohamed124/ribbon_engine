@@ -4,6 +4,7 @@
 /games/studs/settings.cfg
 *.zip
 /games/studs/assets/source/
+/examples/horror_slice/assets/textures/source/
 scripts/
 
 # Python asset-generator caches

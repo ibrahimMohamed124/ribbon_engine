@@ -287,7 +287,8 @@ def _get_map(asset: str, kind: str, map_manifest: dict):
     names = {"diff": "diff", "arm": "arm", "normal": "nor_gl"}
     actual = SOURCE_ROOT / f"{asset}_{names[kind]}_1k.jpg"
     if actual.exists():
-        return actual.read_bytes(), "image/jpeg", (str(actual.relative_to(ROOT)).replace("\\", "/"), hashlib.sha256(actual.read_bytes()).hexdigest(), "DOWNLOADED")
+        data = actual.read_bytes()
+        return data, "image/jpeg", (None, hashlib.sha256(data).hexdigest(), "DOWNLOADED_EMBEDDED")
     path = PLACEHOLDER_ROOT / f"{asset}_{kind}_PLACEHOLDER.png"
     data = path.read_bytes()
     return data, "image/png", (str(path.relative_to(ROOT)).replace("\\", "/"), hashlib.sha256(data).hexdigest(), "PLACEHOLDER")
@@ -336,7 +337,10 @@ def _write_glb(path: Path, parts: list[Part], materials: list[dict], manifests: 
             data, mime_type, info = _get_map(asset, map_kind, manifests)
             texture_indices[key] = len(images)
             image_payloads.append((asset, map_kind, data))
-            manifests.setdefault("asset_records", []).append({"path": info[0], "sha256": info[1], "status": info[2], "asset": POLYHAVEN[asset]["title"], "map": map_kind})
+            record = {"sha256": info[1], "status": info[2], "asset": POLYHAVEN[asset]["title"], "map": map_kind}
+            if info[0] is not None:
+                record["path"] = info[0]
+            manifests.setdefault("asset_records", []).append(record)
         if material["emissive"] != [0.0, 0.0, 0.0]:
             ep = PLACEHOLDER_ROOT / "emissive_white_PLACEHOLDER.png"
             key = ("emissive_white_PLACEHOLDER", "emissive")
@@ -371,7 +375,7 @@ def _write_glb(path: Path, parts: list[Part], materials: list[dict], manifests: 
         gltf_materials.append(item)
 
     doc = {
-        "asset": {"version": "2.0", "generator": "tools/make_test_models.py (horror_slice placeholders; replace with CC0 source maps)"},
+        "asset": {"version": "2.0", "generator": "tools/make_test_models.py (procedural geometry with embedded source or fallback maps)"},
         "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
         "meshes": [{"primitives": primitives}], "materials": gltf_materials,
         "textures": textures, "images": images, "accessors": accessors, "bufferViews": views,
@@ -478,12 +482,6 @@ def generate_assets():
             if f"{asset}_" in model_record["path"]:
                 model_record["reference_texture"] = POLYHAVEN[asset]["title"]
 
-    # Add any actually downloaded files to the manifest once, with source hashes and attribution.
-    for asset, meta in POLYHAVEN.items():
-        for suffix, name in [("diff", "diff"), ("arm", "arm"), ("normal", "nor_gl")]:
-            path = SOURCE_ROOT / f"{asset}_{name}_1k.jpg"
-            if path.exists():
-                manifest["textures"].append({"path": str(path.relative_to(ROOT)).replace("\\", "/"), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "status": "DOWNLOADED", "source": meta["url"], "creator": meta["creator"], "license": meta["license"], "map": suffix})
     downloaded_maps = [
         SOURCE_ROOT / f"{asset}_{map_name}_1k.jpg"
         for asset in POLYHAVEN
@@ -509,7 +507,7 @@ def generate_assets():
     # Keep the model record list deterministic and deduplicate map records.
     unique = {}
     for record in manifest["asset_records"]:
-        key = (record["path"], record.get("map"), record.get("asset"))
+        key = (record.get("path"), record.get("map"), record.get("asset"))
         unique[key] = record
     manifest["asset_records"] = list(unique.values())
     out_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
