@@ -95,42 +95,264 @@ impl HierarchyExt for World {
     }
 }
 
-/// Recompute every global transform from hierarchy roots, in deterministic depth-first order.
+/// Cached inputs and outputs for incremental 2D/voxel transform propagation.
+///
+/// Transform fields are public and can be changed through arbitrary ECS systems, so
+/// this cache compares component snapshots rather than relying on mutation APIs or
+/// ECS change ticks. This keeps legacy mutation patterns correct while allowing
+/// clean branches to skip transform composition and global-component writes.
+#[derive(Default)]
+struct TransformPropagationCache {
+    locals: HashMap<Entity, Transform>,
+    parents: HashMap<Entity, Entity>,
+    globals: HashMap<Entity, GlobalTransform>,
+    scratch_locals: HashMap<Entity, Transform>,
+    scratch_parents: HashMap<Entity, Entity>,
+}
+
+/// Cached inputs and outputs for incremental quaternion-based 3D transform propagation.
+#[derive(Default)]
+struct Transform3DPropagationCache {
+    locals: HashMap<Entity, Transform3D>,
+    parents: HashMap<Entity, Entity>,
+    globals: HashMap<Entity, GlobalTransform3D>,
+    scratch_locals: HashMap<Entity, Transform3D>,
+    scratch_parents: HashMap<Entity, Entity>,
+}
+
+/// Recompute global transforms only for changed entities and their affected descendants.
+///
+/// Local transforms and parent links are snapshotted each call because their fields are
+/// currently public. Composition is skipped for clean branches, and `GlobalTransform`
+/// is only written when its resolved value differs from the existing component.
 pub fn propagate_transforms(world: &mut World) {
-    let locals: HashMap<_, _> = world
-        .query::<&Transform>()
-        .iter()
-        .map(|(entity, value)| (entity, *value))
-        .collect();
-    let parents: HashMap<_, _> = world
-        .query::<&Parent>()
-        .iter()
-        .map(|(entity, parent)| (entity, parent.0))
-        .collect();
-    let mut computed = HashMap::with_capacity(locals.len());
-    let mut visiting = HashSet::new();
-    for &entity in locals.keys() {
-        resolve(entity, &locals, &parents, &mut computed, &mut visiting);
+    // Double-buffer snapshots so steady-state propagation can reuse map allocations.
+    // Move the cache out rather than cloning it; an unwind simply forces a full refresh next call.
+    let mut previous = world
+        .remove_resource::<TransformPropagationCache>()
+        .unwrap_or_default();
+    let mut locals = std::mem::take(&mut previous.scratch_locals);
+    locals.clear();
+    for (entity, value) in world.query::<&Transform>().iter() {
+        locals.insert(entity, *value);
     }
-    for (entity, transform) in computed {
+    let mut parents = std::mem::take(&mut previous.scratch_parents);
+    parents.clear();
+    for (entity, parent) in world.query::<&Parent>().iter() {
+        parents.insert(entity, parent.0);
+    }
+
+    let mut seeds = changed_entities(&previous.locals, &locals);
+    seeds.extend(changed_entities(&previous.parents, &parents));
+    for &entity in locals.keys() {
+        let cached = previous.globals.get(&entity).copied();
+        let actual = world.get::<GlobalTransform>(entity).map(|value| *value);
+        if cached != actual {
+            seeds.insert(entity);
+        }
+    }
+    let dirty = invalidate_descendants(seeds, &previous.parents, &parents);
+    let mut computed = HashMap::with_capacity(dirty.len());
+    let mut visiting = HashSet::new();
+    let dirty_entities = sorted_entities(
+        dirty
+            .iter()
+            .copied()
+            .filter(|entity| locals.contains_key(entity)),
+    );
+    for entity in dirty_entities {
+        resolve_dirty(
+            entity,
+            &locals,
+            &parents,
+            &dirty,
+            &previous.globals,
+            &mut computed,
+            &mut visiting,
+        );
+    }
+
+    for &entity in previous.locals.keys() {
+        if !locals.contains_key(&entity) {
+            let _ = world.remove::<GlobalTransform>(entity);
+        }
+    }
+    let mut globals = previous.globals;
+    globals.retain(|entity, _| locals.contains_key(entity));
+    for entity in sorted_entities(computed.keys().copied()) {
+        let transform = computed[&entity];
         let global = GlobalTransform {
             translation: transform.translation,
             rotation: transform.rotation,
             scale: transform.scale,
         };
-        if world.insert(entity, global).is_err() {
-            continue;
+        if world.get::<GlobalTransform>(entity).map(|value| *value) != Some(global) {
+            let _ = world.insert(entity, global);
         }
+        globals.insert(entity, global);
     }
+    let mut scratch_locals = previous.locals;
+    scratch_locals.clear();
+    let mut scratch_parents = previous.parents;
+    scratch_parents.clear();
+    world.insert_resource(TransformPropagationCache {
+        locals,
+        parents,
+        globals,
+        scratch_locals,
+        scratch_parents,
+    });
 }
 
-fn resolve(
+/// Recompute 3D globals incrementally using the same `Parent` graph as 2D transforms.
+///
+/// Only ancestors carrying [`Transform3D`] participate in a 3D transform chain; the
+/// legacy [`Transform`] convention is not implicitly mixed with quaternion transforms.
+pub fn propagate_transforms_3d(world: &mut World) {
+    // Reuse the alternate snapshot maps so steady-state propagation avoids repeated allocations.
+    let mut previous = world
+        .remove_resource::<Transform3DPropagationCache>()
+        .unwrap_or_default();
+    let mut locals = std::mem::take(&mut previous.scratch_locals);
+    locals.clear();
+    for (entity, value) in world.query::<&Transform3D>().iter() {
+        locals.insert(entity, *value);
+    }
+    let mut parents = std::mem::take(&mut previous.scratch_parents);
+    parents.clear();
+    for (entity, parent) in world.query::<&Parent>().iter() {
+        parents.insert(entity, parent.0);
+    }
+
+    let mut seeds = changed_entities(&previous.locals, &locals);
+    seeds.extend(changed_entities(&previous.parents, &parents));
+    for &entity in locals.keys() {
+        let cached = previous.globals.get(&entity).copied();
+        let actual = world.get::<GlobalTransform3D>(entity).map(|value| *value);
+        if cached != actual {
+            seeds.insert(entity);
+        }
+    }
+    let dirty = invalidate_descendants(seeds, &previous.parents, &parents);
+    let mut computed = HashMap::with_capacity(dirty.len());
+    let mut visiting = HashSet::new();
+    let dirty_entities = sorted_entities(
+        dirty
+            .iter()
+            .copied()
+            .filter(|entity| locals.contains_key(entity)),
+    );
+    for entity in dirty_entities {
+        resolve_dirty_3d(
+            entity,
+            &locals,
+            &parents,
+            &dirty,
+            &previous.globals,
+            &mut computed,
+            &mut visiting,
+        );
+    }
+
+    for &entity in previous.locals.keys() {
+        if !locals.contains_key(&entity) {
+            let _ = world.remove::<GlobalTransform3D>(entity);
+        }
+    }
+    let mut globals = previous.globals;
+    globals.retain(|entity, _| locals.contains_key(entity));
+    for entity in sorted_entities(computed.keys().copied()) {
+        let global = computed[&entity];
+        if world.get::<GlobalTransform3D>(entity).map(|value| *value) != Some(global) {
+            let _ = world.insert(entity, global);
+        }
+        globals.insert(entity, global);
+    }
+    let mut scratch_locals = previous.locals;
+    scratch_locals.clear();
+    let mut scratch_parents = previous.parents;
+    scratch_parents.clear();
+    world.insert_resource(Transform3DPropagationCache {
+        locals,
+        parents,
+        globals,
+        scratch_locals,
+        scratch_parents,
+    });
+}
+
+/// Return entities whose component value was added, removed, or changed.
+fn changed_entities<T: Copy + PartialEq>(
+    previous: &HashMap<Entity, T>,
+    current: &HashMap<Entity, T>,
+) -> HashSet<Entity> {
+    let mut changed = HashSet::new();
+    for (&entity, value) in current {
+        if previous.get(&entity) != Some(value) {
+            changed.insert(entity);
+        }
+    }
+    for &entity in previous.keys() {
+        if !current.contains_key(&entity) {
+            changed.insert(entity);
+        }
+    }
+    changed
+}
+
+/// Mark descendants reachable through either the old or current parent graph dirty.
+/// Including old edges is important when an entity is reparented or removed.
+fn invalidate_descendants(
+    seeds: HashSet<Entity>,
+    previous_parents: &HashMap<Entity, Entity>,
+    current_parents: &HashMap<Entity, Entity>,
+) -> HashSet<Entity> {
+    let mut children_by_parent: HashMap<Entity, Vec<Entity>> = HashMap::new();
+    for parents in [previous_parents, current_parents] {
+        for (&child, &parent) in parents.iter() {
+            children_by_parent.entry(parent).or_default().push(child);
+        }
+    }
+
+    let mut dirty = seeds;
+    let mut stack: Vec<_> = dirty.iter().copied().collect();
+    while let Some(parent) = stack.pop() {
+        if let Some(children) = children_by_parent.get(&parent) {
+            for &child in children {
+                if dirty.insert(child) {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+    dirty
+}
+
+/// Stable entity order for deterministic traversal and component writes.
+fn sorted_entities(entities: impl IntoIterator<Item = Entity>) -> Vec<Entity> {
+    let mut entities: Vec<_> = entities.into_iter().collect();
+    entities.sort_unstable_by_key(|entity| entity.to_bits().get());
+    entities
+}
+
+fn resolve_dirty(
     entity: Entity,
     locals: &HashMap<Entity, Transform>,
     parents: &HashMap<Entity, Entity>,
+    dirty: &HashSet<Entity>,
+    cached_globals: &HashMap<Entity, GlobalTransform>,
     computed: &mut HashMap<Entity, Transform>,
     visiting: &mut HashSet<Entity>,
 ) -> Transform {
+    if !dirty.contains(&entity) {
+        if let Some(&global) = cached_globals.get(&entity) {
+            return Transform {
+                translation: global.translation,
+                rotation: global.rotation,
+                scale: global.scale,
+            };
+        }
+    }
     if let Some(&transform) = computed.get(&entity) {
         return transform;
     }
@@ -142,46 +364,38 @@ fn resolve(
         .get(&entity)
         .filter(|parent| locals.contains_key(parent))
         .map_or(local, |&parent| {
-            compose(resolve(parent, locals, parents, computed, visiting), local)
+            compose(
+                resolve_dirty(
+                    parent,
+                    locals,
+                    parents,
+                    dirty,
+                    cached_globals,
+                    computed,
+                    visiting,
+                ),
+                local,
+            )
         });
     visiting.remove(&entity);
     computed.insert(entity, global);
     global
 }
 
-/// Recompute every 3D global transform from the hierarchy roots.
-///
-/// Only ancestors carrying [`Transform3D`] participate in a 3D transform chain;
-/// this prevents the legacy 2D/voxel-oriented [`Transform`] convention from being
-/// implicitly mixed with the mesh renderer's Y-up quaternion convention.
-pub fn propagate_transforms_3d(world: &mut World) {
-    let locals: HashMap<_, _> = world
-        .query::<&Transform3D>()
-        .iter()
-        .map(|(entity, value)| (entity, *value))
-        .collect();
-    let parents: HashMap<_, _> = world
-        .query::<&Parent>()
-        .iter()
-        .map(|(entity, parent)| (entity, parent.0))
-        .collect();
-    let mut computed = HashMap::with_capacity(locals.len());
-    let mut visiting = HashSet::new();
-    for &entity in locals.keys() {
-        resolve_3d(entity, &locals, &parents, &mut computed, &mut visiting);
-    }
-    for (entity, transform) in computed {
-        let _ = world.insert(entity, transform);
-    }
-}
-
-fn resolve_3d(
+fn resolve_dirty_3d(
     entity: Entity,
     locals: &HashMap<Entity, Transform3D>,
     parents: &HashMap<Entity, Entity>,
+    dirty: &HashSet<Entity>,
+    cached_globals: &HashMap<Entity, GlobalTransform3D>,
     computed: &mut HashMap<Entity, GlobalTransform3D>,
     visiting: &mut HashSet<Entity>,
 ) -> GlobalTransform3D {
+    if !dirty.contains(&entity) {
+        if let Some(&global) = cached_globals.get(&entity) {
+            return global;
+        }
+    }
     if let Some(&transform) = computed.get(&entity) {
         return transform;
     }
@@ -196,7 +410,15 @@ fn resolve_3d(
             || GlobalTransform3D::from(local),
             |&parent| {
                 compose_3d(
-                    resolve_3d(parent, locals, parents, computed, visiting),
+                    resolve_dirty_3d(
+                        parent,
+                        locals,
+                        parents,
+                        dirty,
+                        cached_globals,
+                        computed,
+                        visiting,
+                    ),
                     local,
                 )
             },
