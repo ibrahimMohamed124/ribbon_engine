@@ -268,9 +268,11 @@ impl ApplicationHandler for DesktopDriver {
             .and_then(|app| app.world.try_resource::<PlatformConfig>())
             .cloned()
             .unwrap_or_default();
-        let attributes = Window::default_attributes()
-            .with_title(config.title.clone())
-            .with_inner_size(PhysicalSize::new(config.width.max(1), config.height.max(1)));
+        let attributes = window::with_engine_icons(
+            Window::default_attributes()
+                .with_title(config.title.clone())
+                .with_inner_size(PhysicalSize::new(config.width.max(1), config.height.max(1))),
+        );
         match event_loop.create_window(attributes) {
             Ok(window) => {
                 let window = Arc::new(window);
