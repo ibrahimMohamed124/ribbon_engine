@@ -55,8 +55,9 @@ confusing integrated capabilities with features that remain in the roadmap.
   cascades or a multi-tap PCF kernel.
 - The render graph is a scheduling/dependency graph, not a transient GPU resource
   allocator or complete graph of every internal render subpass.
-- Bloom, ambient occlusion, fog, GPU culling, LOD, skeletal animation, and legacy
-  renderer deletion remain planned work.
+- Normal/AO/emissive texture sampling, height/distance fog, and a compact bright-pass
+  bloom contribution are implemented in `plugin_render3d`. GPU culling, LOD, skeletal
+  animation, and legacy renderer deletion remain planned work.
 
 ## PBR renderer test expectations
 
@@ -73,8 +74,8 @@ values.
 
 ## Local validation
 
-Run `finish-dynamic-voxel-phase.ps1` on Windows from the extracted project root. It formats
-source, checks dependency policy, runs the workspace check/clippy/build/test matrix with and
-without default features, and builds the STUDS release GPU path. The script is validation-only:
-it does not commit or push. The Rust toolchain and GPU adapter availability vary by machine; this
-file does not claim the new phase has already compiled or passed runtime checks on every target.
+The GitHub Actions workflow is the authoritative cross-platform build, test, dependency-policy,
+and Clippy matrix. For local Rust checks use `cargo fmt --check`, `cargo clippy --locked
+--workspace --all-targets -- -D warnings`, and `cargo test --locked --workspace`; the optional
+no-default-features matrix is also defined in `.github/workflows/ci.yml`. Interactive GPU
+presentation still needs a manual check on the target hardware.

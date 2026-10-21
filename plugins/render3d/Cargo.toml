@@ -17,3 +17,5 @@ pollster = "0.4"
 wgpu = "25.0.2"
 
 [dev-dependencies]
+naga = { version = "25.0.1", features = ["wgsl-in"] }
+png = "0.18"

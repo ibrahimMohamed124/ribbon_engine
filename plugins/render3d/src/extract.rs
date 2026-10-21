@@ -4,7 +4,10 @@
 //! `GpuWindowPlugin` renders its frame. GPU passes consume this compact snapshot
 //! instead of querying gameplay ECS data while recording GPU commands.
 
-use crate::components::{Camera3D, MeshInstance, ModelInstance, SunLight, VoxelMeshInstance3D};
+use crate::components::{
+    Camera3D, FogSettings, MeshInstance, ModelInstance, PointLight, SpotLight, SunLight,
+    VoxelMeshInstance3D,
+};
 use engine_app::{App, Stage, World};
 use engine_assets::Handle;
 use engine_plugins::Plugin;
@@ -68,6 +71,12 @@ pub struct ExtractedScene3D {
     pub voxels: Vec<ExtractedVoxelMesh3D>,
     /// Directional sunlight and ambient contribution for this frame.
     pub sun: SunLight,
+    /// World-space spotlight components for the native mesh renderer.
+    pub spot_lights: Vec<SpotLight>,
+    /// World-space point lights (only eight are consumed by the renderer).
+    pub point_lights: Vec<PointLight>,
+    /// Exponential atmosphere settings.
+    pub fog: FogSettings,
     /// App frame counter used by tools to correlate diagnostics with a frame.
     pub frame: u64,
 }
@@ -120,7 +129,19 @@ pub fn extract_scene_3d(world: &mut World) {
             });
         }
 
+        extracted.spot_lights.clear();
+        extracted
+            .spot_lights
+            .extend(world.query::<&SpotLight>().iter().map(|(_, light)| *light));
+        extracted.point_lights.clear();
+        extracted
+            .point_lights
+            .extend(world.query::<&PointLight>().iter().map(|(_, light)| *light));
         extracted.sun = sun;
+        extracted.fog = world
+            .try_resource::<FogSettings>()
+            .copied()
+            .unwrap_or_default();
         extracted.frame = frame;
     });
 }
@@ -162,10 +183,43 @@ impl Plugin for RenderExtraction3DPlugin {
 #[cfg(test)]
 mod tests {
     use super::{extract_scene_3d, ExtractedScene3D};
-    use crate::{Camera3D, MeshInstance};
+    use crate::{Camera3D, FogSettings, MeshInstance, PointLight, SpotLight};
     use engine_app::App;
     use engine_scene::GlobalTransform3D;
     use glam::Vec3;
+
+    #[test]
+    fn extracts_spot_and_point_lights_and_fog_settings() {
+        let mut app = App::new();
+        app.world.insert_resource(ExtractedScene3D::default());
+        let spot = SpotLight {
+            position: Vec3::new(1.0, 2.0, 3.0),
+            direction: Vec3::new(0.0, -0.2, -1.0),
+            intensity: 42.0,
+            casts_shadows: true,
+            ..SpotLight::default()
+        };
+        let point = PointLight {
+            position: Vec3::new(-1.0, 0.5, 2.0),
+            intensity: 4.5,
+            ..PointLight::default()
+        };
+        app.world.spawn((spot,));
+        app.world.spawn((point,));
+        app.world.insert_resource(FogSettings {
+            color: Vec3::new(0.03, 0.04, 0.035),
+            density: 0.08,
+            base_height: -1.0,
+            height_falloff: 0.2,
+        });
+
+        extract_scene_3d(&mut app.world);
+        let extracted = app.world.resource::<ExtractedScene3D>();
+        assert_eq!(extracted.spot_lights, vec![spot]);
+        assert_eq!(extracted.point_lights, vec![point]);
+        assert_eq!(extracted.fog.density, 0.08);
+        assert_eq!(extracted.fog.base_height, -1.0);
+    }
 
     #[test]
     fn extracts_world_space_camera_and_mesh_transforms() {

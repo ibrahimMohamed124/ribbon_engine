@@ -1,6 +1,7 @@
 // Fullscreen triangle and a simple exposure + Reinhard tone map.
 @group(0) @binding(0) var hdr_scene: texture_2d<f32>;
 @group(0) @binding(1) var hdr_sampler: sampler;
+@group(0) @binding(2) var bloom_texture: texture_2d<f32>;
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
@@ -23,7 +24,8 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let hdr = max(textureSample(hdr_scene, hdr_sampler, in.uv).rgb * 1.15, vec3<f32>(0.0));
+    let bloom = textureSample(bloom_texture, hdr_sampler, in.uv).rgb * 0.42;
+    let hdr = max(textureSample(hdr_scene, hdr_sampler, in.uv).rgb * 1.15 + bloom, vec3<f32>(0.0));
     let mapped = hdr / (vec3<f32>(1.0) + hdr);
     return vec4<f32>(mapped, 1.0);
 }

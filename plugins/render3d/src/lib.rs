@@ -13,7 +13,8 @@ pub mod post;
 pub mod renderer;
 
 pub use components::{
-    BuiltinMesh, Camera3D, MeshInstance, ModelInstance, SunLight, Transform3D, VoxelMeshInstance3D,
+    BuiltinMesh, Camera3D, FogSettings, MeshInstance, ModelInstance, PointLight, SpotLight,
+    SunLight, Transform3D, VoxelMeshInstance3D,
 };
 pub use engine_scene::GlobalTransform3D;
 pub use extract::{
@@ -22,9 +23,7 @@ pub use extract::{
 };
 pub use glam;
 pub use model::{upload_model, GpuModelPart};
-pub use offscreen::{
-    OffscreenCamera3D, OffscreenDraw3D, OffscreenVoxelRenderer, VoxelBlockColor, VoxelBlockMaterial,
-};
+pub use offscreen::{OffscreenCamera3D, OffscreenDraw3D, OffscreenVoxelRenderer, VoxelBlockColor};
 pub use renderer::{Draw, MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, Scene, TextureData};
 
 use crate::mesh::Vertex;
@@ -216,7 +215,7 @@ impl MeshPass {
         {
             self.tonemapper = Some((
                 target.format,
-                ToneMapper::new(target.device, hdr_view, target.format),
+                ToneMapper::new(target.device, hdr_view, target.format, target.size),
             ));
         }
 
@@ -242,6 +241,9 @@ impl MeshPass {
                     view_proj,
                     camera_position: camera.transform.translation,
                     sun: &extracted.sun,
+                    spot_lights: &extracted.spot_lights,
+                    point_lights: &extracted.point_lights,
+                    fog: extracted.fog,
                     draws: &draws,
                 },
             );
@@ -267,6 +269,9 @@ impl Plugin for Render3dPlugin {
     fn build(&self, app: &mut App) {
         if app.world.try_resource::<SunLight>().is_none() {
             app.insert_resource(SunLight::default());
+        }
+        if app.world.try_resource::<FogSettings>().is_none() {
+            app.insert_resource(FogSettings::default());
         }
         // ScenePlugin has already registered PostUpdate transform propagation because it is
         // an explicit dependency. Install extraction after it so all snapshots are world-space.

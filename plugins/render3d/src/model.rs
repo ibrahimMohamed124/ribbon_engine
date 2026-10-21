@@ -43,6 +43,30 @@ pub fn upload_model(
                     height: image.height,
                     rgba8: &image.rgba8,
                 });
+            let normal_texture = material
+                .normal_texture
+                .and_then(|index| model.images.get(index))
+                .map(|image| TextureData {
+                    width: image.width,
+                    height: image.height,
+                    rgba8: &image.rgba8,
+                });
+            let occlusion_texture = material
+                .occlusion_texture
+                .and_then(|index| model.images.get(index))
+                .map(|image| TextureData {
+                    width: image.width,
+                    height: image.height,
+                    rgba8: &image.rgba8,
+                });
+            let emissive_texture = material
+                .emissive_texture
+                .and_then(|index| model.images.get(index))
+                .map(|image| TextureData {
+                    width: image.width,
+                    height: image.height,
+                    rgba8: &image.rgba8,
+                });
             renderer.upload_pbr_material_with_maps(
                 device,
                 queue,
@@ -52,6 +76,11 @@ pub fn upload_model(
                     roughness: material.roughness_factor,
                     base_color_texture: texture,
                     metallic_roughness_texture,
+                    normal_texture,
+                    occlusion_texture,
+                    occlusion_strength: material.occlusion_strength,
+                    emissive_texture,
+                    emissive_factor: material.emissive_factor,
                 },
             )
         })
@@ -137,6 +166,9 @@ mod tests {
                 view_proj: Camera3D::default().projection(1.0) * view,
                 camera_position: eye.translation,
                 sun: &SunLight::default(),
+                spot_lights: &[],
+                point_lights: &[],
+                fog: crate::FogSettings::default(),
                 draws: &draws,
             },
         );

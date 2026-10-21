@@ -21,7 +21,7 @@ use plugin_audio::{AudioListener, PlaySound, SetAmbience, SoundId};
 #[cfg(feature = "gpu")]
 use plugin_render3d::{
     glam::{Mat4, Quat, Vec3},
-    OffscreenCamera3D, OffscreenDraw3D, OffscreenVoxelRenderer, SunLight, VoxelBlockMaterial,
+    OffscreenCamera3D, OffscreenDraw3D, OffscreenVoxelRenderer, SunLight, VoxelBlockColor,
 };
 use plugin_rendering::cpu::renderer::CpuRenderer;
 use plugin_rendering::ecs::{CpuBackend, DefaultShader, RenderBackend, RenderSettings};
@@ -40,8 +40,6 @@ use crate::player::Player;
 use crate::settings::Settings;
 #[cfg(feature = "gpu")]
 use crate::settings::VisualStyle;
-#[cfg(feature = "gpu")]
-use crate::surfaces::studs_gpu_voxel_materials;
 use crate::surfaces::{studs_material_table, StudsSurface};
 use crate::ui::{Screen, Ui, UiInput};
 
@@ -226,14 +224,14 @@ impl StudsRenderer {
         &mut self,
         world: &mut ChunkedVoxelWorld,
         camera: Option<OffscreenCamera3D>,
-        materials: &[VoxelBlockMaterial<'_>],
+        palette: &[VoxelBlockColor],
         sun: SunLight,
         objects: &[OffscreenDraw3D],
         clear_color: [f64; 4],
     ) -> Result<(), String> {
         let rendered = match &mut self.renderer {
             RendererImpl::MeshGpu(renderer) => {
-                renderer.render_with_materials(world, camera, materials, sun, objects, clear_color)
+                renderer.render(world, camera, palette, sun, objects, clear_color)
             }
             RendererImpl::Cpu(_) => {
                 return Err("mesh rendering was requested while the CPU backend is active".into())
@@ -736,14 +734,11 @@ fn render_game_frame(world: &mut World) {
                             .unwrap_or(Vec3::new(-0.35, -0.8, -0.45));
                         let sun = SunLight {
                             direction: light_direction.normalize_or_zero(),
-                            color: Vec3::splat(flashlight.max(0.0) * 4.0),
-                            // The CPU renderer includes a broader material response and texture
-                            // modulation. Keep a modest neutral fill on the mesh path too, so
-                            // shadowed surfaces remain legible while the flashlight is pulsing.
+                            color: Vec3::splat(flashlight.max(0.0) * 3.0),
                             ambient: Vec3::splat(match state.settings.visual_style {
-                                VisualStyle::Moody => 0.085,
-                                VisualStyle::Classic => 0.20,
-                                VisualStyle::Realistic => 0.14,
+                                VisualStyle::Moody => 0.025,
+                                VisualStyle::Classic => 0.10,
+                                VisualStyle::Realistic => 0.065,
                             }),
                         };
                         let clear_color = match state.settings.visual_style {
@@ -751,16 +746,16 @@ fn render_game_frame(world: &mut World) {
                             VisualStyle::Classic => [0.018, 0.018, 0.018, 1.0],
                             VisualStyle::Realistic => [0.008, 0.009, 0.008, 1.0],
                         };
-                        let materials = studs_gpu_voxel_materials(state.settings.visual_style);
-                        let render_result = renderer.render_voxel_world(
+                        let palette = studs_voxel_palette(state.settings.visual_style);
+                        let error = renderer.render_voxel_world(
                             maze.0.chunked_world_mut(),
                             camera,
-                            &materials,
+                            &palette,
                             sun,
                             &objects,
                             clear_color,
                         );
-                        if let Err(error) = render_result {
+                        if let Err(error) = error {
                             world.resource_mut::<engine_app::LogBuffer>().push(
                                 engine_app::LogLevel::Warn,
                                 format!("STUDS mesh renderer frame failed: {error}; falling back to CPU"),
@@ -775,13 +770,6 @@ fn render_game_frame(world: &mut World) {
                                     height: settings.height.max(1),
                                 });
                             }
-                        } else {
-                            // The legacy Z-up raycaster's horizontal camera basis is mirrored
-                            // relative to the native right-handed Y-up mesh camera. Mirror only
-                            // the GPU world image as a game compatibility adapter so mouse/arrow
-                            // yaw and WASD strafing keep the same on-screen handedness. HUD and
-                            // overlays are composited below and therefore remain unmirrored.
-                            mirror_framebuffer_horizontal(&mut renderer.output);
                         }
                         plugin_rendering::cpu::renderer::composite_frame_layers(
                             &mut renderer.output,
@@ -854,43 +842,6 @@ fn render_cpu_frame(
 }
 
 #[cfg(feature = "gpu")]
-fn mirror_framebuffer_horizontal(framebuffer: &mut Framebuffer) {
-    let width = framebuffer.width;
-    if width < 2 {
-        return;
-    }
-    for row in framebuffer.pixels.chunks_exact_mut(width) {
-        row.reverse();
-    }
-}
-
-#[cfg(all(test, feature = "gpu"))]
-mod gpu_camera_compat_tests {
-    use super::mirror_framebuffer_horizontal;
-    use engine_render::Framebuffer;
-
-    #[test]
-    fn legacy_camera_compatibility_mirrors_world_rows_without_reordering_rows() {
-        let mut framebuffer = Framebuffer::new(3, 2);
-        framebuffer.pixels.copy_from_slice(&[1, 2, 3, 4, 5, 6]);
-
-        mirror_framebuffer_horizontal(&mut framebuffer);
-
-        assert_eq!(framebuffer.pixels.as_slice(), &[3, 2, 1, 6, 5, 4]);
-    }
-
-    #[test]
-    fn horizontal_camera_compatibility_is_safe_for_narrow_framebuffers() {
-        let mut framebuffer = Framebuffer::new(1, 2);
-        framebuffer.pixels.copy_from_slice(&[7, 9]);
-
-        mirror_framebuffer_horizontal(&mut framebuffer);
-
-        assert_eq!(framebuffer.pixels.as_slice(), &[7, 9]);
-    }
-}
-
-#[cfg(feature = "gpu")]
 fn studs_camera(
     camera: plugin_rendering::Camera,
     width: usize,
@@ -910,6 +861,34 @@ fn studs_camera(
 }
 
 #[cfg(feature = "gpu")]
+fn studs_voxel_palette(style: VisualStyle) -> [VoxelBlockColor; 3] {
+    use crate::level::{CEIL, FLOOR, WALL};
+    let (floor, wall, ceiling) = match style {
+        VisualStyle::Classic => ([0.26, 0.26, 0.26], [0.38, 0.38, 0.38], [0.24, 0.24, 0.24]),
+        VisualStyle::Moody => (
+            [0.025, 0.045, 0.032],
+            [0.075, 0.13, 0.095],
+            [0.04, 0.06, 0.045],
+        ),
+        VisualStyle::Realistic => ([0.19, 0.21, 0.19], [0.30, 0.31, 0.28], [0.22, 0.23, 0.21]),
+    };
+    [
+        VoxelBlockColor {
+            block: FLOOR,
+            color: floor,
+        },
+        VoxelBlockColor {
+            block: WALL,
+            color: wall,
+        },
+        VoxelBlockColor {
+            block: CEIL,
+            color: ceiling,
+        },
+    ]
+}
+
+#[cfg(feature = "gpu")]
 fn studs_scene_objects(
     enemy: &Enemy,
     pages: &[Vect],
@@ -917,73 +896,25 @@ fn studs_scene_objects(
     time: f32,
     enemy_awake: bool,
 ) -> Vec<OffscreenDraw3D> {
-    // Enemy geometry is game-specific presentation; cube instances and their GPU lifecycle are
-    // generic engine services. Several simple parts avoid the single giant placeholder cuboid.
-    let mut objects = Vec::with_capacity(6 + pages.len());
-    let base = Vec3::new(enemy.pos.x, enemy.pos.z, -enemy.pos.y);
-    let yaw = Quat::from_rotation_y(enemy.yaw);
-    let walk = if enemy_awake {
-        (time * 4.5).sin() * 0.16
+    let mut objects = Vec::with_capacity(1 + pages.len());
+    let enemy_position = Vec3::new(enemy.pos.x, enemy.pos.z + 0.67, -enemy.pos.y);
+    let enemy_scale = if enemy_awake {
+        Vec3::new(0.52, 1.34, 0.52)
     } else {
-        (time * 0.6).sin() * 0.025
+        Vec3::new(0.42, 1.08, 0.42)
     };
-    let (torso, head, limbs) = if enemy_awake {
-        (
-            [0.48, 0.025, 0.018],
-            [0.72, 0.045, 0.025],
-            [0.30, 0.018, 0.014],
-        )
-    } else {
-        ([0.17, 0.12, 0.10], [0.24, 0.16, 0.13], [0.12, 0.085, 0.07])
-    };
-    {
-        let mut part = |offset: Vec3, scale: Vec3, local_rotation: Quat, tint: [f32; 3]| {
-            objects.push(OffscreenDraw3D {
-                model: Mat4::from_scale_rotation_translation(
-                    scale,
-                    yaw * local_rotation,
-                    base + yaw * offset,
-                ),
-                tint,
-            });
-        };
-        part(
-            Vec3::new(0.0, 1.16, 0.0),
-            Vec3::new(0.40, 0.82, 0.26),
-            Quat::IDENTITY,
-            torso,
-        );
-        part(
-            Vec3::new(0.0, 1.82, 0.0),
-            Vec3::new(0.35, 0.40, 0.32),
-            Quat::IDENTITY,
-            head,
-        );
-        part(
-            Vec3::new(-0.29, 1.10, 0.0),
-            Vec3::new(0.14, 0.72, 0.15),
-            Quat::from_rotation_z(walk),
-            limbs,
-        );
-        part(
-            Vec3::new(0.29, 1.10, 0.0),
-            Vec3::new(0.14, 0.72, 0.15),
-            Quat::from_rotation_z(-walk),
-            limbs,
-        );
-        part(
-            Vec3::new(-0.12, 0.34, 0.0),
-            Vec3::new(0.17, 0.66, 0.18),
-            Quat::from_rotation_z(-walk * 0.65),
-            limbs,
-        );
-        part(
-            Vec3::new(0.12, 0.34, 0.0),
-            Vec3::new(0.17, 0.66, 0.18),
-            Quat::from_rotation_z(walk * 0.65),
-            limbs,
-        );
-    }
+    objects.push(OffscreenDraw3D {
+        model: Mat4::from_scale_rotation_translation(
+            enemy_scale,
+            Quat::from_rotation_y(enemy.yaw),
+            enemy_position,
+        ),
+        tint: if enemy_awake {
+            [0.9, 0.055, 0.035]
+        } else {
+            [0.16, 0.12, 0.10]
+        },
+    });
 
     for (index, page) in pages.iter().enumerate() {
         if got.get(index).copied().unwrap_or(true) {

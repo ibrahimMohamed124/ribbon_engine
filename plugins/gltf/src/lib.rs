@@ -37,6 +37,16 @@ pub struct MaterialData {
     pub base_color_texture: Option<usize>,
     /// Index into [`ModelAsset::images`] for the linear G=roughness/B=metallic texture.
     pub metallic_roughness_texture: Option<usize>,
+    /// Index into images for tangent-space normal data.
+    pub normal_texture: Option<usize>,
+    /// Index into images for the red-channel ambient-occlusion texture.
+    pub occlusion_texture: Option<usize>,
+    /// glTF occlusion strength.
+    pub occlusion_strength: f32,
+    /// Index into images for emissive color (sRGB).
+    pub emissive_texture: Option<usize>,
+    /// Linear emissive multiplier.
+    pub emissive_factor: [f32; 3],
 }
 
 /// Decoded 8-bit RGBA image.
@@ -123,6 +133,19 @@ pub fn parse(bytes: &[u8]) -> Result<ModelAsset, String> {
             metallic_roughness_texture: pbr
                 .metallic_roughness_texture()
                 .map(|info| info.texture().source().index()),
+            normal_texture: material
+                .normal_texture()
+                .map(|info| info.texture().source().index()),
+            occlusion_texture: material
+                .occlusion_texture()
+                .map(|info| info.texture().source().index()),
+            occlusion_strength: material
+                .occlusion_texture()
+                .map_or(1.0, |info| info.strength()),
+            emissive_texture: material
+                .emissive_texture()
+                .map(|info| info.texture().source().index()),
+            emissive_factor: material.emissive_factor(),
         });
     }
     let scene = document

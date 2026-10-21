@@ -8,7 +8,7 @@
 use crate::components::SunLight;
 use crate::mesh::Vertex;
 use crate::post::{HdrTarget, ToneMapper, HDR_FORMAT};
-use crate::renderer::{Draw, MaterialId, MeshId, MeshRenderer, Scene, TextureData};
+use crate::renderer::{Draw, MeshId, MeshRenderer, Scene};
 use engine_render::gpu::GpuContext;
 use engine_render::gpu_window::clear_view;
 use engine_render::{graph::RenderError, Framebuffer};
@@ -51,19 +51,6 @@ pub struct VoxelBlockColor {
     pub color: [f32; 3],
 }
 
-/// Texture-backed block material for general voxel worlds. Texture data is supplied by the
-/// application, while upload, sampling, and GPU lifetime remain owned by the engine.
-/// The texture and PBR factors for a block ID are cached on first use; `color` is a per-frame
-/// linear tint and may change with visual settings.
-#[derive(Clone, Copy, Debug)]
-pub struct VoxelBlockMaterial<'a> {
-    pub block: u8,
-    pub color: [f32; 3],
-    pub metallic: f32,
-    pub roughness: f32,
-    pub base_color_texture: Option<TextureData<'a>>,
-}
-
 /// Additional unit-cube instances for general scene objects, not voxel-grid cells.
 #[derive(Clone, Copy, Debug)]
 pub struct OffscreenDraw3D {
@@ -84,7 +71,6 @@ pub struct OffscreenVoxelRenderer {
     hdr: HdrTarget,
     tonemapper: ToneMapper,
     uploaded_chunks: BTreeMap<ChunkCoord, Vec<UploadedChunkMesh>>,
-    uploaded_materials: BTreeMap<u8, MaterialId>,
     size: (u32, u32),
     context: GpuContext,
 }
@@ -97,13 +83,12 @@ impl OffscreenVoxelRenderer {
         let context = pollster::block_on(GpuContext::new_offscreen(size.0, size.1))?;
         let renderer = MeshRenderer::new(context.device(), context.queue(), HDR_FORMAT);
         let hdr = HdrTarget::new(context.device(), size);
-        let tonemapper = ToneMapper::new_offscreen_unorm(context.device(), &hdr.view);
+        let tonemapper = ToneMapper::new_offscreen_unorm(context.device(), &hdr.view, size);
         Ok(Self {
             renderer,
             hdr,
             tonemapper,
             uploaded_chunks: BTreeMap::new(),
-            uploaded_materials: BTreeMap::new(),
             size,
             context,
         })
@@ -128,7 +113,8 @@ impl OffscreenVoxelRenderer {
         }
         self.context.resize(width, height);
         self.hdr = HdrTarget::new(self.context.device(), (width, height));
-        self.tonemapper = ToneMapper::new_offscreen_unorm(self.context.device(), &self.hdr.view);
+        self.tonemapper =
+            ToneMapper::new_offscreen_unorm(self.context.device(), &self.hdr.view, (width, height));
         self.size = (width, height);
     }
 
@@ -145,34 +131,7 @@ impl OffscreenVoxelRenderer {
         objects: &[OffscreenDraw3D],
         clear_color: [f64; 4],
     ) -> Result<Framebuffer, RenderError> {
-        let materials: Vec<VoxelBlockMaterial<'_>> = block_palette
-            .iter()
-            .map(|entry| VoxelBlockMaterial {
-                block: entry.block,
-                color: entry.color,
-                metallic: 0.0,
-                roughness: 0.82,
-                base_color_texture: None,
-            })
-            .collect();
-        self.render_with_materials(world, camera, &materials, sun, objects, clear_color)
-    }
-
-    /// Render a mutable voxel world using application-provided block materials. Albedo textures
-    /// are cached once per block ID; use `color` for dynamic tints such as a game's visual style.
-    /// Chunk remeshing, texture uploads, GPU buffers, shadows, tone mapping, and readback remain
-    /// generic engine responsibilities.
-    pub fn render_with_materials(
-        &mut self,
-        world: &mut ChunkedVoxelWorld,
-        camera: Option<OffscreenCamera3D>,
-        block_materials: &[VoxelBlockMaterial<'_>],
-        sun: SunLight,
-        objects: &[OffscreenDraw3D],
-        clear_color: [f64; 4],
-    ) -> Result<Framebuffer, RenderError> {
         self.sync_dirty_chunks(world);
-        self.sync_block_materials(block_materials);
         clear_view(
             self.context.device(),
             self.context.queue(),
@@ -184,18 +143,13 @@ impl OffscreenVoxelRenderer {
             let mut draws = Vec::new();
             for meshes in self.uploaded_chunks.values() {
                 for uploaded in meshes {
-                    let block_material = block_materials
+                    let color = block_palette
                         .iter()
-                        .find(|entry| entry.block == uploaded.source.block);
-                    let color = block_material.map_or([0.58, 0.58, 0.58], |entry| entry.color);
-                    let material = self
-                        .uploaded_materials
-                        .get(&uploaded.source.block)
-                        .copied()
-                        .unwrap_or(MeshRenderer::WHITE);
+                        .find(|entry| entry.block == uploaded.source.block)
+                        .map_or([0.58, 0.58, 0.58], |entry| entry.color);
                     draws.push(Draw {
                         mesh: uploaded.id,
-                        material,
+                        material: MeshRenderer::WHITE,
                         model: Mat4::from_translation(Vec3::from_array(
                             uploaded.source.origin_y_up,
                         )),
@@ -233,6 +187,9 @@ impl OffscreenVoxelRenderer {
                     view_proj: projection * view,
                     camera_position: camera.position,
                     sun: &sun,
+                    spot_lights: &[],
+                    point_lights: &[],
+                    fog: crate::FogSettings::default(),
                     draws: &draws,
                 };
                 self.renderer.render(
@@ -251,23 +208,6 @@ impl OffscreenVoxelRenderer {
             self.context.target().view(),
         );
         self.context.readback()
-    }
-
-    fn sync_block_materials(&mut self, materials: &[VoxelBlockMaterial<'_>]) {
-        for material in materials {
-            if self.uploaded_materials.contains_key(&material.block) {
-                continue;
-            }
-            let id = self.renderer.upload_pbr_material(
-                self.context.device(),
-                self.context.queue(),
-                [1.0, 1.0, 1.0, 1.0],
-                material.metallic,
-                material.roughness,
-                material.base_color_texture,
-            );
-            self.uploaded_materials.insert(material.block, id);
-        }
     }
 
     fn sync_dirty_chunks(&mut self, world: &mut ChunkedVoxelWorld) {
