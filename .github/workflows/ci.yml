@@ -14,6 +14,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RUSTFLAGS: ${{ matrix.os == 'ubuntu-latest' && '-C link-arg=-fuse-ld=bfd' || '' }}
+      CARGO_PROFILE_DEV_DEBUG: ${{ matrix.os == 'ubuntu-latest' && '0' || '2' }}
+      CARGO_PROFILE_TEST_DEBUG: ${{ matrix.os == 'ubuntu-latest' && '0' || '2' }}
     strategy:
       fail-fast: false
       matrix:
