@@ -163,7 +163,7 @@ fn spotlight_pcf_shadow(shadow_position: vec4<f32>, n_dot_l: f32) -> f32 {
 
     // Perspective depth has much finer precision close to the light and compresses
     // distant depth values. Use a separate, smaller bias than the directional map or
-    // the bias can erase the actual flashlight shadows on the floor and far wall.
+    // the bias can erase actual spotlight shadows on the floor and far wall.
     let bias = max(0.000025, 0.00018 * (1.0 - n_dot_l));
     let texel = 1.0 / vec2<f32>(textureDimensions(spot_shadow_map));
     var visibility = 0.0;

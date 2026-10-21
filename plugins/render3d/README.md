@@ -34,7 +34,7 @@ The offscreen output is tone-mapped and converted to sRGB before readback into
 `engine_render::Framebuffer`. `GpuContext`/adapter initialization can fail on a target without
 a usable GPU adapter, so callers should retain a fallback renderer.
 
-This adapter exists for applications such as STUDS that still present through
+This adapter exists for applications that still present through
 `WindowFrame`. Applications using `GpuWindowPlugin` can continue to use the native-surface
 `Render3dPlugin` and `VoxelMeshInstance3D` ECS components directly.
 
@@ -55,9 +55,7 @@ spotlights, cascaded shadows, image-based lighting, screen-space ambient occlusi
 GPU-driven culling, skinned meshes, or external glTF resource resolution. The
 spotlight-shadow and bloom implementations still need validation across a range of
 Windows GPU adapters; a headless spot-lit corridor test writes `target/spotlight_corridor.png`
-when an adapter is available. STUDS' GPU route now uses
-`OffscreenVoxelRenderer`; its CPU reference backend and the old `plugin_rendering` raycaster
-source remain available during rollout. Manual GPU gameplay smoke checks must pass before
-that compatibility implementation is removed. See
+when an adapter is available. Applications can use `OffscreenVoxelRenderer` for offscreen
+voxel rendering; `plugin_rendering` also retains its CPU and GPU voxel raycasters. See
 [`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md) and
 [`../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md`](../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md).

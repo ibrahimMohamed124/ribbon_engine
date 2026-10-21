@@ -440,7 +440,7 @@ impl MeshRenderer {
         });
         let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let spot_shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("flashlight perspective shadow map"),
+            label: Some("spotlight perspective shadow map"),
             size: wgpu::Extent3d {
                 width: shadow_size,
                 height: shadow_size,
@@ -795,13 +795,13 @@ impl MeshRenderer {
             }],
         });
         let spot_shadow_globals = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("flashlight shadow globals"),
+            label: Some("spotlight shadow globals"),
             size: std::mem::size_of::<ShadowGlobals>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let spot_shadow_globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("flashlight shadow globals bind group"),
+            label: Some("spotlight shadow globals bind group"),
             layout: &shadow_globals_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -1324,7 +1324,7 @@ impl MeshRenderer {
         }
         if shadow_spot.is_some() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("flashlight perspective shadow map"),
+                label: Some("spotlight perspective shadow map"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.spot_shadow_target.view,
@@ -1350,7 +1350,7 @@ impl MeshRenderer {
                         .count();
                 let mesh = self.meshes[mesh_id.0]
                     .as_ref()
-                    .expect("draw list was validated before recording flashlight shadows");
+                    .expect("draw list was validated before recording spotlight shadows");
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
@@ -1682,7 +1682,7 @@ mod tests {
             Vec3::Y,
         );
         let view = Mat4::from_rotation_translation(camera.rotation, camera.translation).inverse();
-        let flashlight = SpotLight {
+        let spotlight = SpotLight {
             // Place the test light close enough to the central blocker that its
             // floor shadow receives enough linear-light energy to survive RGBA8
             // quantization in this headless regression target.
@@ -1741,14 +1741,14 @@ mod tests {
                 .expect("read back spotlight corridor")
                 .pixels
         };
-        let framebuffer_pixels = render_corridor(&mut renderer, flashlight);
+        let framebuffer_pixels = render_corridor(&mut renderer, spotlight);
         // A second frame with the exact same light and geometry but disabled shadows
         // makes this a regression check for the shadow map, not merely a dark-corner check.
         let unshadowed_pixels = render_corridor(
             &mut renderer,
             SpotLight {
                 casts_shadows: false,
-                ..flashlight
+                ..spotlight
             },
         );
         let mut shadow_changed_pixels = 0usize;
