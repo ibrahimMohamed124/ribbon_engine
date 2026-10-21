@@ -12,8 +12,10 @@ try {
     # Keep the commands serial and non-incremental to reduce memory pressure on Windows.
     $env:CARGO_INCREMENTAL = '0'
     Write-Host '== Rust formatting ==' -ForegroundColor Cyan
-    cargo fmt --all -- --check
-    if ($LASTEXITCODE -ne 0) { throw "cargo fmt --all -- --check failed with exit code $LASTEXITCODE" }
+    cargo fmt
+    if ($LASTEXITCODE -ne 0) { throw "cargo fmt failed with exit code $LASTEXITCODE" }
+    cargo fmt --check
+    if ($LASTEXITCODE -ne 0) { throw "cargo fmt --check failed with exit code $LASTEXITCODE" }
 
     Write-Host '== Clippy (all targets, warnings denied) ==' -ForegroundColor Cyan
     cargo clippy --workspace --all-targets -j 1 -- -D warnings
