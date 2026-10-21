@@ -335,7 +335,7 @@ def _write_glb(path: Path, parts: list[Part], materials: list[dict], manifests: 
             if key in texture_indices:
                 continue
             data, mime_type, info = _get_map(asset, map_kind, manifests)
-            texture_indices[key] = len(images)
+            texture_indices[key] = len(image_payloads)
             image_payloads.append((asset, map_kind, data))
             record = {"sha256": info[1], "status": info[2], "asset": POLYHAVEN[asset]["title"], "map": map_kind}
             if info[0] is not None:
@@ -346,7 +346,7 @@ def _write_glb(path: Path, parts: list[Part], materials: list[dict], manifests: 
             key = ("emissive_white_PLACEHOLDER", "emissive")
             if key not in texture_indices:
                 data = ep.read_bytes()
-                texture_indices[key] = len(images)
+                texture_indices[key] = len(image_payloads)
                 image_payloads.append((key[0], key[1], data))
                 manifests.setdefault("asset_records", []).append({"path": str(ep.relative_to(ROOT)).replace("\\", "/"), "sha256": hashlib.sha256(data).hexdigest(), "status": "PLACEHOLDER", "asset": "white emissive multiplier"})
     for asset, map_kind, data in image_payloads:
