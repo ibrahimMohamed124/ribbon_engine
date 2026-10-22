@@ -27,6 +27,8 @@ This generated concept image is bundled as a layout/lighting target only; it is 
   and OpenGL-normal maps. Deterministic procedural PBR maps remain available as fallbacks and are
   marked `PLACEHOLDER` in `assets/asset_manifest.json`.
 
+The generated glTF material indices map diffuse, ARM (AO/roughness/metallic), normal, and emissive slots to their intended embedded images. `plugin_render3d` shares GPU textures across material/model assets when decoded pixels, dimensions, and color-space format match; the profile report separates unique texture mip-chain estimates from material uniform estimates. See [`../../docs/TEXTURE_MATERIAL_MEMORY_AUDIT.md`](../../docs/TEXTURE_MATERIAL_MEMORY_AUDIT.md).
+
 The camera now moves and is constrained by the static room/prop colliders. The door/key are not
 interactive yet; the monster is not skeletal-animated or AI-controlled; positional audio and save
 serialization remain future phases and are not claimed as implemented.

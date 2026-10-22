@@ -76,6 +76,14 @@ callers. See [`TRANSFORM_INVALIDATION.md`](TRANSFORM_INVALIDATION.md) for the im
 
 **Not claimed yet:** no actual VRAM reading, allocation attribution from the driver, async framebuffer readback, general transient aliasing, or complete per-GPU-pass measurements are provided. No performance speedup is claimed until identical baseline/current scenarios have been measured on target hardware. Run the workspace validation matrix and capture at least the mixed mesh and dynamic voxel scenarios before selecting the first data-driven optimization. See [`GPU_RESOURCE_LIFETIME_PROFILING.md`](GPU_RESOURCE_LIFETIME_PROFILING.md) and [`PERFORMANCE_BASELINES.md`](PERFORMANCE_BASELINES.md).
 
+## Priority 4a — texture and material memory audit
+
+**Status:** asset-reference correction, renderer texture sharing, and allocation-accounting breakdown implemented in source; target-side build/runtime/profile confirmation remains.
+
+The Horror Slice capture reported 224 MiB of estimated material data/textures. Static inspection found that `tools/horror_room_assets.py` computed material texture indices from `len(images)` before that list was populated, so maps all referenced texture zero. The generator and checked-in GLB references now route diffuse, ARM, normal, and emissive inputs to their intended images. `plugin_render3d::MeshRenderer` shares GPU texture allocations across materials and GLBs when decoded pixel content, dimensions, and sRGB/linear format match. Materials hold strong references; a weak cache does not retain unused GPU textures. Resource diagnostics now count unique live material textures once and expose texture bytes, uniform bytes, unique texture count, and cache hit/miss counters.
+
+The nine unique 1K maps plus one 128x128 emissive placeholder imply a rough post-fix texture estimate around 48.1 MiB plus tiny fallbacks and material uniforms; this is a prediction, not an observed result. Correcting the GLB map indices changes the Horror Slice look to use the intended maps, so a visual check is part of acceptance. See [`TEXTURE_MATERIAL_MEMORY_AUDIT.md`](TEXTURE_MATERIAL_MEMORY_AUDIT.md).
+
 ## Priority 5 — data-driven rendering optimization (measurement-gated)
 
 **Status:** planned after repeatable captures have been collected; do not implement candidate optimizations on a guess alone.
