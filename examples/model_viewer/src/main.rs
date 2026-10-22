@@ -4,6 +4,7 @@
 //! The bundled textured cube is shown when no path is supplied. Source IO and glTF CPU decoding
 //! run asynchronously; GPU resources are uploaded later by the render pass. Only `.glb` files (or
 //! `.gltf` files with embedded data) are supported.
+//! Optional: `cargo run -p model_viewer --release -- --frames 1800 --profile-csv target/profiles/model-viewer.csv`.
 
 use engine_app::{App, AppExit, Stage, Time, World};
 use engine_assets::{AssetPlugin, AssetRef, AssetServer, FsSource, LoadState};
@@ -11,6 +12,7 @@ use engine_events::WorldEventsExt;
 use engine_platform::{PlatformConfig, PlatformPlugin};
 use engine_plugins::AppPluginExt;
 use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use engine_render::profiling::RenderProfilePlugin;
 use engine_scene::ScenePlugin;
 use plugin_gltf::{GltfLoader, ModelAsset};
 use plugin_render3d::glam::{Quat, Vec3};
@@ -127,6 +129,8 @@ fn orbit_system(world: &mut World) {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut limit = None;
+    let mut profile_csv: Option<String> = None;
+    let mut profile_warmup = 120_u64;
     let mut model_path: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -137,6 +141,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .ok_or("--frames expects a number")?
                         .parse::<u64>()?,
                 );
+            }
+            "--profile-csv" => {
+                profile_csv = Some(args.next().ok_or("--profile-csv expects a path")?);
+            }
+            "--profile-warmup" => {
+                profile_warmup = args
+                    .next()
+                    .ok_or("--profile-warmup expects a number")?
+                    .parse::<u64>()?;
+            }
+            "--help" | "-h" => {
+                println!(
+                    "model_viewer\n\nOptions:\n  [MODEL.glb]            Optional model path\n  --frames N             Exit after N frames\n  --profile-csv PATH     Write a render profile CSV at shutdown\n  --profile-warmup N     Frames excluded before capture (default: 120)\n  -h, --help             Show this help"
+                );
+                return Ok(());
             }
             path if !path.starts_with("--") => model_path = Some(PathBuf::from(path)),
             other => return Err(format!("unknown argument `{other}`").into()),
@@ -175,6 +194,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_plugin(AssetPlugin)?;
     app.add_plugin(GpuWindowPlugin)?;
     app.add_plugin(Render3dPlugin)?;
+    if let Some(path) = profile_csv {
+        app.add_plugin(RenderProfilePlugin::new(path).warmup_frames(profile_warmup))?;
+    }
 
     let lease = {
         let server = app.world.resource_mut::<AssetServer>();

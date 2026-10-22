@@ -80,9 +80,10 @@ order. The fixed-step loop is capped at eight steps per frame. `Startup` and
 
 Plugins are added in dependency order. Adding a plugin validates its declared
 dependencies and unique name, calls `build`, and records it in `Plugins`;
-`finish` hooks run when the app is built. Systems run serially in deterministic
-stage order. A plugin should declare its dependencies, install resources, and
-register systems in the appropriate stages.
+`finish` hooks run when the app is built. The scheduler preserves deterministic
+stage ordering: legacy systems run as exclusive barriers while compatible,
+access-declared systems may run in conflict-free batches. A plugin should declare
+its dependencies, install resources, and register systems in the appropriate stages.
 
 ## Writing a plugin or game
 
@@ -94,9 +95,10 @@ workspace.
 
 ## Current limits and migration state
 
-- Systems run serially and systems currently receive exclusive `&mut World`; there is no system-parameter access declaration yet. Parallel scheduling must wait for declared read/write access sets and conflict validation rather than parallelizing arbitrary `World` access.
+- `engine_schedule` now supports access-declared parallel callbacks alongside legacy exclusive `&mut World` systems. It validates declarations, builds deterministic conflict-free batches, exposes the plan, and retains a serial fallback. Structural world mutations and conditional systems remain barriers; the metadata is a caller contract rather than compile-time filtering. Target-side compile/runtime checks and serial-vs-parallel comparisons remain pending. See `docs/ACCESS_DECLARED_PARALLEL_SCHEDULER.md`.
+- `engine_render` profiles CPU graph/frame time, optionally collects asynchronous wgpu timestamp samples for the 3D shadow/mesh work, and tracks estimated GPU resource categories. `plugin_render3d` uses generation-checked mesh/material handles and transient HDR target leases with a cache budget in both window and offscreen renderers; estimates are not actual VRAM readings. See `docs/GPU_RESOURCE_LIFETIME_PROFILING.md`.
 - `engine_assets` supports worker-backed source IO/CPU decode through `request` / `request_ref`, bounded request/completion queues, lifecycle events, strong `AssetRef<T>` leases, and generation-safe eviction. Legacy synchronous `load` and weak `Handle<T>` remain available; auto-eviction is opt-in. For `AssetPlugin` and asynchronous-request users, hot-reload timestamp polling remains on the server thread, while changed-file reads and CPU decoding run on workers; direct synchronous-only users can retain immediate reload behavior. Request priority, cancellation, progress, and byte-budget/LRU policies remain future work. See `docs/ASSET_LIFETIME_STREAMING.md`.
-- The render graph validates named-resource dependencies and orders native window frame passes, but is not yet a transient resource allocator, async scheduler, or GPU profiler. Resource aliasing/lifetime and GPU timing should be added as separate measured milestones.
+- The render graph validates named-resource dependencies and orders native window frame passes. CPU node timings are available through `run_frame_profiled`; the optional GPU timestamp profiler currently covers the 3D shadow/mesh interval, not every graph node. The graph is not a general transient-resource allocator and does not perform within-frame resource aliasing. The opt-in `RenderProfilePlugin` captures bounded post-warmup samples and writes normalized CSV on shutdown; `tools/render_profile_report.py` emits Markdown distribution/pass summaries and can compare P95 values. See `docs/GPU_RESOURCE_LIFETIME_PROFILING.md` and `docs/PERFORMANCE_BASELINES.md`.
 - `plugin_voxel::ChunkedVoxelWorld` owns edit revisions, dirty chunk invalidation and incremental greedy remeshing. `plugin_render3d::OffscreenVoxelRenderer` consumes those updates and uploads/releases chunk GPU meshes; the native ECS `Render3dPlugin` path also releases voxel meshes removed from the extracted scene. STUDS' GPU backend uses the offscreen mesh renderer bridge, while the CPU raycaster remains the deterministic reference/fallback. See `docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md`.
 - `WinitRunner` must create the `softbuffer` CPU presenter only after `WindowFrame`
   contains a complete non-empty image. `PlatformPlugin` registers the resource for every

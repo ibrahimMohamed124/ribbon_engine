@@ -7,7 +7,7 @@ mod world;
 
 pub use commands::Commands;
 pub use hecs::{Bundle, Component, Entity, Query, QueryBorrow, QueryMut, Ref, RefMut};
-pub use world::{Resources, World};
+pub use world::{Resources, SyncResource, World};
 
 #[cfg(test)]
 mod tests {

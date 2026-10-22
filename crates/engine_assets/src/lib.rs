@@ -19,7 +19,9 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#[cfg(any(feature = "hot_reload", debug_assertions))]
+use std::time::Instant;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Opaque identity shared by typed views of one asset path.
 ///
@@ -422,6 +424,7 @@ pub trait AssetLoader: Send + Sync + 'static {
 }
 
 type ErasedAssetMap = HashMap<TypeId, Box<dyn Any + Send + Sync>>;
+type AssetRemover = fn(&mut ErasedAssetMap, AssetId, u32) -> bool;
 
 trait ErasedLoader: Send + Sync {
     fn asset_type(&self) -> TypeId;
@@ -635,12 +638,13 @@ impl WorkerPool {
 pub struct AssetServer {
     sources: Vec<SourceEntry>,
     loaders: HashMap<String, Arc<dyn ErasedLoader>>,
-    asset_removers: HashMap<TypeId, fn(&mut ErasedAssetMap, AssetId, u32) -> bool>,
+    asset_removers: HashMap<TypeId, AssetRemover>,
     assets: ErasedAssetMap,
     revisions: HashMap<(AssetId, u32), u64>,
     paths: HashMap<(TypeId, String), PathEntry>,
     next_id: u64,
     next_source_id: u64,
+    #[cfg(any(feature = "hot_reload", debug_assertions))]
     last_poll: Instant,
     poll_interval: Duration,
     workers: Option<WorkerPool>,
@@ -670,6 +674,7 @@ impl Default for AssetServer {
             paths: HashMap::new(),
             next_id: 1,
             next_source_id: 1,
+            #[cfg(any(feature = "hot_reload", debug_assertions))]
             last_poll: Instant::now(),
             poll_interval: Duration::from_millis(500),
             workers: None,
@@ -1122,9 +1127,7 @@ impl AssetServer {
 
     /// Mutably get a typed asset by handle. Stale generations return `None`.
     pub fn get_mut<T: Asset>(&mut self, handle: Handle<T>) -> Option<&mut T> {
-        if self.get(handle).is_none() {
-            return None;
-        }
+        self.get(handle)?;
         // Conservatively mark mutable access as a content change: the caller may mutate any field
         // after this reference is returned, so derived renderer resources must be considered dirty.
         let revision = self
@@ -1150,11 +1153,8 @@ impl AssetServer {
     pub fn poll_pending_loads(&mut self) -> Vec<AssetEvent> {
         let mut completions = Vec::new();
         if let Ok(receiver) = self.completion_rx.lock() {
-            loop {
-                match receiver.try_recv() {
-                    Ok(completion) => completions.push(completion),
-                    Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
-                }
+            while let Ok(completion) = receiver.try_recv() {
+                completions.push(completion);
             }
         }
 

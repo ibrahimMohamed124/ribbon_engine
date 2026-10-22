@@ -4,6 +4,7 @@ use crate::mesh::Vertex;
 use crate::renderer::{MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, TextureData};
 use glam::Mat4;
 use plugin_gltf::ModelAsset;
+use std::collections::HashSet;
 
 /// One uploaded primitive and where it sits in model space.
 #[derive(Clone, Copy, Debug)]
@@ -16,17 +17,29 @@ pub struct GpuModelPart {
     pub transform: Mat4,
 }
 
-/// Upload every primitive and material of `model`; returns its placed parts.
+/// Upload every placed primitive and the materials referenced by those parts.
 pub fn upload_model(
     renderer: &mut MeshRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     model: &ModelAsset,
 ) -> Vec<GpuModelPart> {
-    let materials: Vec<MaterialId> = model
+    let used_materials: HashSet<usize> = model
+        .nodes
+        .iter()
+        .filter_map(|node| model.primitives.get(node.primitive)?.material)
+        .collect();
+    // Don't allocate GPU resources for file materials that are not referenced by any placed
+    // primitive in the loaded scene. These IDs would otherwise never appear in GpuModelPart and
+    // therefore could not be released with the rest of that model's cache entry.
+    let materials: Vec<Option<MaterialId>> = model
         .materials
         .iter()
-        .map(|material| {
+        .enumerate()
+        .map(|(index, material)| {
+            if !used_materials.contains(&index) {
+                return None;
+            }
             let texture = material
                 .base_color_texture
                 .and_then(|index| model.images.get(index))
@@ -67,7 +80,7 @@ pub fn upload_model(
                     height: image.height,
                     rgba8: &image.rgba8,
                 });
-            renderer.upload_pbr_material_with_maps(
+            Some(renderer.upload_pbr_material_with_maps(
                 device,
                 queue,
                 PbrMaterialDesc {
@@ -82,7 +95,7 @@ pub fn upload_model(
                     emissive_texture,
                     emissive_factor: material.emissive_factor,
                 },
-            )
+            ))
         })
         .collect();
     let meshes: Vec<MeshId> = model
@@ -110,7 +123,7 @@ pub fn upload_model(
             mesh: meshes[node.primitive],
             material: model.primitives[node.primitive]
                 .material
-                .and_then(|index| materials.get(index).copied())
+                .and_then(|index| materials.get(index).copied().flatten())
                 .unwrap_or(MeshRenderer::WHITE),
             transform: node.transform,
         })

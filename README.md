@@ -1,9 +1,9 @@
 # Voxelworks Engine
 
-Voxelworks is a Rust game engine built around a small ECS core, a staged
-scheduler and optional plugins, with a voxel raycasting renderer (CPU and GPU)
-and a wgpu mesh renderer. The [`studs`](games/studs/) game demonstrates an
-application built on it.
+Voxelworks is a Rust game engine built around a small ECS core, a staged scheduler
+with access-declared parallel execution and a deterministic serial fallback, and
+optional plugins. It includes a voxel raycasting renderer (CPU and GPU) and a wgpu
+mesh renderer. The [`studs`](games/studs/) game demonstrates an application built on it.
 
 > **Status:** `studs` now starts through the ECS `engine_app::App` with
 > `engine_platform`, `engine_scene`, `plugin_rendering`, and `plugin_audio`.
@@ -28,8 +28,11 @@ application built on it.
 | `docs/`, `tools/` | Architecture decisions, migration records, dependency policy, and tooling |
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for the dependency graph, frame order and
-known limits, [docs/SCALABILITY_ROADMAP.md](docs/SCALABILITY_ROADMAP.md) for future work,
-and [CONTRIBUTING.md](CONTRIBUTING.md) before adding code. The cleanup summary and verification
+known limits, [docs/SCALABILITY_ROADMAP.md](docs/SCALABILITY_ROADMAP.md),
+[docs/GPU_RESOURCE_LIFETIME_PROFILING.md](docs/GPU_RESOURCE_LIFETIME_PROFILING.md), and
+[docs/PERFORMANCE_BASELINES.md](docs/PERFORMANCE_BASELINES.md) for scalability, GPU profiling, and
+repeatable performance capture; read [CONTRIBUTING.md](CONTRIBUTING.md) before adding code. The cleanup
+summary and verification
 boundary are in [docs/ARCHITECTURE_REFACTOR_CLOSEOUT.md](docs/ARCHITECTURE_REFACTOR_CLOSEOUT.md).
 
 ## Running

@@ -2,6 +2,7 @@
 //!
 //! Run with `cargo run -p graphics_showcase` from the repository root.
 //! Optional: `cargo run -p graphics_showcase -- --frames 600` exits after N frames.
+//! Optional: `cargo run -p graphics_showcase --release -- --frames 1800 --profile-csv target/profiles/graphics-showcase.csv`.
 
 use engine_app::{App, AppExit, Stage, Time, World};
 use engine_assets::{AssetPlugin, AssetServer, FsSource};
@@ -10,6 +11,7 @@ use engine_platform::input::Key;
 use engine_platform::{Input, PlatformConfig, PlatformPlugin};
 use engine_plugins::AppPluginExt;
 use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use engine_render::profiling::RenderProfilePlugin;
 use engine_scene::ScenePlugin;
 use plugin_gltf::{GltfLoader, ModelAsset};
 use plugin_render3d::glam::{Quat, Vec3};
@@ -401,6 +403,8 @@ fn add_scene(
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut frame_limit = None;
+    let mut profile_csv: Option<String> = None;
+    let mut profile_warmup = 120_u64;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -410,6 +414,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .ok_or("--frames expects a number")?
                         .parse::<u64>()?,
                 );
+            }
+            "--profile-csv" => {
+                profile_csv = Some(args.next().ok_or("--profile-csv expects a path")?);
+            }
+            "--profile-warmup" => {
+                profile_warmup = args
+                    .next()
+                    .ok_or("--profile-warmup expects a number")?
+                    .parse::<u64>()?;
+            }
+            "--help" | "-h" => {
+                println!(
+                    "graphics_showcase\n\nOptions:\n  --frames N             Exit after N frames\n  --profile-csv PATH     Write a render profile CSV at shutdown\n  --profile-warmup N     Frames excluded before capture (default: 120)\n  -h, --help             Show this help"
+                );
+                return Ok(());
             }
             other => return Err(format!("unknown argument `{other}`").into()),
         }
@@ -460,6 +479,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         ambient: Vec3::splat(0.20),
     });
     app.add_plugin(Render3dPlugin)?;
+    if let Some(path) = profile_csv {
+        app.add_plugin(RenderProfilePlugin::new(path).warmup_frames(profile_warmup))?;
+    }
 
     app.world.spawn((
         Transform3D::looking_at(

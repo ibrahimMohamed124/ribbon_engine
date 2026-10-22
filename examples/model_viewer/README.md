@@ -17,3 +17,18 @@ cargo run -p model_viewer -- path\to\model.glb
 ```
 
 A failed request is reported once on the console. This example intentionally retains the last requested lease for its lifetime; it does not enable automatic cache eviction.
+
+## Render profiling capture
+
+Run the example in release mode with a finite frame count to write a CSV report after shutdown.
+The default warmup is 120 successfully rendered frames; set `--profile-warmup N` to change it.
+For example:
+
+```powershell
+cargo run --release -p model_viewer -- --frames 1800 --profile-csv target/profiles/model-viewer.csv
+python tools/render_profile_report.py target/profiles/model-viewer.csv --output target/profiles/model-viewer.md
+```
+
+Compare runs only on the same machine, GPU adapter, resolution, build profile, scene setup, and
+frame-count/warmup settings. GPU timestamps are asynchronous and the current GPU interval covers
+shadow plus mesh rendering, not the whole frame. Resource byte counts are estimates, not driver VRAM readings.

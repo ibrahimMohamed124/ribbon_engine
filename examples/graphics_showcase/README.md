@@ -35,3 +35,18 @@ This is a first PBR/rendering vertical slice, not a complete modern renderer. No
 occlusion and emissive maps, alpha modes, cascaded/soft shadows, point/spot lights,
 ambient occlusion, bloom, fog, IBL, GPU culling and STUDS migration remain future
 work. See [`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md).
+
+## Render profiling capture
+
+Run the example in release mode with a finite frame count to write a CSV report after shutdown.
+The default warmup is 120 successfully rendered frames; set `--profile-warmup N` to change it.
+For example:
+
+```powershell
+cargo run --release -p graphics_showcase -- --frames 1800 --profile-csv target/profiles/graphics-showcase.csv
+python tools/render_profile_report.py target/profiles/graphics-showcase.csv --output target/profiles/graphics-showcase.md
+```
+
+Compare runs only on the same machine, GPU adapter, resolution, build profile, scene setup, and
+frame-count/warmup settings. GPU timestamps are asynchronous and the current GPU interval covers
+shadow plus mesh rendering, not the whole frame. Resource byte counts are estimates, not driver VRAM readings.

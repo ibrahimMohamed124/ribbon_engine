@@ -75,3 +75,18 @@ cargo run -p horror_slice
 `target/spotlight_corridor.png` and prints the path when a suitable adapter exists;
 if no adapter is available, it prints a clear skip message. That screenshot is a test
 fixture, not proof that the interactive Windows composition matches the concept art.
+
+## Render profiling capture
+
+Run the example in release mode with a finite frame count to write a CSV report after shutdown.
+The default warmup is 120 successfully rendered frames; set `--profile-warmup N` to change it.
+For example:
+
+```powershell
+cargo run --release -p horror_slice -- --frames 1800 --profile-csv target/profiles/horror-slice.csv
+python tools/render_profile_report.py target/profiles/horror-slice.csv --output target/profiles/horror-slice.md
+```
+
+Compare runs only on the same machine, GPU adapter, resolution, build profile, scene setup, and
+frame-count/warmup settings. GPU timestamps are asynchronous and the current GPU interval covers
+shadow plus mesh rendering, not the whole frame. Resource byte counts are estimates, not driver VRAM readings.

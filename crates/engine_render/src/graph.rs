@@ -3,10 +3,14 @@
 #[cfg(feature = "gpu")]
 use crate::gpu_window::FrameTarget;
 #[cfg(feature = "gpu")]
+use crate::profiling::{RenderGraphTiming, RenderPassTiming};
+#[cfg(feature = "gpu")]
 use engine_app::World;
 use std::any::{Any, TypeId};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+#[cfg(feature = "gpu")]
+use std::time::Instant;
 
 /// Error returned by a rendering node.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -205,6 +209,36 @@ impl RenderGraph {
             self.nodes[index].run_frame(context, world, target)?;
         }
         Ok(())
+    }
+
+    /// Execute one native GPU frame and return CPU timing for every graph node.
+    ///
+    /// These durations measure CPU-side invocation/encoding, not asynchronous GPU execution.
+    /// Backends with timestamp queries should publish their GPU samples separately.
+    #[cfg(feature = "gpu")]
+    pub fn run_frame_profiled(
+        &mut self,
+        context: &mut RenderContext,
+        world: &mut World,
+        target: &FrameTarget<'_>,
+    ) -> Result<RenderGraphTiming, RenderError> {
+        if self.order.len() != self.nodes.len() {
+            self.build()
+                .map_err(|error| RenderError(error.to_string()))?;
+        }
+        let graph_started = Instant::now();
+        let mut timing = RenderGraphTiming::default();
+        timing.passes.reserve(self.order.len());
+        for &index in &self.order {
+            let node_started = Instant::now();
+            self.nodes[index].run_frame(context, world, target)?;
+            timing.passes.push(RenderPassTiming {
+                name: self.nodes[index].name().to_owned(),
+                cpu_time_ns: node_started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+            });
+        }
+        timing.cpu_time_ns = graph_started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+        Ok(timing)
     }
 }
 

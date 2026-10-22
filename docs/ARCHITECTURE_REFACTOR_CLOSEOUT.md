@@ -24,7 +24,7 @@ Date: 2026-10-21
 
 Removing legacy architecture and cleaning dependency/CI boundaries improves maintainability, but it does not make every runtime subsystem scale without further work. The current engine still has these known limits:
 
-1. Schedule systems run serially and receive exclusive `&mut World`. Safe parallel scheduling needs declared component/resource access and conflict validation.
+1. The first access-declared parallel scheduler layer is now implemented: legacy `&mut World` systems remain serial barriers, while compatible `SystemConfig::parallel` callbacks can share conflict-free batches. The declarations are a programmer contract and the scheduler keeps a serial fallback. The new layer still needs target-side compilation, serial-vs-parallel comparison, and performance profiling before it should be treated as accepted.
 2. At the 2026-10-21 closeout, asset loading was synchronous and no strong-reference eviction policy existed. The follow-up asset-streaming milestone below adds an async initial-load path and opt-in lease-based eviction; that follow-up still requires target-side verification.
 3. Transform propagation now skips clean-branch composition and unchanged global writes using snapshot-diff invalidation; detecting edits still requires an O(N) scan while local fields remain public, and target-side profiling is pending. See `docs/TRANSFORM_INVALIDATION.md`.
 4. `RenderGraph` validates dependencies and ordering but has no transient GPU resource allocator/aliasing or GPU timestamp profiler.

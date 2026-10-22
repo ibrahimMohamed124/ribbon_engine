@@ -4,11 +4,13 @@
 //! [`GpuContext`] bound to it, and clears the surface to [`ClearColor`] every
 //! frame. Later renderer passes build on this surface and context.
 
-use crate::gpu::GpuContext;
+use crate::gpu::{present_mode_label, GpuContext};
 use crate::graph::{RenderContext, RenderError, RenderGraph, RenderNode};
+use crate::profiling::{RenderDiagnostics, RenderGraphTiming};
 use engine_app::{App, LogBuffer, LogLevel, Stage, World};
 use engine_platform::WindowHandle;
 use engine_plugins::Plugin;
+use std::time::Instant;
 
 /// Color the window is cleared to each frame, as linear RGBA in `0.0..=1.0`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -278,6 +280,16 @@ pub fn gpu_window_system(world: &mut World) {
         return;
     }
     let mut error = None;
+    let mut completed_frame: Option<(
+        u64,
+        u64,
+        RenderGraphTiming,
+        u64,
+        u64,
+        u64,
+        &'static str,
+        u32,
+    )> = None;
     world.resource_scope::<GpuWindow, _>(|world, state| {
         let GpuWindow {
             context,
@@ -311,13 +323,26 @@ pub fn gpu_window_system(world: &mut World) {
         if stale {
             context.resize(size.width, size.height);
         }
-        let Some(format) = context.surface_config().map(|c| c.format) else {
+        let Some((format, present_mode, frame_latency)) = context.surface_config().map(|config| {
+            (
+                config.format,
+                present_mode_label(config.present_mode),
+                config.desired_maximum_frame_latency,
+            )
+        }) else {
             return;
         };
         let Some(surface) = context.surface() else {
             return;
         };
-        match surface.get_current_texture() {
+        let frame_started = Instant::now();
+        let acquire_started = Instant::now();
+        let acquired_surface = surface.get_current_texture();
+        let surface_acquire_ns = acquire_started
+            .elapsed()
+            .as_nanos()
+            .min(u128::from(u64::MAX)) as u64;
+        match acquired_surface {
             Ok(frame) => {
                 let view = frame
                     .texture
@@ -329,15 +354,33 @@ pub fn gpu_window_system(world: &mut World) {
                     format,
                     size: (size.width, size.height),
                 };
-                if let Err(failure) = graph.run_frame(&mut RenderContext::default(), world, &target)
-                {
-                    error = Some(format!("GPU render graph failed: {failure}"));
-                }
+                let graph_timing =
+                    match graph.run_frame_profiled(&mut RenderContext::default(), world, &target) {
+                        Ok(timing) => timing,
+                        Err(failure) => {
+                            error = Some(format!("GPU render graph failed: {failure}"));
+                            RenderGraphTiming::default()
+                        }
+                    };
                 // The graph's final `window present` node acts as the resource-ordering
-                // barrier. SurfaceTexture::present itself must remain here because the
-                // frame handle belongs to the presenter, not to a render pass.
+                // barrier. SurfaceTexture::present itself belongs to this presenter.
                 drop(view);
+                let present_started = Instant::now();
                 frame.present();
+                let present_ns = present_started
+                    .elapsed()
+                    .as_nanos()
+                    .min(u128::from(u64::MAX)) as u64;
+                completed_frame = Some((
+                    frame_started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+                    surface_acquire_ns,
+                    graph_timing,
+                    present_ns,
+                    context.target_bytes_estimate(),
+                    context.readback_buffer_bytes_estimate(),
+                    present_mode,
+                    frame_latency,
+                ));
             }
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
                 context.resize(size.width, size.height);
@@ -349,6 +392,31 @@ pub fn gpu_window_system(world: &mut World) {
             }
         }
     });
+    if let Some((
+        frame_wall_ns,
+        surface_acquire_ns,
+        graph_timing,
+        present_ns,
+        context_target_bytes,
+        context_readback_bytes,
+        present_mode,
+        frame_latency,
+    )) = completed_frame
+    {
+        if world.try_resource::<RenderDiagnostics>().is_none() {
+            world.insert_resource(RenderDiagnostics::default());
+        }
+        let diagnostics = world.resource_mut::<RenderDiagnostics>();
+        diagnostics.record_frame_phases(
+            frame_wall_ns,
+            surface_acquire_ns,
+            present_ns,
+            graph_timing,
+        );
+        diagnostics.record_surface_config(present_mode, frame_latency);
+        diagnostics.add_context_target_bytes(context_target_bytes);
+        diagnostics.add_context_readback_bytes(context_readback_bytes);
+    }
     if let Some(message) = error {
         log_error(world, message);
     }
@@ -369,6 +437,9 @@ impl Plugin for GpuWindowPlugin {
     fn build(&self, app: &mut App) {
         if app.world.try_resource::<ClearColor>().is_none() {
             app.insert_resource(ClearColor::default());
+        }
+        if app.world.try_resource::<RenderDiagnostics>().is_none() {
+            app.insert_resource(RenderDiagnostics::default());
         }
         app.insert_resource(GpuWindow::default());
         app.add_system(Stage::Render, gpu_window_system);

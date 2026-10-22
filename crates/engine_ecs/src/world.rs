@@ -5,6 +5,48 @@ use hecs::{
 use std::any::{type_name, Any, TypeId};
 use std::collections::HashMap;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+use std::sync::{LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+/// A lock-backed resource value that can be read or written from access-declared parallel
+/// systems. Declare `SyncResource<T>` as a read or write resource in `SystemConfig` so the
+/// scheduler prevents overlapping readers/writers from sharing an execution batch.
+///
+/// The lock also preserves memory safety if user declarations are inaccurate, but it does not
+/// replace correct access declarations: those declarations determine scheduling and deadlock-free
+/// phase boundaries. A poisoned lock returns `PoisonError` through the standard `LockResult`.
+pub struct SyncResource<T: Send + Sync + 'static> {
+    value: RwLock<T>,
+}
+
+impl<T: Send + Sync + 'static> SyncResource<T> {
+    /// Wrap a value for synchronized interior access.
+    pub fn new(value: T) -> Self {
+        Self {
+            value: RwLock::new(value),
+        }
+    }
+
+    /// Borrow the value for reading.
+    pub fn read(&self) -> LockResult<RwLockReadGuard<'_, T>> {
+        self.value.read()
+    }
+
+    /// Borrow the value for writing.
+    pub fn write(&self) -> LockResult<RwLockWriteGuard<'_, T>> {
+        self.value.write()
+    }
+
+    /// Consume the wrapper and return its value, or the lock poison error.
+    pub fn into_inner(self) -> LockResult<T> {
+        self.value.into_inner()
+    }
+}
+
+impl<T: Default + Send + Sync + 'static> Default for SyncResource<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
 
 /// Heterogeneous resources keyed by their concrete Rust type.
 #[derive(Default)]

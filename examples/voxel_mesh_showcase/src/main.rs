@@ -2,12 +2,14 @@
 //!
 //! Run with `cargo run -p voxel_mesh_showcase` or capture a fixed run with
 //! `cargo run -p voxel_mesh_showcase -- --frames 240`.
+//! Optional profile capture: `cargo run -p voxel_mesh_showcase --release -- --frames 1800 --profile-csv target/profiles/voxel-mesh-showcase.csv`.
 
 use engine_app::{App, AppExit, Stage, Time, World};
 use engine_events::WorldEventsExt;
 use engine_platform::{PlatformConfig, PlatformPlugin};
 use engine_plugins::AppPluginExt;
 use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use engine_render::profiling::RenderProfilePlugin;
 use engine_scene::ScenePlugin;
 use plugin_render3d::glam::Vec3;
 use plugin_render3d::{Camera3D, Render3dPlugin, SunLight, Transform3D, VoxelMeshInstance3D};
@@ -149,6 +151,8 @@ fn limit_frames(world: &mut World) {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut frame_limit = None;
+    let mut profile_csv: Option<String> = None;
+    let mut profile_warmup = 120_u64;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -159,9 +163,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .parse::<u64>()?,
                 );
             }
+            "--profile-csv" => {
+                profile_csv = Some(args.next().ok_or("--profile-csv expects a path")?);
+            }
+            "--profile-warmup" => {
+                profile_warmup = args
+                    .next()
+                    .ok_or("--profile-warmup expects a number")?
+                    .parse::<u64>()?;
+            }
             "--help" | "-h" => {
                 println!(
-                    "voxel_mesh_showcase\n\nOptions:\n  --frames <N>  Exit after N engine frames\n  -h, --help    Show this help"
+                    "voxel_mesh_showcase\n\nOptions:\n  --frames <N>  Exit after N engine frames\n  --profile-csv PATH  Write render diagnostics to CSV at shutdown\n  --profile-warmup N  Frames excluded before capture\n  -h, --help    Show this help"
                 );
                 return Ok(());
             }
@@ -191,6 +204,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_plugin(ScenePlugin)?;
     app.add_plugin(GpuWindowPlugin)?;
     app.add_plugin(Render3dPlugin)?;
+    if let Some(path) = profile_csv {
+        app.add_plugin(RenderProfilePlugin::new(path).warmup_frames(profile_warmup))?;
+    }
 
     app.world.spawn((
         Transform3D::looking_at(

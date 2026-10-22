@@ -3,7 +3,9 @@
 /// Linear HDR color format used between the mesh renderer and presentation.
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// Window-sized offscreen color target. The owning texture is retained with its view.
+/// Standalone HDR color target for callers that manage their own GPU resource lifetime.
+/// Internal window and offscreen renderer paths use [`engine_render::gpu::TransientTexturePool`]
+/// so similarly sized targets can be reused across frames and resizes.
 pub struct HdrTarget {
     _texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -11,7 +13,7 @@ pub struct HdrTarget {
 }
 
 impl HdrTarget {
-    /// Allocate or resize the HDR color target.
+    /// Allocate an unmanaged single-sample HDR target.
     pub fn new(device: &wgpu::Device, size: (u32, u32)) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("render3d HDR scene color"),
@@ -45,6 +47,7 @@ pub struct ToneMapper {
     _bloom_texture: wgpu::Texture,
     bloom_view: wgpu::TextureView,
     _sampler: wgpu::Sampler,
+    estimated_bytes: u64,
 }
 
 impl ToneMapper {
@@ -273,6 +276,9 @@ impl ToneMapper {
             multiview: None,
             cache: None,
         });
+        let estimated_bytes = u64::from((size.0 / 4).max(1))
+            .saturating_mul(u64::from((size.1 / 4).max(1)))
+            .saturating_mul(8);
         Self {
             pipeline,
             bind_group,
@@ -281,7 +287,14 @@ impl ToneMapper {
             _bloom_texture: bloom_texture,
             bloom_view,
             _sampler: sampler,
+            estimated_bytes,
         }
+    }
+
+    /// Estimated bytes for the quarter-resolution RGBA16Float bloom target.
+    /// Pipelines, bind groups, and allocator overhead are not included.
+    pub fn estimated_bytes(&self) -> u64 {
+        self.estimated_bytes
     }
 
     /// Draw the fullscreen tone-mapping triangle into the acquired window image.

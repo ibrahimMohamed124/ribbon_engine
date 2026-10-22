@@ -10,6 +10,7 @@ pub mod mesh;
 pub mod model;
 pub mod offscreen;
 pub mod post;
+pub mod profiling;
 pub mod renderer;
 
 pub use components::{
@@ -23,15 +24,22 @@ pub use extract::{
 };
 pub use glam;
 pub use model::{upload_model, GpuModelPart};
-pub use offscreen::{OffscreenCamera3D, OffscreenDraw3D, OffscreenVoxelRenderer, VoxelBlockColor};
+pub use offscreen::{
+    OffscreenCamera3D, OffscreenDraw3D, OffscreenFrameTiming, OffscreenVoxelRenderer,
+    VoxelBlockColor,
+};
 pub use renderer::{Draw, MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, Scene, TextureData};
 
 use crate::mesh::Vertex;
-use crate::post::{HdrTarget, ToneMapper, HDR_FORMAT};
+use crate::post::{ToneMapper, HDR_FORMAT};
 use engine_app::{App, World};
 use engine_assets::AssetServer;
 use engine_plugins::Plugin;
+use engine_render::gpu::{
+    TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool,
+};
 use engine_render::gpu_window::{clear_view, ClearColor, FramePass, FrameTarget, GpuWindow};
+use engine_render::profiling::{RenderDiagnostics, RenderResourceStats};
 use glam::Mat4;
 use plugin_voxel::VoxelChunkMesh;
 use std::collections::hash_map::Entry;
@@ -41,7 +49,10 @@ use std::sync::Arc;
 #[derive(Default)]
 struct MeshPass {
     renderer: Option<MeshRenderer>,
-    hdr: Option<HdrTarget>,
+    /// Active HDR target leased from the transient texture pool.
+    hdr: Option<TransientTextureHandle>,
+    hdr_size: Option<(u32, u32)>,
+    transient_targets: TransientTexturePool,
     tonemapper: Option<(wgpu::TextureFormat, ToneMapper)>,
     /// Uploaded models keyed by asset handle id and generation.
     models: HashMap<(u64, u32), Vec<GpuModelPart>>,
@@ -68,13 +79,80 @@ impl FramePass for MeshPass {
         if world.try_resource::<ExtractedScene3D>().is_none() {
             return;
         }
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.poll_gpu_timing(target.device, target.queue);
+        }
         world.resource_scope::<ExtractedScene3D, _>(|world, extracted| {
             self.render_extracted(world, extracted, target);
         });
+        self.publish_diagnostics(world, target.device);
     }
 }
 
 impl MeshPass {
+    fn publish_diagnostics(&self, world: &mut World, device: &wgpu::Device) {
+        let renderer_stats = self
+            .renderer
+            .as_ref()
+            .map(|renderer| renderer.resource_stats());
+        let gpu_timing = self
+            .renderer
+            .as_ref()
+            .map(|renderer| renderer.gpu_timing_snapshot())
+            .unwrap_or_else(|| crate::profiling::GpuTimingSnapshot {
+                supported: device.features().contains(wgpu::Features::TIMESTAMP_QUERY),
+                ..crate::profiling::GpuTimingSnapshot::default()
+            });
+        let pool_stats = self.transient_targets.stats();
+        let post_process_bytes = self
+            .tonemapper
+            .as_ref()
+            .map(|(_, tonemapper)| tonemapper.estimated_bytes())
+            .unwrap_or(0);
+        let mut resources = RenderResourceStats {
+            active_transient_textures: pool_stats.active_textures,
+            cached_transient_textures: pool_stats.cached_textures,
+            active_transient_bytes_estimate: pool_stats.active_bytes_estimate,
+            cached_transient_bytes_estimate: pool_stats.cached_bytes_estimate,
+            post_process_bytes_estimate: post_process_bytes,
+            transient_texture_allocations: pool_stats.allocations,
+            transient_texture_reuses: pool_stats.reuses,
+            transient_pool_peak_bytes_estimate: pool_stats.peak_allocated_bytes_estimate,
+            transient_unknown_size_textures: pool_stats.unknown_size_textures,
+            ..RenderResourceStats::default()
+        };
+        if let Some(stats) = renderer_stats {
+            resources.live_meshes = stats.live_meshes;
+            resources.live_materials = stats.live_materials;
+            resources.mesh_bytes_estimate = stats.mesh_bytes_estimate;
+            resources.material_bytes_estimate = stats.material_bytes_estimate;
+            resources.buffer_bytes_estimate = stats.buffer_bytes_estimate;
+            resources.depth_target_bytes_estimate = stats.depth_target_bytes_estimate;
+            resources.backend_peak_bytes_estimate = stats.peak_bytes_estimate;
+        }
+        if world.try_resource::<RenderDiagnostics>().is_some() {
+            let diagnostics = world.resource_mut::<RenderDiagnostics>();
+            diagnostics.record_gpu_timing(
+                gpu_timing.supported,
+                gpu_timing.latest_duration_ns,
+                gpu_timing.latest_mesh_pass_ns,
+                gpu_timing.completed_samples,
+                gpu_timing.skipped_samples,
+                gpu_timing.latest_sequence,
+            );
+            diagnostics.record_resources(resources);
+        }
+    }
+
+    fn release_hdr_target(&mut self) {
+        // Drop bind groups that reference the HDR view before making its texture reusable.
+        self.tonemapper = None;
+        self.hdr_size = None;
+        if let Some(handle) = self.hdr.take() {
+            self.transient_targets.release(handle);
+        }
+    }
+
     fn render_extracted(
         &mut self,
         world: &mut World,
@@ -90,6 +168,11 @@ impl MeshPass {
         // revision. Rebuild this pass's GPU-side caches when an already-observed model changes.
         // Recreating the pass-owned renderer here releases old model/material/texture allocations
         // together and keeps all replacement uploads on this renderer-owning thread.
+        let live_model_keys: HashSet<(u64, u32)> = extracted
+            .models
+            .iter()
+            .map(|placement| (placement.model.id(), placement.model.generation()))
+            .collect();
         let current_revisions: Vec<_> = world
             .try_resource::<AssetServer>()
             .map(|server| {
@@ -117,11 +200,33 @@ impl MeshPass {
             self.asset_revisions.clear();
             self.voxel_meshes.clear();
             self.renderer = None;
-            self.hdr = None;
-            self.tonemapper = None;
+            self.release_hdr_target();
         }
         for (key, revision) in current_revisions {
             self.asset_revisions.insert(key, revision);
+        }
+        // Revision history and GPU-uploaded model parts should live only while the model is
+        // referenced by the extracted scene. Release every unique slot through generation-checked
+        // handles; duplicate node placements may share the same primitive/material IDs.
+        self.asset_revisions
+            .retain(|key, _| live_model_keys.contains(key));
+        let stale_model_keys: Vec<_> = self
+            .models
+            .keys()
+            .copied()
+            .filter(|key| !live_model_keys.contains(key))
+            .collect();
+        if !stale_model_keys.is_empty() {
+            for key in stale_model_keys {
+                if let Some(parts) = self.models.remove(&key) {
+                    if let Some(renderer) = self.renderer.as_mut() {
+                        for part in parts {
+                            renderer.release_mesh(part.mesh);
+                            renderer.release_material(part.material);
+                        }
+                    }
+                }
+            }
         }
 
         // Drop GPU buffers for chunk meshes that no longer appear in the extracted scene.
@@ -148,6 +253,9 @@ impl MeshPass {
         }
 
         let Some(camera) = extracted.camera else {
+            self.release_hdr_target();
+            self.transient_targets
+                .trim_unused_to_budget(64 * 1024 * 1024);
             return;
         };
 
@@ -236,17 +344,31 @@ impl MeshPass {
         }
 
         if draws.is_empty() {
+            self.release_hdr_target();
+            self.transient_targets
+                .trim_unused_to_budget(64 * 1024 * 1024);
             return;
         }
         if self.renderer.is_none() {
             self.models.clear();
             self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
         }
-        if self.hdr.as_ref().is_none_or(|hdr| hdr.size != target.size) {
-            self.hdr = Some(HdrTarget::new(target.device, target.size));
-            self.tonemapper = None;
+        if self.hdr_size != Some(target.size) {
+            self.release_hdr_target();
+            self.hdr = Some(self.transient_targets.acquire(
+                target.device,
+                TransientTextureDescriptor::color_target(target.size.0, target.size.1, HDR_FORMAT),
+            ));
+            self.hdr_size = Some(target.size);
+            // Active targets are protected; old compatible targets are reused until this pool
+            // exceeds its cache budget.
+            self.transient_targets
+                .trim_unused_to_budget(64 * 1024 * 1024);
         }
-        let Some(hdr_view) = self.hdr.as_ref().map(|hdr| &hdr.view) else {
+        let Some(hdr_handle) = self.hdr else {
+            return;
+        };
+        let Some(hdr_view) = self.transient_targets.view(hdr_handle) else {
             return;
         };
         if self

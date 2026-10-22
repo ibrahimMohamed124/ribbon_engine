@@ -2,6 +2,7 @@
 //!
 //! Controls: WASD to walk, mouse to look, Shift to move faster, Esc to release
 //! the pointer, and left-click to capture it again. Run `cargo run -p horror_slice`.
+//! Optional profile capture: `cargo run -p horror_slice --release -- --frames 1800 --profile-csv target/profiles/horror-slice.csv`.
 
 use engine_app::{App, AppExit, Stage, Time, World};
 use engine_assets::{AssetEvent, AssetPlugin, AssetRef, AssetServer, FsSource};
@@ -11,6 +12,7 @@ use engine_platform::runtime::CursorGrabState;
 use engine_platform::{Input, PlatformConfig, PlatformPlugin};
 use engine_plugins::AppPluginExt;
 use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use engine_render::profiling::RenderProfilePlugin;
 use engine_scene::ScenePlugin;
 use plugin_gltf::{GltfLoader, ModelAsset};
 use plugin_physics::{slide_capsule_xz, Aabb3};
@@ -278,6 +280,8 @@ fn first_person_controller(world: &mut World) {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut frame_limit = None;
+    let mut profile_csv: Option<String> = None;
+    let mut profile_warmup = 120_u64;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -287,6 +291,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .ok_or("--frames expects a number")?
                         .parse::<u64>()?,
                 );
+            }
+            "--profile-csv" => {
+                profile_csv = Some(args.next().ok_or("--profile-csv expects a path")?);
+            }
+            "--profile-warmup" => {
+                profile_warmup = args
+                    .next()
+                    .ok_or("--profile-warmup expects a number")?
+                    .parse::<u64>()?;
             }
             "--help" | "-h" => {
                 println!(concat!(
@@ -299,6 +312,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     "  Left click Capture pointer again after releasing it\n\n",
                     "Options:\n",
                     "  --frames N Exit after N frames\n",
+                    "  --profile-csv PATH Write a bounded post-warmup render profile\n",
+                    "  --profile-warmup N Frames excluded before capture\n",
                     "  -h, --help Show this help\n"
                 ));
                 return Ok(());
@@ -336,6 +351,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_plugin(AssetPlugin)?;
     app.add_plugin(GpuWindowPlugin)?;
     app.add_plugin(Render3dPlugin)?;
+    if let Some(path) = profile_csv {
+        app.add_plugin(RenderProfilePlugin::new(path).warmup_frames(profile_warmup))?;
+    }
 
     let (handles, leases) = {
         let server = app.world.resource_mut::<AssetServer>();

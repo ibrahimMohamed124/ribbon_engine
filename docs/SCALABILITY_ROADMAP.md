@@ -11,8 +11,8 @@ it is documented.
   `tools/check_deps.py` enforce direct dependency policy across normal, build, development, and optional edges.
 - The deprecated `engine/`/`voxelworks-*` compatibility tree has been removed. New examples use the ECS
   app and current plugin APIs.
-- The stage scheduler is deterministic and serial. This is a safe baseline, not a parallel scheduler.
-- `plugin_voxel::ChunkedVoxelWorld` tracks edits/dirty chunks and `plugin_render3d` releases removed dynamic meshes.
+- `engine_schedule` preserves a deterministic serial fallback and now builds access-conflict batches for opted-in parallel systems. Legacy `&mut World` systems remain serial barriers.
+- `plugin_voxel::ChunkedVoxelWorld` tracks edits/dirty chunks and `plugin_render3d` releases removed dynamic meshes using generation-checked mesh/material handles.
 - CPU rendering remains a deterministic reference path; the render graph validates named resource dependencies.
 
 ## Priority 1 — transform invalidation
@@ -52,22 +52,42 @@ callers. See [`TRANSFORM_INVALIDATION.md`](TRANSFORM_INVALIDATION.md) for the im
 
 ## Priority 3 — access-declared scheduling
 
-**Current limit:** systems get exclusive `&mut World`; arbitrary systems cannot safely execute in parallel.
+**Status:** first access-declared parallel execution layer implemented; target-side compilation, race/behavior review, serial-vs-parallel comparison, and profiling remain mandatory.
 
-**Design:** define read/write component/resource access metadata, reject invalid duplicate access declarations, build
-a conflict graph per stage, keep ordered barriers and explicit before/after constraints, and provide a deterministic
-serial fallback. Parallelism should only schedule conflict-free systems and should be checked against serial output.
+**Previous limit:** systems accepted unrestricted exclusive `&mut World`, so the scheduler could not safely run arbitrary systems concurrently.
+
+**Implemented design:** legacy systems created with `SystemConfig::new` are explicitly exclusive and remain serial barriers. `SystemConfig::parallel` accepts a `Fn(&World) + Send + Sync` callback plus declared component/resource reads and writes. Compatible systems form deterministic conflict-free stage batches; a write conflicts with reads and writes of the same typed component/resource, while read/read may overlap. User-defined `before`/`after` constraints are kept, and conflict edges are oriented by the stable declared topological order. Missing/duplicate access declarations, duplicate labels/names, unknown labels, and dependency cycles are rejected. `Schedule::execution_plan` exposes the built batches; parallel execution can be disabled or capped with a serial fallback. `SyncResource<T>` provides lock-backed resource mutation through shared world access.
+
+**Important bounds:** access declarations are a contract, not compile-time filtering. Parallel callbacks must declare every touched component/resource accurately; hecs dynamic borrow checking protects component borrows, and resources intended for mutation must use interior mutability (prefer `SyncResource<T>`). Structural changes stay in exclusive systems/command phases. Conditional systems are serial barriers because their accesses cannot be inferred from the condition closure. The current implementation creates a bounded scoped worker set per parallel batch rather than maintaining a persistent pool; thread startup overhead must be measured before wider adoption.
+
+**Verification still required:** no Rust compiler, linter, runtime or benchmark was run for this delivery, and no new tests were added. On the target checkout, run the standard workspace matrix and compare serial fallback (`set_parallel_enabled(false)` or `set_max_parallelism(1)`) against parallel output. Keep STUDS golden assertions unchanged. See [`ACCESS_DECLARED_PARALLEL_SCHEDULER.md`](ACCESS_DECLARED_PARALLEL_SCHEDULER.md).
 
 ## Priority 4 — render resource lifetime and profiling
 
-**Current limit:** `RenderGraph` validates named-resource dependencies/order, but does not allocate transient GPU
-resources, alias compatible allocations, expose GPU timestamp profiling, or schedule asynchronous copies.
+**Status:** target pooling and CPU/GPU diagnostics are implemented; opt-in bounded CSV capture and Markdown performance reports are now implemented. Target-side validation and actual before/after workload measurements remain required. Resource estimates are approximations, not driver-reported VRAM usage.
 
-**Design:** add typed resource descriptors and lifetimes, a transient resource pool, explicit surface/present ownership,
-GPU timestamp queries with graceful fallback, and per-pass CPU/GPU timings. Track peak allocated bytes and frame
-latency before applying aliasing or async scheduling.
+**Implemented design:** `engine_render::gpu::TransientTexturePool` owns reusable single-sample 2D textures keyed by exact width/height/format/usage descriptors. Generation-checked leases prevent stale handles from exposing or releasing a texture after it has been returned to the cache and leased again. Cached resources can be trimmed to an estimated-byte budget without evicting active leases. The native window renderer and offscreen voxel renderer pool their HDR scene targets; post-process bind groups are dropped before a source target is released. The native render graph still owns pass order, and `GpuWindow` remains the owner of acquiring/presenting the window surface image.
 
-## Priority 5 — rendering API ownership
+`engine_render::profiling::RenderDiagnostics` records full-frame wall duration (including acquisition and presentation), separate surface-acquire/present wall durations, running average/peak, render-graph node CPU durations, graph CPU duration, current tracked resource categories, transient pool reuse/allocation counters, and high-water estimates. `plugin_render3d` adds an asynchronous four-slot GPU timestamp readback ring with graceful fallback when the adapter does not expose `TIMESTAMP_QUERY`; it reports the shadow-through-mesh GPU interval and the main mesh pass interval separately. Readback is polled without waiting for unfinished GPU work. `OffscreenVoxelRenderer` exposes CPU frame timing (including its synchronous framebuffer readback), GPU timing snapshots, and memory estimates directly. The native model cache releases uploaded model meshes/materials and prunes revision history after their final extracted-scene placement disappears.
+
+**Accounting contract:** estimates include mesh vertex/index buffers, material textures/uniforms, known uniform/instance buffers, depth/shadow targets, the context RGBA8 target and reusable readback staging buffer, transient HDR leases/cache, and the tone mapper's quarter-resolution bloom texture. Driver allocator alignment, tiling/compression, heap overhead, pipeline/bind-group overhead, window surface/swap-chain images, and unknown pixel formats may be excluded. The transient pool currently supports 2D, single-layer, single-mip, single-sample textures; it does not alias resources within a single frame and is not a general render-graph allocator. Its 64 MiB cache budget applies only to unleased cached textures; active render targets are protected and excluded from that budget, so total pool bytes can exceed it. Cached texture formats without a byte estimator are evicted when trimming is requested. Timestamp queries are optional, asynchronous and backend-dependent, so UI/telemetry must tolerate absent or delayed samples.
+
+**Baseline tooling:** `RenderProfilePlugin` captures a bounded post-warmup window-frame history to CSV on shutdown; `tools/render_profile_report.py` summarizes mean/p50/p95/p99/peak frame-wall, surface-acquire, render-graph CPU and surface-present timings, deduplicated asynchronous GPU samples, resource estimates, and highest-P95 graph nodes. It can compare current P95 values with a previously saved capture. The repeatable procedure and four representative scenarios are documented in [`PERFORMANCE_BASELINES.md`](PERFORMANCE_BASELINES.md).
+
+**Not claimed yet:** no actual VRAM reading, allocation attribution from the driver, async framebuffer readback, general transient aliasing, or complete per-GPU-pass measurements are provided. No performance speedup is claimed until identical baseline/current scenarios have been measured on target hardware. Run the workspace validation matrix and capture at least the mixed mesh and dynamic voxel scenarios before selecting the first data-driven optimization. See [`GPU_RESOURCE_LIFETIME_PROFILING.md`](GPU_RESOURCE_LIFETIME_PROFILING.md) and [`PERFORMANCE_BASELINES.md`](PERFORMANCE_BASELINES.md).
+
+## Priority 5 — data-driven rendering optimization (measurement-gated)
+
+**Status:** planned after repeatable captures have been collected; do not implement candidate optimizations on a guess alone.
+
+Capture `graphics_showcase` and `voxel_mesh_showcase` on the target Windows GPU, then select one dominant cost based on
+P95 frame/graph CPU time, deduplicated GPU timestamp samples, per-pass CPU timing, mesh/material counts, resource estimates,
+and transient allocation/reuse counts. Candidate work may include draw batching/instancing, visibility filtering, shadow
+quality/pass optimization, post-processing resolution, or removing repeated CPU extraction work. Select only the candidate
+supported by the measurements, change one major variable at a time, and compare matching release-build captures. Preserve
+the current CPU/golden reference results and report no speedup unless the before/after capture shows it.
+
+## Priority 6 — rendering API ownership
 
 `engine_render`, `plugin_rendering`, and `plugin_render3d` intentionally remain separate: shared frame/draw contracts;
 voxel scene/material data plus CPU/GPU voxel backends and ECS bridge; native-surface mesh rendering. Split or rename

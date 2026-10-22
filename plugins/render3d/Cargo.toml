@@ -7,7 +7,7 @@ edition = "2021"
 engine_app = { path = "../../crates/engine_app" }
 engine_assets = { path = "../../crates/engine_assets" }
 engine_plugins = { path = "../../crates/engine_plugins" }
-engine_render = { path = "../../crates/engine_render" }
+engine_render = { path = "../../crates/engine_render", default-features = false, features = ["gpu"] }
 engine_scene = { path = "../../crates/engine_scene" }
 bytemuck = { version = "1", features = ["derive"] }
 glam = "0.30"

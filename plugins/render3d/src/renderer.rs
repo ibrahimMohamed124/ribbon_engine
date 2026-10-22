@@ -2,6 +2,7 @@
 
 use crate::components::{FogSettings, PointLight, SpotLight, SunLight};
 use crate::mesh::{self, Vertex};
+use crate::profiling::{GpuTimestampProfiler, GpuTimingSnapshot};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
@@ -9,13 +10,21 @@ use wgpu::util::DeviceExt;
 /// Depth format used by the mesh pass.
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Handle to a mesh stored in a [`MeshRenderer`].
+/// Generation-checked handle to a mesh stored in a [`MeshRenderer`].
+///
+/// Releasing and reusing a slot cannot make an old handle refer to the replacement mesh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct MeshId(usize);
+pub struct MeshId {
+    slot: usize,
+    generation: u32,
+}
 
-/// Handle to a material stored in a [`MeshRenderer`].
+/// Generation-checked handle to a material stored in a [`MeshRenderer`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct MaterialId(usize);
+pub struct MaterialId {
+    slot: usize,
+    generation: u32,
+}
 
 /// RGBA8 pixels in sRGB encoding, row-major from the top-left.
 #[derive(Clone, Copy, Debug)]
@@ -144,6 +153,12 @@ struct GpuMesh {
     index_count: u32,
     bounds_center: Vec3,
     bounds_radius: f32,
+    estimated_bytes: u64,
+}
+
+struct MeshSlot {
+    generation: u32,
+    mesh: Option<GpuMesh>,
 }
 
 struct GpuMaterial {
@@ -154,6 +169,41 @@ struct GpuMaterial {
     _normal_texture: wgpu::Texture,
     _occlusion_texture: wgpu::Texture,
     _emissive_texture: wgpu::Texture,
+    estimated_bytes: u64,
+}
+
+struct MaterialSlot {
+    generation: u32,
+    material: Option<GpuMaterial>,
+}
+
+/// Estimated live resource usage for one [`MeshRenderer`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MeshRendererResourceStats {
+    /// Number of currently live meshes, including the built-in cube.
+    pub live_meshes: usize,
+    /// Number of currently live materials, including the built-in white material.
+    pub live_materials: usize,
+    /// Estimated live vertex/index buffer bytes.
+    pub mesh_bytes_estimate: u64,
+    /// Estimated material texture and uniform bytes.
+    pub material_bytes_estimate: u64,
+    /// Estimated uniform and instance buffer bytes.
+    pub buffer_bytes_estimate: u64,
+    /// Estimated shadow-map and depth-target bytes.
+    pub depth_target_bytes_estimate: u64,
+    /// Peak total tracked allocation estimate since renderer construction.
+    pub peak_bytes_estimate: u64,
+}
+
+impl MeshRendererResourceStats {
+    /// Sum all tracked allocations. Pipeline/bind-group overhead is excluded.
+    pub fn total_bytes_estimate(self) -> u64 {
+        self.mesh_bytes_estimate
+            .saturating_add(self.material_bytes_estimate)
+            .saturating_add(self.buffer_bytes_estimate)
+            .saturating_add(self.depth_target_bytes_estimate)
+    }
 }
 
 /// Owns the pipeline, uploaded meshes and materials, and the depth target.
@@ -172,9 +222,13 @@ pub struct MeshRenderer {
     _shadow_sampler: wgpu::Sampler,
     material_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    meshes: Vec<Option<GpuMesh>>,
+    meshes: Vec<MeshSlot>,
     free_mesh_slots: Vec<usize>,
-    materials: Vec<GpuMaterial>,
+    materials: Vec<MaterialSlot>,
+    free_material_slots: Vec<usize>,
+    /// Optional adapter-supported GPU timer for mesh + shadow commands.
+    gpu_timing: Option<GpuTimestampProfiler>,
+    peak_resource_bytes_estimate: u64,
     /// Compact, frustum-visible instances used by the main color pass.
     instances: wgpu::Buffer,
     /// All instances, including off-screen casters, used by the shadow pass.
@@ -409,9 +463,15 @@ fn valid_texture<'a>(texture: Option<TextureData<'a>>, fallback: &'a [u8; 4]) ->
 
 impl MeshRenderer {
     /// The built-in unit cube.
-    pub const CUBE: MeshId = MeshId(0);
-    /// Plain white material (no texture).
-    pub const WHITE: MaterialId = MaterialId(0);
+    pub const CUBE: MeshId = MeshId {
+        slot: 0,
+        generation: 0,
+    };
+    /// Plain white material (no texture). This permanent handle has generation zero.
+    pub const WHITE: MaterialId = MaterialId {
+        slot: 0,
+        generation: 0,
+    };
 
     /// Build the pipeline for render targets of `format`.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
@@ -837,6 +897,9 @@ impl MeshRenderer {
             meshes: Vec::new(),
             free_mesh_slots: Vec::new(),
             materials: Vec::new(),
+            free_material_slots: Vec::new(),
+            gpu_timing: GpuTimestampProfiler::new(device),
+            peak_resource_bytes_estimate: 0,
             instances: instance_buffer(device, 16),
             shadow_instances: instance_buffer(device, 16),
             instance_capacity: 16,
@@ -883,38 +946,147 @@ impl MeshRenderer {
             .iter()
             .map(|vertex| (Vec3::from(vertex.position) - bounds_center).length())
             .fold(0.0_f32, f32::max);
+        let estimated_bytes = (vertices.len() as u64)
+            .saturating_mul(std::mem::size_of::<Vertex>() as u64)
+            .saturating_add(
+                (indices.len() as u64).saturating_mul(std::mem::size_of::<u32>() as u64),
+            );
         let mesh = GpuMesh {
             vertices: vertex_buffer,
             indices: index_buffer,
             index_count: indices.len() as u32,
             bounds_center,
             bounds_radius,
+            estimated_bytes,
         };
-        if let Some(slot) = self.free_mesh_slots.pop() {
-            self.meshes[slot] = Some(mesh);
-            MeshId(slot)
+        let id = if let Some(index) = self.free_mesh_slots.pop() {
+            let slot = &mut self.meshes[index];
+            slot.generation = slot.generation.wrapping_add(1).max(1);
+            slot.mesh = Some(mesh);
+            MeshId {
+                slot: index,
+                generation: slot.generation,
+            }
         } else {
-            self.meshes.push(Some(mesh));
-            MeshId(self.meshes.len() - 1)
-        }
+            let index = self.meshes.len();
+            self.meshes.push(MeshSlot {
+                generation: 0,
+                mesh: Some(mesh),
+            });
+            MeshId {
+                slot: index,
+                generation: 0,
+            }
+        };
+        self.update_peak_resource_estimate();
+        id
     }
 
     /// Release a previously uploaded dynamic mesh. Built-in meshes are permanent, and
     /// released slots are reused by later uploads so repeated chunk edits do not grow the
-    /// GPU mesh table without bound. A stale `MeshId` becomes invalid until that slot is reused.
+    /// GPU mesh table without bound. Stale handles are rejected even after the slot is reused.
     pub fn release_mesh(&mut self, mesh: MeshId) -> bool {
         if mesh == Self::CUBE {
             return false;
         }
-        let Some(slot) = self.meshes.get_mut(mesh.0) else {
+        let Some(slot) = self.meshes.get_mut(mesh.slot) else {
             return false;
         };
-        if slot.take().is_some() {
-            self.free_mesh_slots.push(mesh.0);
-            true
-        } else {
-            false
+        if slot.generation != mesh.generation || slot.mesh.is_none() {
+            return false;
         }
+        slot.mesh = None;
+        self.free_mesh_slots.push(mesh.slot);
+        true
+    }
+
+    /// Release a dynamic material and allow its slot to be reused with a new generation.
+    ///
+    /// The built-in white material is permanent. Callers must first remove every future draw that
+    /// references the handle; already-submitted GPU commands retain their own wgpu resource refs.
+    pub fn release_material(&mut self, material: MaterialId) -> bool {
+        if material == Self::WHITE {
+            return false;
+        }
+        let Some(slot) = self.materials.get_mut(material.slot) else {
+            return false;
+        };
+        if slot.generation != material.generation || slot.material.is_none() {
+            return false;
+        }
+        slot.material = None;
+        self.free_material_slots.push(material.slot);
+        true
+    }
+
+    /// Current tracked GPU allocation estimates for this renderer.
+    pub fn resource_stats(&self) -> MeshRendererResourceStats {
+        let mut stats = MeshRendererResourceStats::default();
+        for mesh in self.meshes.iter().filter_map(|slot| slot.mesh.as_ref()) {
+            stats.live_meshes = stats.live_meshes.saturating_add(1);
+            stats.mesh_bytes_estimate = stats
+                .mesh_bytes_estimate
+                .saturating_add(mesh.estimated_bytes);
+        }
+        for material in self
+            .materials
+            .iter()
+            .filter_map(|slot| slot.material.as_ref())
+        {
+            stats.live_materials = stats.live_materials.saturating_add(1);
+            stats.material_bytes_estimate = stats
+                .material_bytes_estimate
+                .saturating_add(material.estimated_bytes);
+        }
+        stats.buffer_bytes_estimate = (std::mem::size_of::<Globals>() as u64)
+            .saturating_add(2_u64.saturating_mul(std::mem::size_of::<ShadowGlobals>() as u64))
+            .saturating_add(
+                (self.instance_capacity as u64)
+                    .saturating_mul(std::mem::size_of::<RawInstance>() as u64)
+                    .saturating_mul(2),
+            )
+            .saturating_add(
+                self.gpu_timing
+                    .as_ref()
+                    .map(|profiler| profiler.snapshot().buffer_bytes_estimate)
+                    .unwrap_or(0),
+            );
+        // Two 1024x1024 Depth32Float shadow targets are fixed for this renderer.
+        stats.depth_target_bytes_estimate = 2_u64
+            .saturating_mul(1024)
+            .saturating_mul(1024)
+            .saturating_mul(4);
+        if let Some(depth) = &self.depth {
+            stats.depth_target_bytes_estimate = stats.depth_target_bytes_estimate.saturating_add(
+                u64::from(depth.size.0)
+                    .saturating_mul(u64::from(depth.size.1))
+                    .saturating_mul(4),
+            );
+        }
+        stats.peak_bytes_estimate = self
+            .peak_resource_bytes_estimate
+            .max(stats.total_bytes_estimate());
+        stats
+    }
+
+    /// Poll completed GPU timestamp queries without blocking for unfinished submissions.
+    pub fn poll_gpu_timing(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if let Some(profiler) = self.gpu_timing.as_mut() {
+            profiler.poll(device, queue);
+        }
+    }
+
+    /// Most recent asynchronous GPU timing result and profiler support counters.
+    pub fn gpu_timing_snapshot(&self) -> GpuTimingSnapshot {
+        self.gpu_timing
+            .as_ref()
+            .map(GpuTimestampProfiler::snapshot)
+            .unwrap_or_default()
+    }
+
+    fn update_peak_resource_estimate(&mut self) {
+        let estimate = self.resource_stats().total_bytes_estimate();
+        self.peak_resource_bytes_estimate = self.peak_resource_bytes_estimate.max(estimate);
     }
 
     /// Upload a dielectric material with default metallic-roughness factors.
@@ -1065,7 +1237,22 @@ impl MeshRenderer {
                 },
             ],
         });
-        self.materials.push(GpuMaterial {
+        let estimated_bytes = texture_mip_bytes(base_source.width, base_source.height)
+            .saturating_add(texture_mip_bytes(
+                surface_source.width,
+                surface_source.height,
+            ))
+            .saturating_add(texture_mip_bytes(normal_source.width, normal_source.height))
+            .saturating_add(texture_mip_bytes(
+                occlusion_source.width,
+                occlusion_source.height,
+            ))
+            .saturating_add(texture_mip_bytes(
+                emissive_source.width,
+                emissive_source.height,
+            ))
+            .saturating_add(std::mem::size_of::<MaterialUniform>() as u64);
+        let material = GpuMaterial {
             bind_group,
             _uniform: uniform,
             _texture: gpu_texture,
@@ -1073,8 +1260,29 @@ impl MeshRenderer {
             _normal_texture: normal_gpu_texture,
             _occlusion_texture: occlusion_gpu_texture,
             _emissive_texture: emissive_gpu_texture,
-        });
-        MaterialId(self.materials.len() - 1)
+            estimated_bytes,
+        };
+        let id = if let Some(index) = self.free_material_slots.pop() {
+            let slot = &mut self.materials[index];
+            slot.generation = slot.generation.wrapping_add(1).max(1);
+            slot.material = Some(material);
+            MaterialId {
+                slot: index,
+                generation: slot.generation,
+            }
+        } else {
+            let index = self.materials.len();
+            self.materials.push(MaterialSlot {
+                generation: 0,
+                material: Some(material),
+            });
+            MaterialId {
+                slot: index,
+                generation: 0,
+            }
+        };
+        self.update_peak_resource_estimate();
+        id
     }
 
     fn ensure_depth(&mut self, device: &wgpu::Device, size: (u32, u32)) {
@@ -1099,6 +1307,7 @@ impl MeshRenderer {
             view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
             size,
         });
+        self.update_peak_resource_estimate();
     }
 
     fn directional_shadow_matrix(scene: &Scene<'_>) -> Mat4 {
@@ -1158,8 +1367,11 @@ impl MeshRenderer {
             .iter()
             .copied()
             .filter(|draw| {
-                self.meshes.get(draw.mesh.0).is_some_and(Option::is_some)
-                    && draw.material.0 < self.materials.len()
+                self.meshes.get(draw.mesh.slot).is_some_and(|slot| {
+                    slot.generation == draw.mesh.generation && slot.mesh.is_some()
+                }) && self.materials.get(draw.material.slot).is_some_and(|slot| {
+                    slot.generation == draw.material.generation && slot.material.is_some()
+                })
             })
             .collect();
         draws.sort_by_key(|draw| (draw.mesh, draw.material));
@@ -1171,7 +1383,7 @@ impl MeshRenderer {
             .iter()
             .copied()
             .filter(|draw| {
-                let Some(mesh) = self.meshes[draw.mesh.0].as_ref() else {
+                let Some(mesh) = self.meshes[draw.mesh.slot].mesh.as_ref() else {
                     return false;
                 };
                 let center = draw.model.transform_point3(mesh.bounds_center);
@@ -1190,6 +1402,7 @@ impl MeshRenderer {
             self.instance_capacity = draws.len().next_power_of_two();
             self.instances = instance_buffer(device, self.instance_capacity);
             self.shadow_instances = instance_buffer(device, self.instance_capacity);
+            self.update_peak_resource_estimate();
         }
         let to_raw = |instances: &[Draw]| {
             instances
@@ -1284,6 +1497,17 @@ impl MeshRenderer {
         let Some(depth) = self.depth.as_ref() else {
             return;
         };
+        let timing_slot = self
+            .gpu_timing
+            .as_mut()
+            .and_then(GpuTimestampProfiler::reserve_slot);
+        let timestamp_query_set = if timing_slot.is_some() {
+            self.gpu_timing
+                .as_ref()
+                .map(GpuTimestampProfiler::query_set)
+        } else {
+            None
+        };
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("mesh and directional shadow passes"),
         });
@@ -1299,7 +1523,13 @@ impl MeshRenderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: timestamp_query_set.map(|query_set| {
+                    wgpu::RenderPassTimestampWrites {
+                        query_set,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: None,
+                    }
+                }),
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shadow_pipeline);
@@ -1313,7 +1543,8 @@ impl MeshRenderer {
                         .iter()
                         .take_while(|draw| draw.mesh == mesh_id)
                         .count();
-                let mesh = self.meshes[mesh_id.0]
+                let mesh = self.meshes[mesh_id.slot]
+                    .mesh
                     .as_ref()
                     .expect("draw list was validated before recording the shadow pass");
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
@@ -1348,7 +1579,8 @@ impl MeshRenderer {
                         .iter()
                         .take_while(|draw| draw.mesh == mesh_id)
                         .count();
-                let mesh = self.meshes[mesh_id.0]
+                let mesh = self.meshes[mesh_id.slot]
+                    .mesh
                     .as_ref()
                     .expect("draw list was validated before recording spotlight shadows");
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
@@ -1376,7 +1608,13 @@ impl MeshRenderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: timestamp_query_set.map(|query_set| {
+                    wgpu::RenderPassTimestampWrites {
+                        query_set,
+                        beginning_of_pass_write_index: Some(1),
+                        end_of_pass_write_index: Some(2),
+                    }
+                }),
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.pipeline);
@@ -1390,18 +1628,48 @@ impl MeshRenderer {
                         .iter()
                         .take_while(|d| (d.mesh, d.material) == key)
                         .count();
-                let mesh = self.meshes[key.0 .0]
+                let mesh = self.meshes[key.0.slot]
+                    .mesh
                     .as_ref()
                     .expect("draw list was validated before recording the mesh pass");
-                pass.set_bind_group(1, &self.materials[key.1 .0].bind_group, &[]);
+                let material = self.materials[key.1.slot]
+                    .material
+                    .as_ref()
+                    .expect("draw list was validated before recording the material pass");
+                pass.set_bind_group(1, &material.bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
                 start = end;
             }
         }
+        if let (Some(slot), Some(profiler)) = (timing_slot, self.gpu_timing.as_ref()) {
+            profiler.encode_resolve(&mut encoder, slot);
+        }
         queue.submit(Some(encoder.finish()));
+        if let (Some(slot), Some(profiler)) = (timing_slot, self.gpu_timing.as_mut()) {
+            profiler.submitted(slot);
+        }
+        self.update_peak_resource_estimate();
     }
+}
+
+fn texture_mip_bytes(width: u32, height: u32) -> u64 {
+    let (mut width, mut height) = (width.max(1), height.max(1));
+    let mut bytes = 0_u64;
+    loop {
+        bytes = bytes.saturating_add(
+            u64::from(width)
+                .saturating_mul(u64::from(height))
+                .saturating_mul(4),
+        );
+        if width == 1 && height == 1 {
+            break;
+        }
+        width = (width / 2).max(1);
+        height = (height / 2).max(1);
+    }
+    bytes
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 //! Deterministic application lifecycle, scheduling, time, and runner contracts.
 //!
-//! The app drives systems serially. Window and rendering integrations live in other crates.
+//! The app preserves serial legacy systems and may dispatch compatible access-declared systems
+//! in parallel. Window and rendering integrations live in other crates.
 
 pub mod time;
 
@@ -8,7 +9,7 @@ use engine_events::{EventCursor, Events, WorldEventsExt};
 use engine_schedule::Schedule;
 use std::time::Duration;
 
-pub use engine_ecs::World;
+pub use engine_ecs::{SyncResource, World};
 pub use engine_schedule::{ScheduleError, ScheduleStats, Stage, SystemConfig};
 pub use time::{FixedTime, LogBuffer, LogLevel, Time};
 
@@ -112,6 +113,26 @@ impl App {
     pub fn add_system_config(&mut self, stage: Stage, config: SystemConfig) -> &mut Self {
         self.schedule.add_system_config(stage, config);
         self
+    }
+
+    /// Enable or disable access-declared parallel system execution. The default is enabled;
+    /// legacy systems and dependency/access barriers remain serial either way.
+    pub fn set_parallel_enabled(&mut self, enabled: bool) -> &mut Self {
+        self.schedule.set_parallel_enabled(enabled);
+        self
+    }
+
+    /// Set the maximum number of workers used for one compatible parallel batch. Zero is
+    /// clamped to one, which is useful for serial comparison.
+    pub fn set_max_parallelism(&mut self, max_parallelism: usize) -> &mut Self {
+        self.schedule.set_max_parallelism(max_parallelism);
+        self
+    }
+
+    /// Inspect the built conflict-free execution batches for a stage. Returns `None` until the
+    /// schedule has been built successfully.
+    pub fn execution_plan(&self, stage: Stage) -> Option<Vec<Vec<String>>> {
+        self.schedule.execution_plan(stage)
     }
 
     /// Register typed event storage and age it at the beginning of each frame.
