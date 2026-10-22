@@ -11,7 +11,7 @@ The capture records one `frame` row per retained successful window presentation 
 rows containing render-graph node CPU durations. Columns include whole-frame wall duration, surface-acquire
 and surface-present wall durations, graph CPU time, per-node CPU time, latest completed GPU timestamp
 results and their submission sequence, resource estimates, transient texture allocation/reuse counters,
-and cumulative GPU-profiler sample counts.
+and cumulative GPU-profiler sample counts. Material diagnostics also report unique live GPU textures, unique texture mip-chain bytes, material uniform bytes, and cumulative content-cache hit/miss counters; those breakdown fields are included in the aggregate material-byte estimate, not extra categories in the total.
 
 ## Capture options
 

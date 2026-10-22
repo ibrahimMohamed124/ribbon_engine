@@ -126,6 +126,11 @@ impl MeshPass {
             resources.live_materials = stats.live_materials;
             resources.mesh_bytes_estimate = stats.mesh_bytes_estimate;
             resources.material_bytes_estimate = stats.material_bytes_estimate;
+            resources.live_material_textures = stats.live_material_textures;
+            resources.material_texture_bytes_estimate = stats.material_texture_bytes_estimate;
+            resources.material_uniform_bytes_estimate = stats.material_uniform_bytes_estimate;
+            resources.material_texture_cache_hits = stats.material_texture_cache_hits;
+            resources.material_texture_cache_misses = stats.material_texture_cache_misses;
             resources.buffer_bytes_estimate = stats.buffer_bytes_estimate;
             resources.depth_target_bytes_estimate = stats.depth_target_bytes_estimate;
             resources.backend_peak_bytes_estimate = stats.peak_bytes_estimate;

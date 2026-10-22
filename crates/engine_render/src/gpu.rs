@@ -47,8 +47,12 @@ fn choose_present_mode(
         "fifo-relaxed" if has(wgpu::PresentMode::FifoRelaxed) => {
             (wgpu::PresentMode::FifoRelaxed, false)
         }
-        "immediate" if has(wgpu::PresentMode::Immediate) => (wgpu::PresentMode::Immediate, false),
-        "mailbox" if has(wgpu::PresentMode::Mailbox) => (wgpu::PresentMode::Mailbox, false),
+        "immediate" if has(wgpu::PresentMode::Immediate) => {
+            (wgpu::PresentMode::Immediate, false)
+        }
+        "mailbox" if has(wgpu::PresentMode::Mailbox) => {
+            (wgpu::PresentMode::Mailbox, false)
+        }
         "fifo-relaxed" | "immediate" | "mailbox" => (wgpu::PresentMode::Fifo, true),
         _ => (wgpu::PresentMode::Fifo, true),
     }
@@ -471,8 +475,8 @@ impl GpuContext {
                 .find(wgpu::TextureFormat::is_srgb)
                 .or_else(|| capabilities.formats.first().copied())
                 .ok_or_else(|| RenderError("wgpu surface exposes no color formats".to_owned()))?;
-            let requested_mode =
-                std::env::var("RIBBON_GPU_PRESENT_MODE").unwrap_or_else(|_| "fifo".to_owned());
+            let requested_mode = std::env::var("RIBBON_GPU_PRESENT_MODE")
+                .unwrap_or_else(|_| "fifo".to_owned());
             let (present_mode, mode_fallback) =
                 choose_present_mode(&requested_mode, &capabilities.present_modes);
             let (desired_maximum_frame_latency, latency_fallback) =
@@ -487,19 +491,18 @@ impl GpuContext {
                     "[GPU SURFACE] invalid RIBBON_GPU_FRAME_LATENCY; expected 1, 2, or 3, using 1"
                 );
             }
-            let config =
-                wgpu::SurfaceConfiguration {
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    format,
-                    width: window.inner_size().width.max(1),
-                    height: window.inner_size().height.max(1),
-                    present_mode,
-                    desired_maximum_frame_latency,
-                    alpha_mode: capabilities.alpha_modes.first().copied().ok_or_else(|| {
-                        RenderError("wgpu surface exposes no alpha modes".to_owned())
-                    })?,
-                    view_formats: vec![],
-                };
+            let config = wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format,
+                width: window.inner_size().width.max(1),
+                height: window.inner_size().height.max(1),
+                present_mode,
+                desired_maximum_frame_latency,
+                alpha_mode: capabilities.alpha_modes.first().copied().ok_or_else(|| {
+                    RenderError("wgpu surface exposes no alpha modes".to_owned())
+                })?,
+                view_formats: vec![],
+            };
             eprintln!(
                 "[GPU SURFACE] requested_mode={requested_mode:?}; selected_mode={}; desired_maximum_frame_latency={}; supported_modes={:?}",
                 present_mode_label(config.present_mode),

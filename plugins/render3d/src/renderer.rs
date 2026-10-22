@@ -5,6 +5,10 @@ use crate::mesh::{self, Vertex};
 use crate::profiling::{GpuTimestampProfiler, GpuTimingSnapshot};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Weak};
 use wgpu::util::DeviceExt;
 
 /// Depth format used by the mesh pass.
@@ -161,15 +165,30 @@ struct MeshSlot {
     mesh: Option<GpuMesh>,
 }
 
+struct GpuTexture {
+    // The view does not replace ownership of the underlying texture.
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    estimated_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct TextureCacheKey {
+    width: u32,
+    height: u32,
+    srgb: bool,
+    fingerprint: [u64; 2],
+}
+
 struct GpuMaterial {
     bind_group: wgpu::BindGroup,
     _uniform: wgpu::Buffer,
-    _texture: wgpu::Texture,
-    _metallic_roughness_texture: wgpu::Texture,
-    _normal_texture: wgpu::Texture,
-    _occlusion_texture: wgpu::Texture,
-    _emissive_texture: wgpu::Texture,
-    estimated_bytes: u64,
+    _base_texture: Arc<GpuTexture>,
+    _metallic_roughness_texture: Arc<GpuTexture>,
+    _normal_texture: Arc<GpuTexture>,
+    _occlusion_texture: Arc<GpuTexture>,
+    _emissive_texture: Arc<GpuTexture>,
+    uniform_bytes_estimate: u64,
 }
 
 struct MaterialSlot {
@@ -186,8 +205,19 @@ pub struct MeshRendererResourceStats {
     pub live_materials: usize,
     /// Estimated live vertex/index buffer bytes.
     pub mesh_bytes_estimate: u64,
-    /// Estimated material texture and uniform bytes.
+    /// Estimated material texture and uniform bytes. Texture allocations are counted once even
+    /// when multiple materials share identical image content and color-space interpretation.
     pub material_bytes_estimate: u64,
+    /// Number of unique live GPU textures referenced by material slots.
+    pub live_material_textures: usize,
+    /// Estimated bytes across unique live material textures, including mip levels.
+    pub material_texture_bytes_estimate: u64,
+    /// Estimated material uniform-buffer bytes; included in `material_bytes_estimate`.
+    pub material_uniform_bytes_estimate: u64,
+    /// Cumulative requests satisfied from the renderer's content-addressed texture cache.
+    pub material_texture_cache_hits: u64,
+    /// Cumulative texture allocations caused by a content-cache miss.
+    pub material_texture_cache_misses: u64,
     /// Estimated uniform and instance buffer bytes.
     pub buffer_bytes_estimate: u64,
     /// Estimated shadow-map and depth-target bytes.
@@ -226,6 +256,11 @@ pub struct MeshRenderer {
     free_mesh_slots: Vec<usize>,
     materials: Vec<MaterialSlot>,
     free_material_slots: Vec<usize>,
+    /// Weak content-addressed texture entries: live materials own shared textures, and released
+    /// materials allow unreferenced GPU textures to be dropped immediately.
+    texture_cache: HashMap<TextureCacheKey, Weak<GpuTexture>>,
+    texture_cache_hits: u64,
+    texture_cache_misses: u64,
     /// Optional adapter-supported GPU timer for mesh + shadow commands.
     gpu_timing: Option<GpuTimestampProfiler>,
     peak_resource_bytes_estimate: u64,
@@ -330,6 +365,34 @@ fn build_data_mips(width: u32, height: u32, rgba8: &[u8]) -> Vec<(u32, u32, Vec<
         levels.push((nw, nh, next));
     }
     levels
+}
+
+fn texture_cache_key(source: TextureData<'_>, srgb: bool) -> TextureCacheKey {
+    // Use two independently salted 64-bit fingerprints to make accidental content collisions
+    // vanishingly unlikely without adding a hash dependency or retaining duplicate CPU pixel data.
+    let mut first = DefaultHasher::new();
+    0x5249_4242_4f4e_0001_u64.hash(&mut first);
+    source.width.hash(&mut first);
+    source.height.hash(&mut first);
+    srgb.hash(&mut first);
+    source.rgba8.hash(&mut first);
+
+    let mut second = DefaultHasher::new();
+    0x5249_4242_4f4e_0002_u64.hash(&mut second);
+    source.width.hash(&mut second);
+    source.height.hash(&mut second);
+    srgb.hash(&mut second);
+    source.rgba8.len().hash(&mut second);
+    for byte in source.rgba8.iter().rev() {
+        byte.hash(&mut second);
+    }
+
+    TextureCacheKey {
+        width: source.width,
+        height: source.height,
+        srgb,
+        fingerprint: [first.finish(), second.finish()],
+    }
 }
 
 fn upload_rgba_texture(
@@ -898,6 +961,9 @@ impl MeshRenderer {
             free_mesh_slots: Vec::new(),
             materials: Vec::new(),
             free_material_slots: Vec::new(),
+            texture_cache: HashMap::new(),
+            texture_cache_hits: 0,
+            texture_cache_misses: 0,
             gpu_timing: GpuTimestampProfiler::new(device),
             peak_resource_bytes_estimate: 0,
             instances: instance_buffer(device, 16),
@@ -1034,10 +1100,23 @@ impl MeshRenderer {
             .filter_map(|slot| slot.material.as_ref())
         {
             stats.live_materials = stats.live_materials.saturating_add(1);
-            stats.material_bytes_estimate = stats
-                .material_bytes_estimate
-                .saturating_add(material.estimated_bytes);
+            stats.material_uniform_bytes_estimate = stats
+                .material_uniform_bytes_estimate
+                .saturating_add(material.uniform_bytes_estimate);
         }
+        // The cache stores weak references only, so this counts each unique live texture exactly
+        // once without keeping textures alive after the last material releases them.
+        for texture in self.texture_cache.values().filter_map(Weak::upgrade) {
+            stats.live_material_textures = stats.live_material_textures.saturating_add(1);
+            stats.material_texture_bytes_estimate = stats
+                .material_texture_bytes_estimate
+                .saturating_add(texture.estimated_bytes);
+        }
+        stats.material_bytes_estimate = stats
+            .material_texture_bytes_estimate
+            .saturating_add(stats.material_uniform_bytes_estimate);
+        stats.material_texture_cache_hits = self.texture_cache_hits;
+        stats.material_texture_cache_misses = self.texture_cache_misses;
         stats.buffer_bytes_estimate = (std::mem::size_of::<Globals>() as u64)
             .saturating_add(2_u64.saturating_mul(std::mem::size_of::<ShadowGlobals>() as u64))
             .saturating_add(
@@ -1128,6 +1207,36 @@ impl MeshRenderer {
         )
     }
 
+    fn upload_cached_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        source: TextureData<'_>,
+        label: &'static str,
+        srgb: bool,
+    ) -> Arc<GpuTexture> {
+        let key = texture_cache_key(source, srgb);
+        if let Some(texture) = self.texture_cache.get(&key).and_then(Weak::upgrade) {
+            self.texture_cache_hits = self.texture_cache_hits.saturating_add(1);
+            return texture;
+        }
+
+        self.texture_cache_misses = self.texture_cache_misses.saturating_add(1);
+        // Keep dead weak entries bounded across repeated hot reloads and scene changes.
+        if self.texture_cache.len() >= 128 {
+            self.texture_cache
+                .retain(|_, texture| texture.strong_count() > 0);
+        }
+        let (texture, view) = upload_rgba_texture(device, queue, source, label, srgb);
+        let shared = Arc::new(GpuTexture {
+            _texture: texture,
+            view,
+            estimated_bytes: texture_mip_bytes(source.width, source.height),
+        });
+        self.texture_cache.insert(key, Arc::downgrade(&shared));
+        shared
+    }
+
     /// Upload a material and its optional glTF metallic-roughness texture maps.
     pub fn upload_pbr_material_with_maps(
         &mut self,
@@ -1150,10 +1259,15 @@ impl MeshRenderer {
         let white = [255_u8; 4];
         let base_source = valid_texture(base_color_texture, &white);
         let surface_source = valid_texture(metallic_roughness_texture, &white);
-        let (gpu_texture, view) =
-            upload_rgba_texture(device, queue, base_source, "material sRGB base color", true);
+        let base_texture = self.upload_cached_texture(
+            device,
+            queue,
+            base_source,
+            "material sRGB base color",
+            true,
+        );
         // Metallic and roughness values are linear data, not sRGB colors.
-        let (surface_texture, surface_view) = upload_rgba_texture(
+        let surface_texture = self.upload_cached_texture(
             device,
             queue,
             surface_source,
@@ -1167,16 +1281,21 @@ impl MeshRenderer {
         let normal_source = valid_texture(normal_texture, &flat_normal);
         let occlusion_source = valid_texture(occlusion_texture, &white_occlusion);
         let emissive_source = valid_texture(emissive_texture, &white_emissive);
-        let (normal_gpu_texture, normal_view) =
-            upload_rgba_texture(device, queue, normal_source, "material normal map", false);
-        let (occlusion_gpu_texture, occlusion_view) = upload_rgba_texture(
+        let normal_gpu_texture = self.upload_cached_texture(
+            device,
+            queue,
+            normal_source,
+            "material normal map",
+            false,
+        );
+        let occlusion_gpu_texture = self.upload_cached_texture(
             device,
             queue,
             occlusion_source,
             "material ambient occlusion map",
             false,
         );
-        let (emissive_gpu_texture, emissive_view) = upload_rgba_texture(
+        let emissive_gpu_texture = self.upload_cached_texture(
             device,
             queue,
             emissive_source,
@@ -1213,7 +1332,7 @@ impl MeshRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
+                    resource: wgpu::BindingResource::TextureView(&base_texture.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -1221,46 +1340,31 @@ impl MeshRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&surface_view),
+                    resource: wgpu::BindingResource::TextureView(&surface_texture.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&normal_view),
+                    resource: wgpu::BindingResource::TextureView(&normal_gpu_texture.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&occlusion_view),
+                    resource: wgpu::BindingResource::TextureView(&occlusion_gpu_texture.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(&emissive_view),
+                    resource: wgpu::BindingResource::TextureView(&emissive_gpu_texture.view),
                 },
             ],
         });
-        let estimated_bytes = texture_mip_bytes(base_source.width, base_source.height)
-            .saturating_add(texture_mip_bytes(
-                surface_source.width,
-                surface_source.height,
-            ))
-            .saturating_add(texture_mip_bytes(normal_source.width, normal_source.height))
-            .saturating_add(texture_mip_bytes(
-                occlusion_source.width,
-                occlusion_source.height,
-            ))
-            .saturating_add(texture_mip_bytes(
-                emissive_source.width,
-                emissive_source.height,
-            ))
-            .saturating_add(std::mem::size_of::<MaterialUniform>() as u64);
         let material = GpuMaterial {
             bind_group,
             _uniform: uniform,
-            _texture: gpu_texture,
+            _base_texture: base_texture,
             _metallic_roughness_texture: surface_texture,
             _normal_texture: normal_gpu_texture,
             _occlusion_texture: occlusion_gpu_texture,
             _emissive_texture: emissive_gpu_texture,
-            estimated_bytes,
+            uniform_bytes_estimate: std::mem::size_of::<MaterialUniform>() as u64,
         };
         let id = if let Some(index) = self.free_material_slots.pop() {
             let slot = &mut self.materials[index];

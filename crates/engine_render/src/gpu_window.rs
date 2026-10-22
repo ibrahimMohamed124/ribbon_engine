@@ -4,7 +4,7 @@
 //! [`GpuContext`] bound to it, and clears the surface to [`ClearColor`] every
 //! frame. Later renderer passes build on this surface and context.
 
-use crate::gpu::{present_mode_label, GpuContext};
+use crate::gpu::{GpuContext, present_mode_label};
 use crate::graph::{RenderContext, RenderError, RenderGraph, RenderNode};
 use crate::profiling::{RenderDiagnostics, RenderGraphTiming};
 use engine_app::{App, LogBuffer, LogLevel, Stage, World};
@@ -323,13 +323,16 @@ pub fn gpu_window_system(world: &mut World) {
         if stale {
             context.resize(size.width, size.height);
         }
-        let Some((format, present_mode, frame_latency)) = context.surface_config().map(|config| {
-            (
-                config.format,
-                present_mode_label(config.present_mode),
-                config.desired_maximum_frame_latency,
-            )
-        }) else {
+        let Some((format, present_mode, frame_latency)) = context
+            .surface_config()
+            .map(|config| {
+                (
+                    config.format,
+                    present_mode_label(config.present_mode),
+                    config.desired_maximum_frame_latency,
+                )
+            })
+        else {
             return;
         };
         let Some(surface) = context.surface() else {

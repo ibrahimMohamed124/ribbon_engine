@@ -168,7 +168,18 @@ def current_resource_summary(frames: list[dict[str, int | str | None]]) -> list[
     ]
     byte_categories = [
         ("Mesh buffers", "mesh_bytes_estimate"),
-        ("Material data/textures", "material_bytes_estimate"),
+    ]
+    if "material_texture_bytes_estimate" in latest:
+        # The two rows below are a breakdown of material_bytes_estimate, not extra allocations.
+        # Their sum equals the aggregate material category and therefore avoids double counting.
+        byte_categories.extend([
+            ("Material textures (deduplicated)", "material_texture_bytes_estimate"),
+            ("Material uniform buffers", "material_uniform_bytes_estimate"),
+        ])
+    else:
+        # Keep reports from captures produced before the texture-memory breakdown readable.
+        byte_categories.append(("Material data/textures", "material_bytes_estimate"))
+    byte_categories.extend([
         ("Renderer buffers", "buffer_bytes_estimate"),
         ("Depth/shadow targets", "depth_target_bytes_estimate"),
         ("Active transient textures", "active_transient_bytes_estimate"),
@@ -176,7 +187,7 @@ def current_resource_summary(frames: list[dict[str, int | str | None]]) -> list[
         ("Post-processing", "post_process_bytes_estimate"),
         ("Context target", "context_target_bytes_estimate"),
         ("Context readback staging", "context_readback_bytes_estimate"),
-    ]
+    ])
     for label, key in byte_categories:
         current = integer(latest, key)
         peak_category = max(integer(frame, key) for frame in frames)
@@ -195,6 +206,12 @@ def current_resource_summary(frames: list[dict[str, int | str | None]]) -> list[
         f"| GPU timestamp samples skipped (cumulative) | {integer(latest, 'gpu_timestamp_samples_skipped')} |",
         f"| Peak frame wall in retained samples | {ms(peak_cpu)} ms |",
     ])
+    if "live_material_textures" in latest:
+        lines.extend([
+            f"| Unique live material GPU textures | {integer(latest, 'live_material_textures')} |",
+            f"| Material texture-cache hits (cumulative) | {integer(latest, 'material_texture_cache_hits')} |",
+            f"| Material texture-cache misses/uploads (cumulative) | {integer(latest, 'material_texture_cache_misses')} |",
+        ])
     return lines
 
 
@@ -293,6 +310,8 @@ def build_report(path: Path, frames: list[dict[str, int | str | None]], passes: 
         "- Render graph pass durations are CPU-side encoding/invocation time and exclude asynchronous GPU execution.",
         "- GPU samples are deduplicated by submission sequence because an older result can remain visible across multiple captured frames.",
         "- Resource values are engine-side estimates, not driver-reported total VRAM usage.",
+        "- Material texture bytes are counted once per unique live texture content and color-space format; material uniforms are shown separately as a breakdown of the aggregate material estimate.",
+        "- Texture-cache hits include repeated maps across materials and roles where their pixel content and sRGB/linear interpretation are identical.",
         "- Only change one major rendering variable at a time and rerun on the same machine, GPU adapter/driver, display resolution, release/debug profile, scene, warmup, and capture length.",
         "- Do not compare numbers from different GPU adapters or build profiles as if they were controlled performance tests.",
     ]

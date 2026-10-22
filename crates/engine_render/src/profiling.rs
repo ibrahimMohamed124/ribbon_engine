@@ -37,8 +37,19 @@ pub struct RenderResourceStats {
     pub live_materials: usize,
     /// Estimated bytes used by live mesh vertex/index buffers.
     pub mesh_bytes_estimate: u64,
-    /// Estimated bytes used by material factors and material textures.
+    /// Estimated bytes used by material factors and material textures (aggregate).
     pub material_bytes_estimate: u64,
+    /// Number of unique live GPU textures referenced by material slots.
+    pub live_material_textures: usize,
+    /// Estimated bytes across unique live material textures including mip levels; included in
+    /// `material_bytes_estimate`, not an additional total allocation category.
+    pub material_texture_bytes_estimate: u64,
+    /// Estimated material uniform bytes; included in `material_bytes_estimate`.
+    pub material_uniform_bytes_estimate: u64,
+    /// Cumulative texture requests served from the content-addressed GPU texture cache.
+    pub material_texture_cache_hits: u64,
+    /// Cumulative unique texture uploads caused by cache misses.
+    pub material_texture_cache_misses: u64,
     /// Estimated bytes for renderer-owned uniform and instance buffers.
     pub buffer_bytes_estimate: u64,
     /// Estimated bytes for persistent shadow/depth targets.
@@ -535,6 +546,11 @@ impl RenderProfileRecorder {
             "present_ns",
             "surface_present_mode",
             "surface_frame_latency",
+            "live_material_textures",
+            "material_texture_bytes_estimate",
+            "material_uniform_bytes_estimate",
+            "material_texture_cache_hits",
+            "material_texture_cache_misses",
         ];
         write_csv_record(&mut writer, HEADER.iter().map(|field| (*field).to_owned()))?;
         for sample in &self.samples {
@@ -575,6 +591,11 @@ impl RenderProfileRecorder {
             row[34] = sample.present_ns.to_string();
             row[35] = sample.surface_present_mode.to_owned();
             row[36] = sample.surface_frame_latency.to_string();
+            row[37] = resources.live_material_textures.to_string();
+            row[38] = resources.material_texture_bytes_estimate.to_string();
+            row[39] = resources.material_uniform_bytes_estimate.to_string();
+            row[40] = resources.material_texture_cache_hits.to_string();
+            row[41] = resources.material_texture_cache_misses.to_string();
             write_csv_record(&mut writer, row)?;
             for pass in &sample.passes {
                 let mut pass_row = vec![String::new(); HEADER.len()];
@@ -732,10 +753,7 @@ fn write_csv_record(
             writer.write_all(b",")?;
         }
         first = false;
-        if field
-            .bytes()
-            .any(|byte| matches!(byte, b',' | b'"' | b'\r' | b'\n'))
-        {
+        if field.bytes().any(|byte| matches!(byte, b',' | b'"' | b'\r' | b'\n')) {
             writer.write_all(b"\"")?;
             writer.write_all(field.replace('"', "\"\"").as_bytes())?;
             writer.write_all(b"\"")?;
@@ -745,3 +763,4 @@ fn write_csv_record(
     }
     writer.write_all(b"\r\n")
 }
+

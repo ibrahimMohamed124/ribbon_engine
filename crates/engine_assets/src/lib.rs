@@ -19,9 +19,9 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(any(feature = "hot_reload", debug_assertions))]
 use std::time::Instant;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Opaque identity shared by typed views of one asset path.
 ///
