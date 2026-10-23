@@ -78,6 +78,49 @@ pub struct RenderResourceStats {
     pub transient_pool_peak_bytes_estimate: u64,
     /// Cached/active pool textures whose format is not covered by the byte estimator.
     pub transient_unknown_size_textures: usize,
+    /// Built-in ECS mesh placements extracted for the current frame.
+    pub scene_mesh_instances: usize,
+    /// glTF model placements extracted for the current frame.
+    pub scene_model_placements: usize,
+    /// Voxel mesh placements extracted for the current frame.
+    pub scene_voxel_placements: usize,
+    /// Number of distinct glTF asset-generation keys currently uploaded by the render pass.
+    pub gpu_model_cache_entries: usize,
+    /// Number of distinct immutable voxel meshes currently cached by the render pass.
+    pub gpu_voxel_mesh_cache_entries: usize,
+    /// Cumulative distinct glTF model uploads for the current render-pass lifetime.
+    pub model_gpu_uploads_cumulative: u64,
+    /// Cumulative glTF GPU model cache entries released from the current render-pass lifetime.
+    pub model_gpu_releases_cumulative: u64,
+    /// Cumulative voxel GPU mesh uploads for the current render-pass lifetime.
+    pub voxel_mesh_gpu_uploads_cumulative: u64,
+    /// Cumulative voxel GPU mesh cache entries released from the current render-pass lifetime.
+    pub voxel_mesh_gpu_releases_cumulative: u64,
+    /// Current power-of-two capacity of both renderer instance buffers.
+    pub renderer_instance_capacity: usize,
+    /// Cumulative instance-buffer capacity increases over the current renderer lifetime.
+    pub renderer_instance_buffer_grows_cumulative: u64,
+    /// Cumulative instance-buffer capacity decreases over the current renderer lifetime.
+    pub renderer_instance_buffer_shrinks_cumulative: u64,
+    /// Estimated decoded CPU-side bytes currently held by the asset server.
+    /// Kept separate from the GPU total to avoid mixing CPU and GPU allocation categories.
+    pub cpu_asset_resident_bytes_estimate: u64,
+    /// Estimated CPU bytes protected by strong asset leases.
+    pub cpu_asset_pinned_bytes_estimate: u64,
+    /// Estimated CPU bytes eligible for budget eviction.
+    pub cpu_asset_unpinned_bytes_estimate: u64,
+    /// Number of decoded CPU assets currently resident.
+    pub cpu_asset_loaded_count: usize,
+    /// Number of resident CPU assets protected by at least one strong lease.
+    pub cpu_asset_pinned_count: usize,
+    /// Whether CPU asset-cache budget eviction is enabled for this server.
+    pub cpu_asset_budget_enabled: bool,
+    /// Configured unpinned CPU cache budget, in bytes (ignored when budget is disabled).
+    pub cpu_asset_budget_bytes: u64,
+    /// Unpinned resident CPU bytes over the configured budget.
+    pub cpu_asset_over_budget_bytes: u64,
+    /// Cumulative number of resident CPU assets evicted specifically for the cache budget.
+    pub cpu_asset_budget_evictions_cumulative: u64,
 }
 
 impl RenderResourceStats {
@@ -551,6 +594,27 @@ impl RenderProfileRecorder {
             "material_uniform_bytes_estimate",
             "material_texture_cache_hits",
             "material_texture_cache_misses",
+            "scene_mesh_instances",
+            "scene_model_placements",
+            "scene_voxel_placements",
+            "gpu_model_cache_entries",
+            "gpu_voxel_mesh_cache_entries",
+            "model_gpu_uploads_cumulative",
+            "model_gpu_releases_cumulative",
+            "voxel_mesh_gpu_uploads_cumulative",
+            "voxel_mesh_gpu_releases_cumulative",
+            "renderer_instance_capacity",
+            "renderer_instance_buffer_grows_cumulative",
+            "renderer_instance_buffer_shrinks_cumulative",
+            "cpu_asset_resident_bytes_estimate",
+            "cpu_asset_pinned_bytes_estimate",
+            "cpu_asset_unpinned_bytes_estimate",
+            "cpu_asset_loaded_count",
+            "cpu_asset_pinned_count",
+            "cpu_asset_budget_enabled",
+            "cpu_asset_budget_bytes",
+            "cpu_asset_over_budget_bytes",
+            "cpu_asset_budget_evictions_cumulative",
         ];
         write_csv_record(&mut writer, HEADER.iter().map(|field| (*field).to_owned()))?;
         for sample in &self.samples {
@@ -596,6 +660,33 @@ impl RenderProfileRecorder {
             row[39] = resources.material_uniform_bytes_estimate.to_string();
             row[40] = resources.material_texture_cache_hits.to_string();
             row[41] = resources.material_texture_cache_misses.to_string();
+            row[42] = resources.scene_mesh_instances.to_string();
+            row[43] = resources.scene_model_placements.to_string();
+            row[44] = resources.scene_voxel_placements.to_string();
+            row[45] = resources.gpu_model_cache_entries.to_string();
+            row[46] = resources.gpu_voxel_mesh_cache_entries.to_string();
+            row[47] = resources.model_gpu_uploads_cumulative.to_string();
+            row[48] = resources.model_gpu_releases_cumulative.to_string();
+            row[49] = resources.voxel_mesh_gpu_uploads_cumulative.to_string();
+            row[50] = resources.voxel_mesh_gpu_releases_cumulative.to_string();
+            row[51] = resources.renderer_instance_capacity.to_string();
+            row[52] = resources
+                .renderer_instance_buffer_grows_cumulative
+                .to_string();
+            row[53] = resources
+                .renderer_instance_buffer_shrinks_cumulative
+                .to_string();
+            row[54] = resources.cpu_asset_resident_bytes_estimate.to_string();
+            row[55] = resources.cpu_asset_pinned_bytes_estimate.to_string();
+            row[56] = resources.cpu_asset_unpinned_bytes_estimate.to_string();
+            row[57] = resources.cpu_asset_loaded_count.to_string();
+            row[58] = resources.cpu_asset_pinned_count.to_string();
+            row[59] = resources.cpu_asset_budget_enabled.to_string();
+            if resources.cpu_asset_budget_enabled {
+                row[60] = resources.cpu_asset_budget_bytes.to_string();
+            }
+            row[61] = resources.cpu_asset_over_budget_bytes.to_string();
+            row[62] = resources.cpu_asset_budget_evictions_cumulative.to_string();
             write_csv_record(&mut writer, row)?;
             for pass in &sample.passes {
                 let mut pass_row = vec![String::new(); HEADER.len()];
@@ -753,7 +844,10 @@ fn write_csv_record(
             writer.write_all(b",")?;
         }
         first = false;
-        if field.bytes().any(|byte| matches!(byte, b',' | b'"' | b'\r' | b'\n')) {
+        if field
+            .bytes()
+            .any(|byte| matches!(byte, b',' | b'"' | b'\r' | b'\n'))
+        {
             writer.write_all(b"\"")?;
             writer.write_all(field.replace('"', "\"\"").as_bytes())?;
             writer.write_all(b"\"")?;
@@ -763,4 +857,3 @@ fn write_csv_record(
     }
     writer.write_all(b"\r\n")
 }
-

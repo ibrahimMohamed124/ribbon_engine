@@ -75,7 +75,7 @@ def load_capture(path: Path) -> tuple[list[dict[str, int | str | None]], dict[st
                 for key in (reader.fieldnames or []):
                     if key in {"record_type", "pass_name", "surface_present_mode"}:
                         parsed[key] = row.get(key, "")
-                    elif key == "gpu_timestamp_queries_supported":
+                    elif key in {"gpu_timestamp_queries_supported", "cpu_asset_budget_enabled"}:
                         parsed[key] = 1 if (row.get(key) or "").strip().lower() == "true" else 0
                     else:
                         parsed[key] = number(row, key)
@@ -114,7 +114,16 @@ def ms(value: float | int | None) -> str:
 
 
 def fmt_bytes(value: int | float | None) -> str:
-    return "—" if value is None else f"{float(value) / (1024.0 * 1024.0):.2f} MiB"
+    if value is None:
+        return "—"
+    exact = max(0, int(value))
+    kib = 1024
+    mib = kib * kib
+    if exact >= mib:
+        return f"{exact / mib:.2f} MiB ({exact:,} B)"
+    if exact >= kib:
+        return f"{exact / kib:.2f} KiB ({exact:,} B)"
+    return f"{exact:,} B"
 
 
 def summary_table(metrics: dict[str, list[float]]) -> list[str]:
@@ -155,20 +164,21 @@ def pass_table(pass_values: dict[str, list[int]]) -> list[str]:
 
 def current_resource_summary(frames: list[dict[str, int | str | None]]) -> list[str]:
     latest = frames[-1]
+
     def integer(row: dict[str, int | str | None], key: str) -> int:
         value = row.get(key)
         return value if isinstance(value, int) else 0
 
-    peak = max(integer(frame, "total_bytes_estimate") for frame in frames)
-    peak_cpu = max(integer(frame, "frame_cpu_ns") for frame in frames)
+    def peak(key: str) -> int:
+        return max(integer(frame, key) for frame in frames)
+
+    peak_cpu = peak("frame_cpu_ns")
     lines = [
         "| Estimated allocation category | Latest | Peak in retained capture |",
         "|---|---:|---:|",
-        f"| Total tracked bytes | {fmt_bytes(integer(latest, 'total_bytes_estimate'))} | {fmt_bytes(peak)} |",
+        f"| Total tracked bytes | {fmt_bytes(integer(latest, 'total_bytes_estimate'))} | {fmt_bytes(peak('total_bytes_estimate'))} |",
     ]
-    byte_categories = [
-        ("Mesh buffers", "mesh_bytes_estimate"),
-    ]
+    byte_categories = [("Mesh buffers", "mesh_bytes_estimate")]
     if "material_texture_bytes_estimate" in latest:
         # The two rows below are a breakdown of material_bytes_estimate, not extra allocations.
         # Their sum equals the aggregate material category and therefore avoids double counting.
@@ -189,29 +199,109 @@ def current_resource_summary(frames: list[dict[str, int | str | None]]) -> list[
         ("Context readback staging", "context_readback_bytes_estimate"),
     ])
     for label, key in byte_categories:
-        current = integer(latest, key)
-        peak_category = max(integer(frame, key) for frame in frames)
-        lines.append(f"| {label} | {fmt_bytes(current)} | {fmt_bytes(peak_category)} |")
+        lines.append(
+            f"| {label} | {fmt_bytes(integer(latest, key))} | {fmt_bytes(peak(key))} |"
+        )
+
+    if "cpu_asset_resident_bytes_estimate" in latest:
+        lines.extend([
+            "",
+            "### CPU-side asset cache (separate from GPU allocation totals)",
+            "",
+            "| Cache metric | Latest | Peak in retained capture |",
+            "|---|---:|---:|",
+        ])
+        for label, key in [
+            ("Resident decoded asset bytes", "cpu_asset_resident_bytes_estimate"),
+            ("Pinned asset bytes", "cpu_asset_pinned_bytes_estimate"),
+            ("Unpinned cache bytes", "cpu_asset_unpinned_bytes_estimate"),
+            ("Configured unpinned-cache budget", "cpu_asset_budget_bytes"),
+            ("Unpinned bytes over budget", "cpu_asset_over_budget_bytes"),
+        ]:
+            if key == "cpu_asset_budget_bytes" and not integer(latest, "cpu_asset_budget_enabled"):
+                latest_value = "disabled"
+                peak_value = "disabled"
+            else:
+                latest_value = fmt_bytes(integer(latest, key))
+                peak_value = fmt_bytes(peak(key))
+            lines.append(f"| {label} | {latest_value} | {peak_value} |")
+        for label, key in [
+            ("Loaded CPU assets", "cpu_asset_loaded_count"),
+            ("Pinned CPU assets", "cpu_asset_pinned_count"),
+        ]:
+            lines.append(f"| {label} | {integer(latest, key)} | {peak(key)} |")
+        lines.extend([
+            "",
+            f"- Budget-based evictions at capture end: {integer(latest, 'cpu_asset_budget_evictions_cumulative')}",
+            f"- Budget enabled: {'yes' if integer(latest, 'cpu_asset_budget_enabled') else 'no'}",
+            "- CPU bytes use loader estimates based on decoded container/vector capacities, not process RSS or allocator telemetry.",
+            "- The configured budget applies to unpinned cache entries. Active strong leases are protected and may raise total resident CPU bytes above the cache budget.",
+        ])
+
+    live_metrics = [
+        ("Live meshes", "live_meshes"),
+        ("Live materials", "live_materials"),
+        ("Active transient textures", "active_transient_textures"),
+        ("Cached transient textures", "cached_transient_textures"),
+    ]
+    if "live_material_textures" in latest:
+        live_metrics.append(("Unique live material GPU textures", "live_material_textures"))
+    if "gpu_model_cache_entries" in latest:
+        live_metrics.extend([
+            ("GPU model cache entries", "gpu_model_cache_entries"),
+            ("GPU voxel-mesh cache entries", "gpu_voxel_mesh_cache_entries"),
+        ])
     lines.extend([
         "",
-        "| Counter | Latest |",
-        "|---|---:|",
-        f"| Live meshes | {integer(latest, 'live_meshes')} |",
-        f"| Live materials | {integer(latest, 'live_materials')} |",
-        f"| Active transient textures | {integer(latest, 'active_transient_textures')} |",
-        f"| Cached transient textures | {integer(latest, 'cached_transient_textures')} |",
-        f"| Transient texture allocations (cumulative) | {integer(latest, 'transient_texture_allocations')} |",
-        f"| Transient texture reuses (cumulative) | {integer(latest, 'transient_texture_reuses')} |",
-        f"| GPU timestamp samples completed (cumulative) | {integer(latest, 'gpu_timestamp_samples')} |",
-        f"| GPU timestamp samples skipped (cumulative) | {integer(latest, 'gpu_timestamp_samples_skipped')} |",
-        f"| Peak frame wall in retained samples | {ms(peak_cpu)} ms |",
+        "| Live resource/cache metric | Latest | Peak in retained capture |",
+        "|---|---:|---:|",
     ])
-    if "live_material_textures" in latest:
-        lines.extend([
-            f"| Unique live material GPU textures | {integer(latest, 'live_material_textures')} |",
-            f"| Material texture-cache hits (cumulative) | {integer(latest, 'material_texture_cache_hits')} |",
-            f"| Material texture-cache misses/uploads (cumulative) | {integer(latest, 'material_texture_cache_misses')} |",
+    for label, key in live_metrics:
+        lines.append(f"| {label} | {integer(latest, key)} | {peak(key)} |")
+
+    cumulative_metrics = [
+        ("Transient texture allocations", "transient_texture_allocations"),
+        ("Transient texture reuses", "transient_texture_reuses"),
+        ("Renderer instance-buffer grows", "renderer_instance_buffer_grows_cumulative"),
+        ("Renderer instance-buffer shrinks", "renderer_instance_buffer_shrinks_cumulative"),
+        ("GPU timestamp samples completed", "gpu_timestamp_samples"),
+        ("GPU timestamp samples skipped", "gpu_timestamp_samples_skipped"),
+    ]
+    if "material_texture_cache_hits" in latest:
+        cumulative_metrics.extend([
+            ("Material texture-cache hits", "material_texture_cache_hits"),
+            ("Material texture-cache misses/uploads", "material_texture_cache_misses"),
         ])
+    if "gpu_model_cache_entries" in latest:
+        cumulative_metrics.extend([
+            ("Model GPU uploads (distinct cache entries)", "model_gpu_uploads_cumulative"),
+            ("Model GPU releases (distinct cache entries)", "model_gpu_releases_cumulative"),
+            ("Voxel GPU uploads (distinct cache entries)", "voxel_mesh_gpu_uploads_cumulative"),
+            ("Voxel GPU releases (distinct cache entries)", "voxel_mesh_gpu_releases_cumulative"),
+        ])
+    lines.extend([
+        "",
+        "| Cumulative counter | Latest value |",
+        "|---|---:|",
+    ])
+    for label, key in cumulative_metrics:
+        lines.append(f"| {label} | {integer(latest, key)} |")
+    lines.append(f"| Peak frame wall in retained samples | {ms(peak_cpu)} ms |")
+
+    if "gpu_model_cache_entries" in latest:
+        workload_metrics = [
+            ("Scene mesh instances", "scene_mesh_instances"),
+            ("Scene glTF model placements", "scene_model_placements"),
+            ("Scene voxel placements", "scene_voxel_placements"),
+            ("Renderer instance-buffer capacity", "renderer_instance_capacity"),
+        ]
+        lines.extend([
+            "",
+            "| Large-scene workload metric | Latest | Peak in retained capture |",
+            "|---|---:|---:|",
+        ])
+        for label, key in workload_metrics:
+            lines.append(f"| {label} | {integer(latest, key)} | {peak(key)} |")
     return lines
 
 

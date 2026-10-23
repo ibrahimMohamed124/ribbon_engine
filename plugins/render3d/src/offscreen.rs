@@ -92,6 +92,9 @@ pub struct OffscreenVoxelRenderer {
     uploaded_chunks: BTreeMap<ChunkCoord, Vec<UploadedChunkMesh>>,
     cpu_timing: OffscreenFrameTiming,
     peak_tracked_gpu_bytes_estimate: u64,
+    last_scene_mesh_instances: usize,
+    voxel_mesh_gpu_uploads_cumulative: u64,
+    voxel_mesh_gpu_releases_cumulative: u64,
     size: (u32, u32),
     context: GpuContext,
 }
@@ -122,6 +125,9 @@ impl OffscreenVoxelRenderer {
             uploaded_chunks: BTreeMap::new(),
             cpu_timing: OffscreenFrameTiming::default(),
             peak_tracked_gpu_bytes_estimate: 0,
+            last_scene_mesh_instances: 0,
+            voxel_mesh_gpu_uploads_cumulative: 0,
+            voxel_mesh_gpu_releases_cumulative: 0,
             size,
             context,
         };
@@ -163,6 +169,7 @@ impl OffscreenVoxelRenderer {
     pub fn resource_stats(&self) -> RenderResourceStats {
         let renderer = self.renderer.resource_stats();
         let pool = self.transient_targets.stats();
+        let uploaded_mesh_count = self.uploaded_mesh_count();
         RenderResourceStats {
             live_meshes: renderer.live_meshes,
             live_materials: renderer.live_materials,
@@ -191,6 +198,16 @@ impl OffscreenVoxelRenderer {
             transient_texture_reuses: pool.reuses,
             transient_pool_peak_bytes_estimate: pool.peak_allocated_bytes_estimate,
             transient_unknown_size_textures: pool.unknown_size_textures,
+            scene_mesh_instances: self.last_scene_mesh_instances,
+            scene_voxel_placements: uploaded_mesh_count,
+            gpu_voxel_mesh_cache_entries: uploaded_mesh_count,
+            voxel_mesh_gpu_uploads_cumulative: self.voxel_mesh_gpu_uploads_cumulative,
+            voxel_mesh_gpu_releases_cumulative: self.voxel_mesh_gpu_releases_cumulative,
+            renderer_instance_capacity: renderer.instance_capacity,
+            renderer_instance_buffer_grows_cumulative: renderer.instance_buffer_grows_cumulative,
+            renderer_instance_buffer_shrinks_cumulative: renderer
+                .instance_buffer_shrinks_cumulative,
+            ..RenderResourceStats::default()
         }
     }
 
@@ -234,6 +251,7 @@ impl OffscreenVoxelRenderer {
         clear_color: [f64; 4],
     ) -> Result<Framebuffer, RenderError> {
         let frame_started = Instant::now();
+        self.last_scene_mesh_instances = objects.len();
         self.renderer
             .poll_gpu_timing(self.context.device(), self.context.queue());
         self.sync_dirty_chunks(world);
@@ -350,7 +368,10 @@ impl OffscreenVoxelRenderer {
         for update in world.rebuild_dirty_chunks() {
             if let Some(previous) = self.uploaded_chunks.remove(&update.coord) {
                 for uploaded in previous {
-                    self.renderer.release_mesh(uploaded.id);
+                    if self.renderer.release_mesh(uploaded.id) {
+                        self.voxel_mesh_gpu_releases_cumulative =
+                            self.voxel_mesh_gpu_releases_cumulative.saturating_add(1);
+                    }
                 }
             }
             if update.meshes.is_empty() {
@@ -373,6 +394,8 @@ impl OffscreenVoxelRenderer {
                 let id =
                     self.renderer
                         .upload_mesh(self.context.device(), &vertices, &source.indices);
+                self.voxel_mesh_gpu_uploads_cumulative =
+                    self.voxel_mesh_gpu_uploads_cumulative.saturating_add(1);
                 uploaded_chunk.push(UploadedChunkMesh { source, id });
             }
             if !uploaded_chunk.is_empty() {

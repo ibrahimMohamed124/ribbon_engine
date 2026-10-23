@@ -73,6 +73,33 @@ python tools/render_profile_report.py target/profiles/horror-slice.csv --output 
 Without scripted input, this captures the loaded room in its default state. Treat movement and mouse-look
 runs as a separate scenario and describe the interaction sequence in the report metadata.
 
+### Large-scene repeated-model stress and asset lifetime
+
+The stress switches are opt-in to `graphics_showcase` so the normal showcase and its baseline remain unchanged. Start
+with a grid of 32 by 32 placements; increase the side only after a lower-size capture completes successfully:
+
+```powershell
+cargo run --release -p graphics_showcase -- --stress-grid 32 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/large-scene.csv
+python tools/render_profile_report.py target/profiles/large-scene.csv --output target/profiles/large-scene.md
+```
+
+Use an interval of 300 frames to exercise CPU asset unload/reload, model/voxel GPU-cache cleanup, texture-cache
+release, and instance-buffer shrink behavior:
+
+```powershell
+cargo run --release -p graphics_showcase -- --stress-grid 24 --stress-cycle-frames 300 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/asset-lifecycle.csv
+python tools/render_profile_report.py target/profiles/asset-lifecycle.csv --output target/profiles/asset-lifecycle.md
+```
+
+For these reports, use both `Latest` and `Peak in retained capture`: when the final frame lands in an inactive
+cycle, latest placements/cache counts can be zero even though the capture successfully stressed a large grid.
+The GPU model upload/release counters count distinct model cache entries, not individual primitive buffers; voxel
+upload/release counters count distinct immutable chunk-mesh cache entries. Instance-buffer grow/shrink counters
+show whether the high-water allocation was later released after the 120-frame hysteresis window. Compare expected
+placements with the bounded GPU-cache entry count and check that releases rise during inactive periods and uploads
+rise on activation. Keep cycle captures separate from steady-state captures because asynchronous reload and upload
+frames deliberately create bursts that are not representative of steady rendering.
+
 ## Surface acquisition A/B experiment
 
 The first Windows release capture showed surface-acquire P95 close to whole-frame P95. The primary `engine_render::GpuContext` surface keeps `fifo` as its default present mode. After the first controlled

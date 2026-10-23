@@ -39,12 +39,19 @@ use engine_render::gpu::{
     TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool,
 };
 use engine_render::gpu_window::{clear_view, ClearColor, FramePass, FrameTarget, GpuWindow};
-use engine_render::profiling::{RenderDiagnostics, RenderResourceStats};
+use engine_render::profiling::{RenderDiagnostics, RenderProfileRecorder, RenderResourceStats};
 use glam::Mat4;
 use plugin_voxel::VoxelChunkMesh;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+type ModelAssetKey = (u64, u32);
+type ModelAssetRevision = (ModelAssetKey, u64);
+
+/// Bound synchronous model GPU-cache population work in one render frame.
+/// A single large model may still be expensive; this limits first-use bursts across assets.
+const MAX_MODEL_GPU_UPLOADS_PER_FRAME: usize = 2;
 
 #[derive(Default)]
 struct MeshPass {
@@ -55,11 +62,15 @@ struct MeshPass {
     transient_targets: TransientTexturePool,
     tonemapper: Option<(wgpu::TextureFormat, ToneMapper)>,
     /// Uploaded models keyed by asset handle id and generation.
-    models: HashMap<(u64, u32), Vec<GpuModelPart>>,
+    models: HashMap<ModelAssetKey, Vec<GpuModelPart>>,
     /// Last CPU-content revision observed for each model handle.
-    asset_revisions: HashMap<(u64, u32), u64>,
+    asset_revisions: HashMap<ModelAssetKey, u64>,
     /// Retain immutable CPU chunk meshes so pointer keys cannot be reused while cached.
     voxel_meshes: HashMap<usize, CachedVoxelMesh>,
+    model_gpu_uploads_cumulative: u64,
+    model_gpu_releases_cumulative: u64,
+    voxel_mesh_gpu_uploads_cumulative: u64,
+    voxel_mesh_gpu_releases_cumulative: u64,
 }
 
 struct CachedVoxelMesh {
@@ -121,6 +132,17 @@ impl MeshPass {
             transient_unknown_size_textures: pool_stats.unknown_size_textures,
             ..RenderResourceStats::default()
         };
+        if let Some(extracted) = world.try_resource::<ExtractedScene3D>() {
+            resources.scene_mesh_instances = extracted.meshes.len();
+            resources.scene_model_placements = extracted.models.len();
+            resources.scene_voxel_placements = extracted.voxels.len();
+        }
+        resources.gpu_model_cache_entries = self.models.len();
+        resources.gpu_voxel_mesh_cache_entries = self.voxel_meshes.len();
+        resources.model_gpu_uploads_cumulative = self.model_gpu_uploads_cumulative;
+        resources.model_gpu_releases_cumulative = self.model_gpu_releases_cumulative;
+        resources.voxel_mesh_gpu_uploads_cumulative = self.voxel_mesh_gpu_uploads_cumulative;
+        resources.voxel_mesh_gpu_releases_cumulative = self.voxel_mesh_gpu_releases_cumulative;
         if let Some(stats) = renderer_stats {
             resources.live_meshes = stats.live_meshes;
             resources.live_materials = stats.live_materials;
@@ -134,6 +156,27 @@ impl MeshPass {
             resources.buffer_bytes_estimate = stats.buffer_bytes_estimate;
             resources.depth_target_bytes_estimate = stats.depth_target_bytes_estimate;
             resources.backend_peak_bytes_estimate = stats.peak_bytes_estimate;
+            resources.renderer_instance_capacity = stats.instance_capacity;
+            resources.renderer_instance_buffer_grows_cumulative =
+                stats.instance_buffer_grows_cumulative;
+            resources.renderer_instance_buffer_shrinks_cumulative =
+                stats.instance_buffer_shrinks_cumulative;
+        }
+        // CPU cache accounting scans resident asset metadata. Keep it off the normal render path
+        // and collect it only when an explicit bounded profile capture is installed.
+        if world.try_resource::<RenderProfileRecorder>().is_some() {
+            if let Some(server) = world.try_resource::<AssetServer>() {
+                let stats = server.cpu_memory_stats();
+                resources.cpu_asset_resident_bytes_estimate = stats.resident_bytes_estimate;
+                resources.cpu_asset_pinned_bytes_estimate = stats.pinned_bytes_estimate;
+                resources.cpu_asset_unpinned_bytes_estimate = stats.unpinned_bytes_estimate;
+                resources.cpu_asset_loaded_count = stats.loaded_assets;
+                resources.cpu_asset_pinned_count = stats.pinned_assets;
+                resources.cpu_asset_budget_enabled = stats.budget_bytes.is_some();
+                resources.cpu_asset_budget_bytes = stats.budget_bytes.unwrap_or(0);
+                resources.cpu_asset_over_budget_bytes = stats.over_budget_bytes;
+                resources.cpu_asset_budget_evictions_cumulative = stats.budget_evictions_cumulative;
+            }
         }
         if world.try_resource::<RenderDiagnostics>().is_some() {
             let diagnostics = world.resource_mut::<RenderDiagnostics>();
@@ -165,34 +208,36 @@ impl MeshPass {
         target: &FrameTarget<'_>,
     ) {
         let (width, height) = target.size;
-        if width == 0 || height == 0 {
-            return;
-        }
 
         // A successful hot reload retains its weak handle ID/generation but advances the CPU asset
         // revision. Rebuild this pass's GPU-side caches when an already-observed model changes.
         // Recreating the pass-owned renderer here releases old model/material/texture allocations
         // together and keeps all replacement uploads on this renderer-owning thread.
-        let live_model_keys: HashSet<(u64, u32)> = extracted
-            .models
-            .iter()
-            .map(|placement| (placement.model.id(), placement.model.generation()))
-            .collect();
-        let current_revisions: Vec<_> = world
+        // A weak ModelInstance handle must not keep GPU resources alive after its CPU asset has
+        // been evicted. Only resident model handles count as live cache keys; the extraction may
+        // still contain a stale handle for one frame while the scene/asset lifecycle catches up.
+        let (live_model_keys, current_revisions): (
+            HashSet<ModelAssetKey>,
+            Vec<ModelAssetRevision>,
+        ) = world
             .try_resource::<AssetServer>()
             .map(|server| {
-                extracted
-                    .models
-                    .iter()
-                    .filter_map(|placement| {
-                        server.revision(placement.model).map(|revision| {
-                            (
-                                (placement.model.id(), placement.model.generation()),
-                                revision,
-                            )
-                        })
-                    })
-                    .collect()
+                let mut live_keys = HashSet::new();
+                let mut seen = HashSet::new();
+                let mut revisions = Vec::new();
+                for placement in &extracted.models {
+                    if server.get(placement.model).is_none() {
+                        continue;
+                    }
+                    let key = (placement.model.id(), placement.model.generation());
+                    live_keys.insert(key);
+                    if seen.insert(key) {
+                        if let Some(revision) = server.revision(placement.model) {
+                            revisions.push((key, revision));
+                        }
+                    }
+                }
+                (live_keys, revisions)
             })
             .unwrap_or_default();
         let revision_changed = current_revisions.iter().any(|(key, revision)| {
@@ -201,6 +246,12 @@ impl MeshPass {
                 .is_some_and(|previous| previous != revision)
         });
         if revision_changed {
+            self.model_gpu_releases_cumulative = self
+                .model_gpu_releases_cumulative
+                .saturating_add(self.models.len() as u64);
+            self.voxel_mesh_gpu_releases_cumulative = self
+                .voxel_mesh_gpu_releases_cumulative
+                .saturating_add(self.voxel_meshes.len() as u64);
             self.models.clear();
             self.asset_revisions.clear();
             self.voxel_meshes.clear();
@@ -210,7 +261,7 @@ impl MeshPass {
         for (key, revision) in current_revisions {
             self.asset_revisions.insert(key, revision);
         }
-        // Revision history and GPU-uploaded model parts should live only while the model is
+        // Revision history and GPU-uploaded model parts should live only while a resident model is
         // referenced by the extracted scene. Release every unique slot through generation-checked
         // handles; duplicate node placements may share the same primitive/material IDs.
         self.asset_revisions
@@ -224,6 +275,8 @@ impl MeshPass {
         if !stale_model_keys.is_empty() {
             for key in stale_model_keys {
                 if let Some(parts) = self.models.remove(&key) {
+                    self.model_gpu_releases_cumulative =
+                        self.model_gpu_releases_cumulative.saturating_add(1);
                     if let Some(renderer) = self.renderer.as_mut() {
                         for part in parts {
                             renderer.release_mesh(part.mesh);
@@ -250,6 +303,8 @@ impl MeshPass {
         if !stale_voxel_keys.is_empty() {
             for key in stale_voxel_keys {
                 if let Some(cached) = self.voxel_meshes.remove(&key) {
+                    self.voxel_mesh_gpu_releases_cumulative =
+                        self.voxel_mesh_gpu_releases_cumulative.saturating_add(1);
                     if let Some(renderer) = self.renderer.as_mut() {
                         renderer.release_mesh(cached.gpu_mesh);
                     }
@@ -257,7 +312,28 @@ impl MeshPass {
             }
         }
 
+        if width == 0 || height == 0 {
+            // A minimized/zero-sized target must not postpone asset-cache cleanup. Release any
+            // size-specific HDR view only after its tone-mapper bindings are dropped. Keep instance
+            // capacity while placements remain live; empty stress-cycle intervals may shrink it.
+            if extracted.meshes.is_empty()
+                && extracted.models.is_empty()
+                && extracted.voxels.is_empty()
+            {
+                if let Some(renderer) = self.renderer.as_mut() {
+                    renderer.maintain_instance_buffers(target.device, 0);
+                }
+            }
+            self.release_hdr_target();
+            self.transient_targets
+                .trim_unused_to_budget(64 * 1024 * 1024);
+            return;
+        }
+
         let Some(camera) = extracted.camera else {
+            if let Some(renderer) = self.renderer.as_mut() {
+                renderer.maintain_instance_buffers(target.device, 0);
+            }
             self.release_hdr_target();
             self.transient_targets
                 .trim_unused_to_budget(64 * 1024 * 1024);
@@ -286,17 +362,31 @@ impl MeshPass {
                 let Some(renderer) = self.renderer.as_mut() else {
                     return;
                 };
+                let mut model_uploads_this_frame = 0_usize;
                 for placement in &extracted.models {
                     let key = (placement.model.id(), placement.model.generation());
+                    let was_missing = !self.models.contains_key(&key);
                     let parts = match self.models.entry(key) {
                         Entry::Occupied(entry) => entry.into_mut(),
                         Entry::Vacant(entry) => {
+                            // `upload_model` creates mesh/material buffers and may upload several
+                            // textures. Do not synchronously populate every missing model cache
+                            // entry in one frame: defer remaining placements until a later frame.
+                            if model_uploads_this_frame >= MAX_MODEL_GPU_UPLOADS_PER_FRAME {
+                                continue;
+                            }
                             let Some(model) = server.get(placement.model) else {
                                 continue;
                             };
-                            entry.insert(upload_model(renderer, target.device, target.queue, model))
+                            let parts = upload_model(renderer, target.device, target.queue, model);
+                            model_uploads_this_frame += 1;
+                            entry.insert(parts)
                         }
                     };
+                    if was_missing {
+                        self.model_gpu_uploads_cumulative =
+                            self.model_gpu_uploads_cumulative.saturating_add(1);
+                    }
                     draws.extend(parts.iter().map(|part| Draw {
                         mesh: part.mesh,
                         material: part.material,
@@ -317,6 +407,7 @@ impl MeshPass {
             };
             for placement in &extracted.voxels {
                 let key = Arc::as_ptr(&placement.mesh) as usize;
+                let was_missing = !self.voxel_meshes.contains_key(&key);
                 let gpu_mesh = match self.voxel_meshes.entry(key) {
                     std::collections::hash_map::Entry::Occupied(entry) => entry.get().gpu_mesh,
                     std::collections::hash_map::Entry::Vacant(entry) => {
@@ -339,6 +430,10 @@ impl MeshPass {
                         gpu_mesh
                     }
                 };
+                if was_missing {
+                    self.voxel_mesh_gpu_uploads_cumulative =
+                        self.voxel_mesh_gpu_uploads_cumulative.saturating_add(1);
+                }
                 draws.push(Draw {
                     mesh: gpu_mesh,
                     material: MeshRenderer::WHITE,
@@ -349,6 +444,9 @@ impl MeshPass {
         }
 
         if draws.is_empty() {
+            if let Some(renderer) = self.renderer.as_mut() {
+                renderer.maintain_instance_buffers(target.device, 0);
+            }
             self.release_hdr_target();
             self.transient_targets
                 .trim_unused_to_budget(64 * 1024 * 1024);

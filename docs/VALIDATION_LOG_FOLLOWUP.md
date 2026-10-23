@@ -132,3 +132,61 @@ reported frame-wall P95 1.210 ms, but is explicitly not a default because it can
 
 Added `tools/compare_profile_runs.py` and `tools/run_surface_ab.ps1` to collect repeated captures and compare
 run-level P95/P99 distributions before treating the result as general. No tests were added or executed.
+
+
+## Follow-up: large-scene stress compile diagnostics (2026-10-23)
+
+The latest user-provided Windows output exposed two source issues in the large-scene stress archive:
+
+- `clippy::type_complexity` flagged the positional `Option<(...)>` used to carry the completed window-frame measurements. It is now represented by the private named-field `CompletedGpuWindowFrame` struct, making the measured values and resource snapshots explicit.
+- `plugin_render3d::offscreen::OffscreenVoxelRenderer::resource_stats` initialized `RenderResourceStats` without the fields introduced for scene/cache/instance diagnostics. The initializer now uses a default for fields that do not apply to this renderer, copies the renderer instance-buffer counters, and reports the currently uploaded chunk meshes and their cumulative upload/release counts. The offscreen path now increments release counts only when a mesh handle was actually released and counts each successful non-empty mesh upload.
+
+No tests were added or changed. In accordance with the user's request, Cargo, compilation, tests, and runtime were not executed while preparing this correction. Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, both workspace test configurations, and `python tools/check_deps.py` on this archive before considering it fully validated.
+
+
+## Follow-up: model-revision cache key type clarity (2026-10-23)
+
+The latest user-provided `cargo clippy --workspace --all-targets -- -D warnings` output flagged the nested cache-key/revision tuple type in `plugins/render3d/src/lib.rs`. Added the private `ModelAssetKey` and `ModelAssetRevision` aliases and reused `ModelAssetKey` for the pass-owned asset-revision map. This keeps the same `(asset id, generation)` identity and revision data while making the inferred collections easier to read; it does not suppress the lint.
+
+The pasted `cargo test --workspace -j 1` output ends during dependency compilation and does not include a result, so no conclusion is drawn about that command. No tests were added or modified. Cargo, Clippy, compilation, and runtime were not executed while preparing this update. Please rerun the same validation commands against this archive to check for any subsequent diagnostics.
+
+## Follow-up: graphics showcase approximate-constant lint (2026-10-23)
+
+The latest user-provided `cargo clippy --workspace --all-targets -- -D warnings` output flagged the
+rotation step `0.392_699_1` in `examples/graphics_showcase/src/main.rs` as an approximation of
+`f32::consts::FRAC_PI_8`. The showcase now uses `std::f32::consts::FRAC_PI_8` directly, preserving
+the intended angle step while avoiding `clippy::approx_constant`; the lint was not suppressed.
+
+No tests were added or changed. Cargo, Clippy, compilation, tests, and runtime were not executed while
+preparing this update. Please rerun `cargo fmt --check` and
+`cargo clippy --workspace --all-targets -- -D warnings` on this archive; any subsequent diagnostics
+remain unverified until the user-side commands complete.
+
+
+## Follow-up: multi-asset CPU cache budget and profiling (2026-10-23)
+
+Added loader-provided decoded CPU byte estimates and a soft budget for unleased cache entries. `ModelAsset` includes the capacities of its top-level and nested geometry/image vectors; `BytesLoader` and `TextLoader` include their backing storage capacity. `AssetServer::cpu_memory_stats` reports resident, pinned and unpinned estimated bytes, budget pressure and cumulative budget evictions. `request_with_priority`, `retry_with_priority`, and `request_ref_with_priority` specify cache-retention priority; lower-priority unpinned entries are evicted before higher-priority entries, with FIFO successful-load age as the tie-break. Strong leases remain protected. This is not a strict process-memory cap and does not yet bound decoded-but-not-committed worker results by bytes.
+
+The profiling report now renders exact byte values alongside human-readable units and separates decoded CPU cache data from GPU allocation estimates. The native render plugin reads the full CPU asset cache snapshot only when `RenderProfilePlugin` is installed, avoiding an O(number of cached paths) scan on ordinary render frames. The large-scene harness can generate many unique textured GLBs, place multiple unique assets in one scene, prefetch unleased lower-retention-priority assets, apply a CPU cache budget, and repeat asset lifecycle cycles. `-GridSides` normalization accepts both comma-separated command-line values and integer arrays passed directly by PowerShell.
+
+No test files were added or changed. Rust/Cargo commands, the engine runtime, and the stress capture were not executed in this environment. Static checks only are performed before delivery; target Windows validation remains mandatory.
+
+
+## Follow-up: user-side multi-asset CPU-cache stress review (2026-10-23)
+
+The user's Release run completed the single-model grids, the 32-active/32-prefetch multi-asset scene, and both lifecycle scenarios. The new multi-asset capture reached 1,024 placements and reported a tracked GPU/resource peak estimate of 26.97 MiB. For the standard grids, frame-wall P95 was 14.327 ms (16×16), 13.776 ms (32×32), and 13.299 ms (48×48); graph CPU P95 rose from 2.309 ms to 2.715 ms across 16×16 to 48×48. The multi-asset lifecycle capture had a 122.965 ms frame-wall peak while its P95 was 13.858 ms. The single-grid 16×16 capture also showed a 159.322 ms peak against a 14.327 ms P95. These isolated peaks should be matched to individual CSV frames before attributing them to rendering, decode, or cache eviction; the console summary alone cannot identify the cause.
+
+The multi-asset startup printed `[RENDER EXTRACT] FAIL` on the first frame while the asset leases were explicitly waiting for asynchronous decode, and then activated the complete scene later in the run. That first-frame failure was premature diagnostic output, not proof that the later render extraction failed. The showcase now defers an empty extraction result while stress-scene activation is pending, and allows a few frames for the extractor to observe newly spawned placements before it reports a failure. Activation also prints a CPU-cache snapshot with resident, pinned, unpinned, budget and over-budget byte values.
+
+The mixed model asset generations during lifecycle reload are compatible with partial budget eviction: evicted assets receive a new generation on the next request, while assets that stayed resident can legitimately reuse their existing generation. The cache budget is still soft for pinned assets; this capture does not establish a process-wide memory ceiling. The user-side logs report that the unpinned residency after the lifecycle budget enforcement was 1,018,800 bytes against a 1,048,576-byte budget, with cumulative budget evictions increasing from 17 to 49 and then 66 over the later cycle.
+
+No tests were added or modified. Cargo, compilation, tests and runtime were not executed in this environment. This follow-up is based on the supplied user-side logs plus a source-only correction to the asynchronous extraction diagnostic; rebuild and rerun the multi-asset capture on Windows to verify the new `PASS` line and cache snapshot.
+
+
+## Follow-up: multi-asset GPU upload burst pacing (2026-10-23)
+
+The user-provided CSV for `multi-asset-lifecycle-32x32-active32-prefetch32` isolated frame 602 as the long frame: frame wall 43.8668 ms, render-graph CPU 43.7298 ms, and `mesh pass [0]` CPU 43.5411 ms. Surface acquisition/presentation for that frame were 0.0637/0.0650 ms. On the same frame, GPU model cache entries increased from 0 to 32, and the cumulative model upload counter increased by 32 (32 to 64), with 32 additional live meshes/materials. This is strong correlation between the spike and synchronous model GPU resource creation, not evidence that GPU execution itself was slow. Per-row GPU samples are asynchronous and are not treated as perfectly aligned with the same frame.
+
+`plugin_render3d` now caps first-use model cache population at two distinct model asset keys per render frame. Missing placements beyond that limit are deferred to subsequent render frames; cached models continue to draw. Added `docs/GPU_ASSET_UPLOAD_PACING.md` with the evidence and target-side verification requirements. This limit is count-based, not a strict per-frame time budget, and voxel uploads are not changed by this targeted fix.
+
+No tests were added or modified. Rust/Cargo commands, the engine runtime and stress captures were not executed in this environment. Run `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings`, then rerun the same multi-asset lifecycle capture on Windows and verify the per-frame upload delta and the absence of a comparable mesh-pass stall.

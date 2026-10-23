@@ -4,7 +4,7 @@
 //! [`GpuContext`] bound to it, and clears the surface to [`ClearColor`] every
 //! frame. Later renderer passes build on this surface and context.
 
-use crate::gpu::{GpuContext, present_mode_label};
+use crate::gpu::{present_mode_label, GpuContext};
 use crate::graph::{RenderContext, RenderError, RenderGraph, RenderNode};
 use crate::profiling::{RenderDiagnostics, RenderGraphTiming};
 use engine_app::{App, LogBuffer, LogLevel, Stage, World};
@@ -270,6 +270,19 @@ fn log_error(world: &mut World, message: String) {
     }
 }
 
+/// Completed measurements and resource snapshots from one presented window frame.
+/// Keeping named fields here avoids a fragile positional tuple as diagnostics evolve.
+struct CompletedGpuWindowFrame {
+    frame_wall_ns: u64,
+    surface_acquire_ns: u64,
+    graph_timing: RenderGraphTiming,
+    present_ns: u64,
+    context_target_bytes: u64,
+    context_readback_bytes: u64,
+    present_mode: &'static str,
+    frame_latency: u32,
+}
+
 /// Create the context on first use, follow window resizes, and present one frame.
 pub fn gpu_window_system(world: &mut World) {
     let Some(window) = world.try_resource::<WindowHandle>().map(|w| w.0.clone()) else {
@@ -280,16 +293,7 @@ pub fn gpu_window_system(world: &mut World) {
         return;
     }
     let mut error = None;
-    let mut completed_frame: Option<(
-        u64,
-        u64,
-        RenderGraphTiming,
-        u64,
-        u64,
-        u64,
-        &'static str,
-        u32,
-    )> = None;
+    let mut completed_frame: Option<CompletedGpuWindowFrame> = None;
     world.resource_scope::<GpuWindow, _>(|world, state| {
         let GpuWindow {
             context,
@@ -323,16 +327,13 @@ pub fn gpu_window_system(world: &mut World) {
         if stale {
             context.resize(size.width, size.height);
         }
-        let Some((format, present_mode, frame_latency)) = context
-            .surface_config()
-            .map(|config| {
-                (
-                    config.format,
-                    present_mode_label(config.present_mode),
-                    config.desired_maximum_frame_latency,
-                )
-            })
-        else {
+        let Some((format, present_mode, frame_latency)) = context.surface_config().map(|config| {
+            (
+                config.format,
+                present_mode_label(config.present_mode),
+                config.desired_maximum_frame_latency,
+            )
+        }) else {
             return;
         };
         let Some(surface) = context.surface() else {
@@ -374,16 +375,17 @@ pub fn gpu_window_system(world: &mut World) {
                     .elapsed()
                     .as_nanos()
                     .min(u128::from(u64::MAX)) as u64;
-                completed_frame = Some((
-                    frame_started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+                completed_frame = Some(CompletedGpuWindowFrame {
+                    frame_wall_ns: frame_started.elapsed().as_nanos().min(u128::from(u64::MAX))
+                        as u64,
                     surface_acquire_ns,
                     graph_timing,
                     present_ns,
-                    context.target_bytes_estimate(),
-                    context.readback_buffer_bytes_estimate(),
+                    context_target_bytes: context.target_bytes_estimate(),
+                    context_readback_bytes: context.readback_buffer_bytes_estimate(),
                     present_mode,
                     frame_latency,
-                ));
+                });
             }
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
                 context.resize(size.width, size.height);
@@ -395,7 +397,7 @@ pub fn gpu_window_system(world: &mut World) {
             }
         }
     });
-    if let Some((
+    if let Some(CompletedGpuWindowFrame {
         frame_wall_ns,
         surface_acquire_ns,
         graph_timing,
@@ -404,7 +406,7 @@ pub fn gpu_window_system(world: &mut World) {
         context_readback_bytes,
         present_mode,
         frame_latency,
-    )) = completed_frame
+    }) = completed_frame
     {
         if world.try_resource::<RenderDiagnostics>().is_none() {
             world.insert_resource(RenderDiagnostics::default());

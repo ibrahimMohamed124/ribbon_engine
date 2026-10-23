@@ -222,6 +222,12 @@ pub struct MeshRendererResourceStats {
     pub buffer_bytes_estimate: u64,
     /// Estimated shadow-map and depth-target bytes.
     pub depth_target_bytes_estimate: u64,
+    /// Capacity retained by both the visible and shadow instance buffers.
+    pub instance_capacity: usize,
+    /// Count of visible/shadow instance-buffer capacity increases during this renderer lifetime.
+    pub instance_buffer_grows_cumulative: u64,
+    /// Count of visible/shadow instance-buffer capacity decreases during this renderer lifetime.
+    pub instance_buffer_shrinks_cumulative: u64,
     /// Peak total tracked allocation estimate since renderer construction.
     pub peak_bytes_estimate: u64,
 }
@@ -269,8 +275,15 @@ pub struct MeshRenderer {
     /// All instances, including off-screen casters, used by the shadow pass.
     shadow_instances: wgpu::Buffer,
     instance_capacity: usize,
+    underused_instance_frames: u32,
+    instance_buffer_grows_cumulative: u64,
+    instance_buffer_shrinks_cumulative: u64,
     depth: Option<DepthTarget>,
 }
+
+const MIN_INSTANCE_CAPACITY: usize = 16;
+const INSTANCE_BUFFER_SHRINK_THRESHOLD: usize = 256;
+const INSTANCE_BUFFER_SHRINK_AFTER_FRAMES: u32 = 120;
 
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
@@ -968,7 +981,10 @@ impl MeshRenderer {
             peak_resource_bytes_estimate: 0,
             instances: instance_buffer(device, 16),
             shadow_instances: instance_buffer(device, 16),
-            instance_capacity: 16,
+            instance_capacity: MIN_INSTANCE_CAPACITY,
+            underused_instance_frames: 0,
+            instance_buffer_grows_cumulative: 0,
+            instance_buffer_shrinks_cumulative: 0,
             depth: None,
         };
         let cube = mesh::cube();
@@ -1117,6 +1133,8 @@ impl MeshRenderer {
             .saturating_add(stats.material_uniform_bytes_estimate);
         stats.material_texture_cache_hits = self.texture_cache_hits;
         stats.material_texture_cache_misses = self.texture_cache_misses;
+        stats.instance_buffer_grows_cumulative = self.instance_buffer_grows_cumulative;
+        stats.instance_buffer_shrinks_cumulative = self.instance_buffer_shrinks_cumulative;
         stats.buffer_bytes_estimate = (std::mem::size_of::<Globals>() as u64)
             .saturating_add(2_u64.saturating_mul(std::mem::size_of::<ShadowGlobals>() as u64))
             .saturating_add(
@@ -1130,6 +1148,7 @@ impl MeshRenderer {
                     .map(|profiler| profiler.snapshot().buffer_bytes_estimate)
                     .unwrap_or(0),
             );
+        stats.instance_capacity = self.instance_capacity;
         // Two 1024x1024 Depth32Float shadow targets are fixed for this renderer.
         stats.depth_target_bytes_estimate = 2_u64
             .saturating_mul(1024)
@@ -1281,13 +1300,8 @@ impl MeshRenderer {
         let normal_source = valid_texture(normal_texture, &flat_normal);
         let occlusion_source = valid_texture(occlusion_texture, &white_occlusion);
         let emissive_source = valid_texture(emissive_texture, &white_emissive);
-        let normal_gpu_texture = self.upload_cached_texture(
-            device,
-            queue,
-            normal_source,
-            "material normal map",
-            false,
-        );
+        let normal_gpu_texture =
+            self.upload_cached_texture(device, queue, normal_source, "material normal map", false);
         let occlusion_gpu_texture = self.upload_cached_texture(
             device,
             queue,
@@ -1459,7 +1473,11 @@ impl MeshRenderer {
         size: (u32, u32),
         scene: &Scene<'_>,
     ) {
-        if scene.draws.is_empty() || size.0 == 0 || size.1 == 0 {
+        if size.0 == 0 || size.1 == 0 {
+            return;
+        }
+        self.maintain_instance_buffers(device, scene.draws.len());
+        if scene.draws.is_empty() {
             return;
         }
         self.ensure_depth(device, size);
@@ -1501,12 +1519,6 @@ impl MeshRenderer {
             .collect();
         if visible_draws.is_empty() {
             return;
-        }
-        if draws.len() > self.instance_capacity {
-            self.instance_capacity = draws.len().next_power_of_two();
-            self.instances = instance_buffer(device, self.instance_capacity);
-            self.shadow_instances = instance_buffer(device, self.instance_capacity);
-            self.update_peak_resource_estimate();
         }
         let to_raw = |instances: &[Draw]| {
             instances
@@ -1755,6 +1767,50 @@ impl MeshRenderer {
             profiler.submitted(slot);
         }
         self.update_peak_resource_estimate();
+    }
+
+    /// Grow instance buffers immediately when demand increases, but shrink them only after 120
+    /// consecutive frames at one-quarter capacity or less. This prevents large-scene captures from
+    /// retaining their high-water allocation forever without causing allocation churn during brief
+    /// camera/frustum or entity-count changes. Call this even while the scene has no drawable items.
+    pub fn maintain_instance_buffers(&mut self, device: &wgpu::Device, required_instances: usize) {
+        if required_instances > self.instance_capacity {
+            let desired = required_instances
+                .checked_next_power_of_two()
+                .unwrap_or(required_instances);
+            self.instance_capacity = desired.max(MIN_INSTANCE_CAPACITY);
+            self.instances = instance_buffer(device, self.instance_capacity);
+            self.shadow_instances = instance_buffer(device, self.instance_capacity);
+            self.instance_buffer_grows_cumulative =
+                self.instance_buffer_grows_cumulative.saturating_add(1);
+            self.underused_instance_frames = 0;
+            self.update_peak_resource_estimate();
+            return;
+        }
+
+        if self.instance_capacity > INSTANCE_BUFFER_SHRINK_THRESHOLD
+            && required_instances <= self.instance_capacity / 4
+        {
+            self.underused_instance_frames = self.underused_instance_frames.saturating_add(1);
+            if self.underused_instance_frames >= INSTANCE_BUFFER_SHRINK_AFTER_FRAMES {
+                let requested_floor = required_instances.max(MIN_INSTANCE_CAPACITY);
+                let desired = requested_floor
+                    .checked_next_power_of_two()
+                    .unwrap_or(requested_floor)
+                    .max(MIN_INSTANCE_CAPACITY);
+                if desired < self.instance_capacity {
+                    self.instance_capacity = desired;
+                    self.instances = instance_buffer(device, self.instance_capacity);
+                    self.shadow_instances = instance_buffer(device, self.instance_capacity);
+                    self.instance_buffer_shrinks_cumulative =
+                        self.instance_buffer_shrinks_cumulative.saturating_add(1);
+                    self.update_peak_resource_estimate();
+                }
+                self.underused_instance_frames = 0;
+            }
+        } else {
+            self.underused_instance_frames = 0;
+        }
     }
 }
 
