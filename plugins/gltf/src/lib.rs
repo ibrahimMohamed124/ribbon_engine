@@ -83,6 +83,36 @@ pub struct ModelAsset {
 }
 
 impl ModelAsset {
+    /// Estimate currently allocated CPU bytes, including nested vector capacities.
+    ///
+    /// This is a cache-budget estimate rather than exact allocator telemetry; it excludes decoder
+    /// scratch memory, the original compressed file bytes, and allocator bookkeeping.
+    pub fn estimated_size_bytes(&self) -> u64 {
+        let mut bytes = std::mem::size_of::<Self>() as u64;
+        bytes = bytes.saturating_add(allocated_vec_bytes::<PrimitiveData>(
+            self.primitives.capacity(),
+        ));
+        bytes = bytes.saturating_add(allocated_vec_bytes::<MaterialData>(
+            self.materials.capacity(),
+        ));
+        bytes = bytes.saturating_add(allocated_vec_bytes::<ImageData>(self.images.capacity()));
+        bytes = bytes.saturating_add(allocated_vec_bytes::<ModelNode>(self.nodes.capacity()));
+        for primitive in &self.primitives {
+            bytes = bytes.saturating_add(allocated_vec_bytes::<[f32; 3]>(
+                primitive.positions.capacity(),
+            ));
+            bytes = bytes.saturating_add(allocated_vec_bytes::<[f32; 3]>(
+                primitive.normals.capacity(),
+            ));
+            bytes = bytes.saturating_add(allocated_vec_bytes::<[f32; 2]>(primitive.uvs.capacity()));
+            bytes = bytes.saturating_add(allocated_vec_bytes::<u32>(primitive.indices.capacity()));
+        }
+        for image in &self.images {
+            bytes = bytes.saturating_add(image.rgba8.capacity() as u64);
+        }
+        bytes
+    }
+
     /// Axis-aligned bounds of every placed vertex, or `None` for an empty model.
     pub fn bounds(&self) -> Option<(Vec3, Vec3)> {
         let mut min = Vec3::splat(f32::INFINITY);
@@ -98,6 +128,10 @@ impl ModelAsset {
     }
 }
 
+fn allocated_vec_bytes<T>(capacity: usize) -> u64 {
+    (capacity as u64).saturating_mul(std::mem::size_of::<T>() as u64)
+}
+
 /// Loader registered for `glb` and `gltf` files.
 pub struct GltfLoader;
 
@@ -111,6 +145,10 @@ impl AssetLoader for GltfLoader {
     fn load(&self, bytes: &[u8], context: &mut LoadContext) -> Result<ModelAsset, LoadError> {
         parse(bytes)
             .map_err(|message| LoadError::new(LoadErrorKind::Decode, &context.path, message))
+    }
+
+    fn estimated_size_bytes(&self, asset: &Self::Asset) -> u64 {
+        asset.estimated_size_bytes()
     }
 }
 

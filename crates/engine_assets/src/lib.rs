@@ -19,9 +19,9 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(any(feature = "hot_reload", debug_assertions))]
 use std::time::Instant;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Opaque identity shared by typed views of one asset path.
 ///
@@ -421,6 +421,14 @@ pub trait AssetLoader: Send + Sync + 'static {
     fn extensions(&self) -> &[&str];
     /// Decode asset bytes.
     fn load(&self, bytes: &[u8], context: &mut LoadContext) -> Result<Self::Asset, LoadError>;
+    /// Estimate resident CPU bytes allocated by a decoded asset.
+    ///
+    /// The default accounts only for the fixed-size value. Loaders that own heap allocations
+    /// should override this method and include their collection capacities, not just lengths.
+    /// The estimate is used for cache-budget decisions and is not allocator telemetry.
+    fn estimated_size_bytes(&self, _asset: &Self::Asset) -> u64 {
+        std::mem::size_of::<Self::Asset>() as u64
+    }
 }
 
 type ErasedAssetMap = HashMap<TypeId, Box<dyn Any + Send + Sync>>;
@@ -433,6 +441,7 @@ trait ErasedLoader: Send + Sync {
         bytes: &[u8],
         context: &mut LoadContext,
     ) -> Result<Box<dyn Any + Send + Sync>, LoadError>;
+    fn estimated_size_bytes(&self, value: &(dyn Any + Send + Sync)) -> u64;
     fn store(
         &self,
         assets: &mut ErasedAssetMap,
@@ -457,6 +466,13 @@ impl<L: AssetLoader> ErasedLoader for LoaderAdapter<L> {
         self.0
             .load(bytes, context)
             .map(|asset| Box::new(asset) as Box<dyn Any + Send + Sync>)
+    }
+
+    fn estimated_size_bytes(&self, value: &(dyn Any + Send + Sync)) -> u64 {
+        value
+            .downcast_ref::<L::Asset>()
+            .map(|asset| self.0.estimated_size_bytes(asset))
+            .unwrap_or(std::mem::size_of::<L::Asset>() as u64)
     }
 
     fn store(
@@ -509,6 +525,34 @@ struct PathEntry {
     state: LoadState,
     reload_pending: bool,
     reload_token: u64,
+    estimated_size_bytes: u64,
+    load_sequence: u64,
+    priority: i32,
+}
+
+/// Snapshot of the asset server's decoded CPU-side cache residency.
+///
+/// All byte values are loader-provided estimates. The budget applies to unleased cache entries;
+/// assets held by at least one [`AssetRef`] remain resident even when that makes total residency
+/// exceed the budget.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AssetMemoryStats {
+    /// Number of successfully decoded values currently resident.
+    pub loaded_assets: usize,
+    /// Resident CPU bytes across both leased and unleased values.
+    pub resident_bytes_estimate: u64,
+    /// Resident CPU bytes protected by at least one strong lease.
+    pub pinned_bytes_estimate: u64,
+    /// Resident CPU bytes that are eligible for cache eviction.
+    pub unpinned_bytes_estimate: u64,
+    /// Number of resident values protected by one or more strong leases.
+    pub pinned_assets: usize,
+    /// Configured unpinned-cache budget, or `None` when budget eviction is disabled.
+    pub budget_bytes: Option<u64>,
+    /// Unpinned resident bytes in excess of the configured budget.
+    pub over_budget_bytes: u64,
+    /// Cumulative values evicted specifically to satisfy the configured cache budget.
+    pub budget_evictions_cumulative: u64,
 }
 
 /// Asset lifecycle and reload notifications delivered on the server-owning thread.
@@ -572,6 +616,7 @@ struct DecodedAsset {
     value: Box<dyn Any + Send + Sync>,
     source_id: u64,
     modified: Option<SystemTime>,
+    estimated_size_bytes: u64,
 }
 
 #[derive(Clone)]
@@ -655,6 +700,9 @@ pub struct AssetServer {
     strong_refs: Arc<Mutex<HashMap<(AssetId, u32), usize>>>,
     auto_evict_unused: bool,
     async_hot_reload: bool,
+    cpu_memory_budget_bytes: Option<u64>,
+    budget_evictions_cumulative: u64,
+    next_load_sequence: u64,
     last_reload_errors: HashMap<(AssetId, u32), LoadError>,
 }
 
@@ -685,6 +733,9 @@ impl Default for AssetServer {
             strong_refs: Arc::new(Mutex::new(HashMap::new())),
             auto_evict_unused: false,
             async_hot_reload: false,
+            cpu_memory_budget_bytes: None,
+            budget_evictions_cumulative: 0,
+            next_load_sequence: 1,
             last_reload_errors: HashMap::new(),
         };
         server.register_loader(BytesLoader);
@@ -759,6 +810,112 @@ impl AssetServer {
         self.auto_evict_unused = enabled;
     }
 
+    /// Set the decoded CPU-cache budget in bytes. `None` disables budget-based eviction.
+    ///
+    /// The budget is soft with respect to pinned assets: values protected by [`AssetRef`] are never
+    /// evicted to satisfy it. When the budget is enabled, [`poll_pending_loads`](Self::poll_pending_loads)
+    /// evicts the lowest-priority, oldest unleased values until unpinned residency fits the budget.
+    /// Call [`enforce_cpu_memory_budget`](Self::enforce_cpu_memory_budget) to apply a change
+    /// immediately to values already resident in a synchronous-only application.
+    pub fn set_cpu_memory_budget_bytes(&mut self, budget_bytes: Option<u64>) {
+        self.cpu_memory_budget_bytes = budget_bytes;
+    }
+
+    /// Snapshot estimated decoded CPU cache residency and budget pressure.
+    pub fn cpu_memory_stats(&self) -> AssetMemoryStats {
+        let lease_counts = self.strong_refs.lock();
+        let counts_poisoned = lease_counts.is_err();
+        let counts = lease_counts.as_deref().ok();
+        let mut stats = AssetMemoryStats {
+            budget_bytes: self.cpu_memory_budget_bytes,
+            budget_evictions_cumulative: self.budget_evictions_cumulative,
+            ..AssetMemoryStats::default()
+        };
+        for ((_, _), entry) in &self.paths {
+            if entry.state != LoadState::Loaded {
+                continue;
+            }
+            stats.loaded_assets = stats.loaded_assets.saturating_add(1);
+            stats.resident_bytes_estimate = stats
+                .resident_bytes_estimate
+                .saturating_add(entry.estimated_size_bytes);
+            // If lease accounting is poisoned, conservatively classify the value as pinned.
+            let lease_count = counts
+                .and_then(|counts| counts.get(&(entry.id, entry.generation)).copied())
+                .unwrap_or(if counts_poisoned { usize::MAX } else { 0 });
+            if lease_count > 0 {
+                stats.pinned_assets = stats.pinned_assets.saturating_add(1);
+                stats.pinned_bytes_estimate = stats
+                    .pinned_bytes_estimate
+                    .saturating_add(entry.estimated_size_bytes);
+            } else {
+                stats.unpinned_bytes_estimate = stats
+                    .unpinned_bytes_estimate
+                    .saturating_add(entry.estimated_size_bytes);
+            }
+        }
+        stats.over_budget_bytes = stats.budget_bytes.map_or(0, |budget| {
+            stats.unpinned_bytes_estimate.saturating_sub(budget)
+        });
+        stats
+    }
+
+    /// Request an asset with an eviction-retention priority.
+    ///
+    /// Higher values are retained ahead of lower values when a cache budget is exceeded. Priority
+    /// affects only residency eviction, not worker scheduling. Repeated requests keep the highest
+    /// priority requested for the currently cached generation.
+    pub fn request_with_priority<T: Asset>(
+        &mut self,
+        path: impl AsRef<str>,
+        priority: i32,
+    ) -> Result<Handle<T>, LoadError> {
+        let path = path.as_ref().to_owned();
+        let key = (TypeId::of::<T>(), path.clone());
+        let existing_priority = self.paths.get(&key).map(|entry| entry.priority);
+        let handle = self.request::<T>(&path)?;
+        if let Some(entry) = self.paths.get_mut(&key) {
+            entry.priority = existing_priority.map_or(priority, |current| current.max(priority));
+        }
+        Ok(handle)
+    }
+
+    /// Retry a failed asynchronous request while assigning its cache-retention priority.
+    pub fn retry_with_priority<T: Asset>(
+        &mut self,
+        path: impl AsRef<str>,
+        priority: i32,
+    ) -> Result<Handle<T>, LoadError> {
+        let path = path.as_ref().to_owned();
+        let key = (TypeId::of::<T>(), path.clone());
+        if self
+            .paths
+            .get(&key)
+            .is_some_and(|entry| matches!(&entry.state, LoadState::Failed(_)))
+        {
+            if let Some(entry) = self.paths.get_mut(&key) {
+                entry.state = LoadState::Unloaded;
+            }
+        }
+        self.request_with_priority::<T>(path, priority)
+    }
+
+    /// Request and strongly pin an asset while assigning its cache-retention priority.
+    pub fn request_ref_with_priority<T: Asset>(
+        &mut self,
+        path: impl AsRef<str>,
+        priority: i32,
+    ) -> Result<AssetRef<T>, LoadError> {
+        let handle = self.request_with_priority::<T>(path, priority)?;
+        self.strong_ref(handle).ok_or_else(|| {
+            LoadError::new(
+                LoadErrorKind::WorkerUnavailable,
+                "<asset lease>",
+                "could not create a strong lease for the requested handle",
+            )
+        })
+    }
+
     /// Load synchronously and cache by asset type and path.
     ///
     /// Prefer [`request`](Self::request) for assets that should not block the calling thread.
@@ -801,6 +958,7 @@ impl AssetServer {
                 }
                 let mut context = LoadContext { path: path.clone() };
                 let value = loader.load(&bytes, &mut context)?;
+                let estimated_size_bytes = loader.estimated_size_bytes(value.as_ref());
                 let value = value.downcast::<T>().map_err(|_| {
                     LoadError::new(
                         LoadErrorKind::TypeMismatch,
@@ -811,11 +969,14 @@ impl AssetServer {
                 self.storage_mut::<T>()
                     .insert(Handle::new(id, generation), *value);
                 self.revisions.insert((id, generation), 1);
+                let load_sequence = self.allocate_load_sequence();
                 if let Some(entry) = self.paths.get_mut(&key) {
                     entry.source_id = Some(source_id);
                     entry.modified = modified;
                     entry.state = LoadState::Loaded;
                     entry.reload_pending = false;
+                    entry.estimated_size_bytes = estimated_size_bytes;
+                    entry.load_sequence = load_sequence;
                 }
                 self.last_reload_errors.remove(&(id, generation));
                 self.pending_events.push(AssetEvent::Loaded {
@@ -915,14 +1076,17 @@ impl AssetServer {
                     let mut context = LoadContext {
                         path: request_path.clone(),
                     };
-                    request_loader
-                        .load(&bytes, &mut context)
-                        .map(|value| DecodedAsset {
+                    request_loader.load(&bytes, &mut context).map(|value| {
+                        let estimated_size_bytes =
+                            request_loader.estimated_size_bytes(value.as_ref());
+                        DecodedAsset {
                             loader: Arc::clone(&request_loader),
                             value,
                             source_id,
                             modified,
-                        })
+                            estimated_size_bytes,
+                        }
+                    })
                 },
             );
             let _ = completion_tx.send(LoadCompletion {
@@ -1080,11 +1244,20 @@ impl AssetServer {
                 {
                     return handle;
                 }
+                let estimated_size_bytes = self
+                    .loaders
+                    .get(&extension_for(&path))
+                    .filter(|loader| loader.asset_type() == TypeId::of::<T>())
+                    .map(|loader| loader.estimated_size_bytes(&default as &(dyn Any + Send + Sync)))
+                    .unwrap_or(std::mem::size_of_val(&default) as u64);
                 self.storage_mut::<T>().insert(handle, default);
                 self.revisions.insert((id, generation), 1);
+                let load_sequence = self.allocate_load_sequence();
                 if let Some(entry) = self.paths.get_mut(&key) {
                     entry.state = LoadState::Loaded;
                     entry.reload_pending = false;
+                    entry.estimated_size_bytes = estimated_size_bytes;
+                    entry.load_sequence = load_sequence;
                 }
                 self.last_reload_errors.remove(&(id, generation));
                 self.pending_events.push(AssetEvent::Loaded {
@@ -1183,31 +1356,40 @@ impl AssetServer {
             }
 
             let result = completion.result.and_then(|decoded| {
-                if decoded.loader.asset_type() != completion.type_id {
+                let DecodedAsset {
+                    loader,
+                    value,
+                    source_id,
+                    modified,
+                    estimated_size_bytes,
+                } = decoded;
+                if loader.asset_type() != completion.type_id {
                     return Err(LoadError::new(
                         LoadErrorKind::TypeMismatch,
                         &completion.path,
                         "asynchronous decoder returned a different asset type",
                     ));
                 }
-                decoded
-                    .loader
+                loader
                     .store(
                         &mut self.assets,
                         completion.id,
                         completion.generation,
-                        decoded.value,
+                        value,
                     )
-                    .map(|()| (decoded.source_id, decoded.modified))
+                    .map(|()| (source_id, modified, estimated_size_bytes))
             });
 
             match result {
-                Ok((source_id, modified)) => {
+                Ok((source_id, modified, estimated_size_bytes)) => {
+                    let load_sequence = self.allocate_load_sequence();
                     if let Some(entry) = self.paths.get_mut(&key) {
                         entry.source_id = Some(source_id);
                         entry.modified = modified;
                         entry.state = LoadState::Loaded;
                         entry.reload_pending = false;
+                        entry.estimated_size_bytes = estimated_size_bytes;
+                        entry.load_sequence = load_sequence;
                     }
                     let revision = self
                         .revisions
@@ -1254,6 +1436,7 @@ impl AssetServer {
         if self.auto_evict_unused {
             self.evict_unused();
         }
+        self.enforce_cpu_memory_budget();
         std::mem::take(&mut self.pending_events)
     }
 
@@ -1296,6 +1479,8 @@ impl AssetServer {
                     entry.source_id = None;
                     entry.modified = None;
                     entry.reload_pending = false;
+                    entry.estimated_size_bytes = 0;
+                    entry.load_sequence = 0;
                     self.revisions.remove(&(id, generation));
                     self.pending_events.push(AssetEvent::Unloaded {
                         id: id.get(),
@@ -1306,6 +1491,96 @@ impl AssetServer {
                     evicted += 1;
                 }
             }
+        }
+        evicted
+    }
+
+    /// Enforce the configured CPU cache budget by evicting unleased low-priority entries first.
+    ///
+    /// The budget counts only unpinned cached values. Strongly leased assets are never evicted;
+    /// when pinned values dominate the working set, `cpu_memory_stats` exposes that separately.
+    /// Returns the number of values evicted by this call.
+    pub fn enforce_cpu_memory_budget(&mut self) -> usize {
+        let Some(budget_bytes) = self.cpu_memory_budget_bytes else {
+            return 0;
+        };
+        let mut unpinned_bytes = self.cpu_memory_stats().unpinned_bytes_estimate;
+        if unpinned_bytes <= budget_bytes {
+            return 0;
+        }
+
+        let counts = match self.strong_refs.lock() {
+            Ok(counts) => counts,
+            // Never free cache values if lease accounting cannot be trusted.
+            Err(_) => return 0,
+        };
+        let mut candidates: Vec<_> = self
+            .paths
+            .iter()
+            .filter_map(|((type_id, path), entry)| {
+                let unleased = counts
+                    .get(&(entry.id, entry.generation))
+                    .copied()
+                    .unwrap_or(0)
+                    == 0;
+                (entry.state == LoadState::Loaded && unleased && entry.estimated_size_bytes > 0)
+                    .then_some((
+                        entry.priority,
+                        entry.load_sequence,
+                        *type_id,
+                        path.clone(),
+                        entry.id,
+                        entry.generation,
+                        entry.estimated_size_bytes,
+                    ))
+            })
+            .collect();
+        drop(counts);
+        // Lower priority values leave first; oldest resident entries break ties (FIFO).
+        candidates.sort_by_key(|(priority, sequence, _, _, _, _, _)| (*priority, *sequence));
+
+        let mut evicted = 0usize;
+        for (_, _, type_id, path, id, generation, estimated_size_bytes) in candidates {
+            if unpinned_bytes <= budget_bytes {
+                break;
+            }
+            let still_unleased = self
+                .strong_refs
+                .lock()
+                .map(|counts| counts.get(&(id, generation)).copied().unwrap_or(0) == 0)
+                .unwrap_or(false);
+            if !still_unleased {
+                continue;
+            }
+            let removed = self
+                .asset_removers
+                .get(&type_id)
+                .copied()
+                .is_some_and(|remove| remove(&mut self.assets, id, generation));
+            if !removed {
+                continue;
+            }
+            if let Some(entry) = self.paths.get_mut(&(type_id, path.clone())) {
+                if entry.id != id || entry.generation != generation {
+                    continue;
+                }
+                entry.state = LoadState::Unloaded;
+                entry.source_id = None;
+                entry.modified = None;
+                entry.reload_pending = false;
+                entry.estimated_size_bytes = 0;
+                entry.load_sequence = 0;
+            }
+            self.revisions.remove(&(id, generation));
+            self.pending_events.push(AssetEvent::Unloaded {
+                id: id.get(),
+                generation,
+                path,
+            });
+            self.last_reload_errors.remove(&(id, generation));
+            unpinned_bytes = unpinned_bytes.saturating_sub(estimated_size_bytes);
+            self.budget_evictions_cumulative = self.budget_evictions_cumulative.saturating_add(1);
+            evicted = evicted.saturating_add(1);
         }
         evicted
     }
@@ -1377,13 +1652,15 @@ impl AssetServer {
                         })
                         .and_then(|loader| {
                             let mut context = LoadContext { path: path.clone() };
-                            loader
-                                .load(&bytes, &mut context)
-                                .map(|asset| (loader, asset))
+                            loader.load(&bytes, &mut context).map(|asset| {
+                                let estimated_size_bytes =
+                                    loader.estimated_size_bytes(asset.as_ref());
+                                (loader, asset, estimated_size_bytes)
+                            })
                         }),
                     Err(error) => Err(LoadError::new(LoadErrorKind::Io, &path, error.to_string())),
                 };
-                let result = decoded.and_then(|(loader, asset)| {
+                let result = decoded.and_then(|(loader, asset, estimated_size_bytes)| {
                     if loader.asset_type() != type_id {
                         return Err(LoadError::new(
                             LoadErrorKind::TypeMismatch,
@@ -1391,14 +1668,19 @@ impl AssetServer {
                             "reloaded value has a different asset type",
                         ));
                     }
-                    loader.store(&mut self.assets, id, generation, asset)
+                    loader
+                        .store(&mut self.assets, id, generation, asset)
+                        .map(|()| estimated_size_bytes)
                 });
                 match result {
-                    Ok(()) => {
+                    Ok(estimated_size_bytes) => {
+                        let load_sequence = self.allocate_load_sequence();
                         if let Some(entry) = self.paths.get_mut(&(type_id, path.clone())) {
                             entry.modified = modified;
                             entry.state = LoadState::Loaded;
                             entry.reload_pending = false;
+                            entry.estimated_size_bytes = estimated_size_bytes;
+                            entry.load_sequence = load_sequence;
                         }
                         let revision = self.revisions.entry((id, generation)).or_insert(1);
                         *revision = revision.saturating_add(1);
@@ -1568,14 +1850,17 @@ impl AssetServer {
                             let mut context = LoadContext {
                                 path: request_path.clone(),
                             };
-                            request_loader
-                                .load(&bytes, &mut context)
-                                .map(|value| DecodedAsset {
+                            request_loader.load(&bytes, &mut context).map(|value| {
+                                let estimated_size_bytes =
+                                    request_loader.estimated_size_bytes(value.as_ref());
+                                DecodedAsset {
                                     loader: Arc::clone(&request_loader),
                                     value,
                                     source_id: request_source.id,
                                     modified: modified_after,
-                                })
+                                    estimated_size_bytes,
+                                }
+                            })
                         });
                     let _ = completion_tx.send(LoadCompletion {
                         type_id,
@@ -1660,6 +1945,8 @@ impl AssetServer {
                 entry.extension = extension.to_owned();
                 entry.state = LoadState::Loading;
                 entry.reload_pending = false;
+                entry.estimated_size_bytes = 0;
+                entry.load_sequence = 0;
             }
             self.pending_events.push(AssetEvent::Loading {
                 id: id.get(),
@@ -1681,6 +1968,9 @@ impl AssetServer {
                 state: LoadState::Loading,
                 reload_pending: false,
                 reload_token: 0,
+                estimated_size_bytes: 0,
+                load_sequence: 0,
+                priority: 0,
             },
         );
         self.pending_events.push(AssetEvent::Loading {
@@ -1698,6 +1988,12 @@ impl AssetServer {
             .checked_add(1)
             .expect("asset ID space exhausted");
         id
+    }
+
+    fn allocate_load_sequence(&mut self) -> u64 {
+        let sequence = self.next_load_sequence;
+        self.next_load_sequence = self.next_load_sequence.saturating_add(1);
+        sequence
     }
 
     fn record_request_failure(
@@ -1827,6 +2123,10 @@ impl AssetLoader for BytesLoader {
     fn load(&self, bytes: &[u8], _context: &mut LoadContext) -> Result<Self::Asset, LoadError> {
         Ok(BytesAsset(bytes.to_vec()))
     }
+
+    fn estimated_size_bytes(&self, asset: &Self::Asset) -> u64 {
+        std::mem::size_of::<Self::Asset>() as u64 + asset.0.capacity() as u64
+    }
 }
 
 /// Loader for UTF-8 text files.
@@ -1845,6 +2145,10 @@ impl AssetLoader for TextLoader {
             .map_err(|error| {
                 LoadError::new(LoadErrorKind::Decode, &context.path, error.to_string())
             })
+    }
+
+    fn estimated_size_bytes(&self, asset: &Self::Asset) -> u64 {
+        std::mem::size_of::<Self::Asset>() as u64 + asset.0.capacity() as u64
     }
 }
 

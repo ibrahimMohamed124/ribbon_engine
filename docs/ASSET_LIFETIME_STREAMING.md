@@ -1,6 +1,6 @@
 # Asset lifetime and streaming
 
-Date: 2026-10-22
+Date: 2026-10-23
 
 ## Implementation status
 
@@ -53,11 +53,26 @@ if let Some(model) = app.world.resource::<AssetServer>().get(weak_handle) {
 
 Do not enable automatic eviction for a subsystem that stores only weak handles unless the subsystem deliberately re-acquires/pins its assets. If an *initial request* cannot enter the bounded worker queue, it returns `LoadErrorKind::QueueFull` and the path enters `Failed`; call `retry` after polling progress to start a new generation. A hot-reload job that cannot enter the queue is left pending for the next polling interval and does not discard the last-good asset. `load_or` also preserves an already-`Loading` request instead of replacing it with a fallback value.
 
-## Boundaries not yet implemented
+## Cache budget and retention priority (added 2026-10-23)
 
-- There is no request priority, explicit cancellation, progress reporting, byte-based memory budget, or LRU/age policy. Queue item counts cap outstanding work, but a single asset can still decode to a large allocation.
+`AssetLoader::estimated_size_bytes` lets loaders estimate decoded resident memory. Its default counts only `size_of::<Asset>()`; loaders that allocate heap storage should override it and include the capacities they own. `GltfLoader` now estimates the `ModelAsset` container, vector capacities for primitives/materials/images/nodes, nested geometry/index vectors, and decoded RGBA image buffers. `BytesLoader` and `TextLoader` include their backing byte/string capacity. These are cache estimates, not allocator or process-RSS telemetry; transient decode scratch and queued decoded completions are not included.
+
+`AssetServer::set_cpu_memory_budget_bytes(Some(bytes))` enables a **soft budget for unleased decoded cache entries**, not a hard process-memory limit. After `poll_pending_loads` commits completed asynchronous loads/reloads, the server evicts eligible values until unpinned residency fits or there are no candidates left. It evicts lower-retention-priority entries first, then older loaded entries (FIFO by load sequence). Active `AssetRef<T>` leases are never evicted; pinned bytes may therefore exceed the budget. Synchronous-only callers can apply a newly configured budget or a synchronous load's changed residency by calling `enforce_cpu_memory_budget()` explicitly. Set `None` to disable budget-based eviction.
+
+- `request_with_priority`, `retry_with_priority`, and `request_ref_with_priority` set **cache-retention** priority. They do not reorder the worker request queue or cancel in-flight decode.
+- `cpu_memory_stats()` reports resident, pinned, unpinned, budget, over-budget, loaded/pinned counts, and cumulative budget evictions. Budget overage is computed against unpinned bytes only.
+- Budget eviction emits `AssetEvent::Unloaded` and advances the path generation on the next request. Stale weak handles must be treated as nonresident and reacquired.
+- The CPU-cache scan is collected into render profile resource snapshots only while `RenderProfilePlugin` is installed; the ordinary per-frame renderer path does not scan every asset just to populate these new fields.
+
+## GPU model upload pacing (added 2026-10-23)
+
+The user-provided multi-asset capture identified a 43.541 ms CPU `mesh pass` while 32 new model-cache entries appeared in one frame. `plugin_render3d` now limits missing model GPU-cache entries to two distinct asset keys per frame. Cache hits remain drawable, while placements that need additional missing models are deferred and retried on later frames. See `docs/GPU_ASSET_UPLOAD_PACING.md` for the frame-level evidence, validation procedure, and limitations. This is a count-based pacing policy, not a hard time/byte budget; voxel mesh uploads remain on their existing path.
+
+## Boundaries still not implemented
+
+- There is no explicit request cancellation, progress reporting, dependency/bundle scheduler, or strict byte-bounded queue for in-flight decode/completion buffers. Queue capacities bound item counts; one very large asset or multiple decoded-but-not-committed values can still exceed the resident-cache budget.
+- Retention priority affects eviction only, not worker scheduling. The current age tie-break is FIFO by last successful load/reload sequence, not access-based LRU.
 - A caller must poll the server for completions. If the main loop stops polling, the completion queue applies backpressure and worker threads may wait.
-- Modification timestamp checks still run synchronously at the configured hot-reload polling interval. There is no generic GPU-upload queue; renderer passes own that stage.
-- Asset bundles/dependencies are not yet scheduled as a dependency graph; loaders must return a self-contained CPU-side asset value.
-- Renderer GPU uploads remain owned by renderer passes; this milestone does not create a generic cross-backend GPU upload queue.
+- Modification timestamp checks still run synchronously at the configured hot-reload polling interval. Renderer passes remain responsible for GPU uploads; there is no generic cross-backend GPU upload queue.
+- Asset bundles/dependencies are not scheduled as a dependency graph; loaders must return a self-contained CPU-side asset value.
 - No new tests were added and no Rust build, formatter, linter, runtime, benchmark, or test command was run as part of this delivery. Target-side validation is mandatory before accepting this milestone.
