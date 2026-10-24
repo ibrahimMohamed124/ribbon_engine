@@ -135,3 +135,68 @@ Timestamp polling calls `device.poll(PollType::Poll)` and consumes channel resul
 - Full six-capture comparison with the exact command and workload in this document — completed; reports, CSVs and logs were generated.
 
 The capture comparison is specific to this adapter, driver, display, build, workload and run conditions. The P50/P95/P99 numbers measure only successful profile rows; dropped or invalid surface frames are not currently counted separately.
+
+## Historical Mailbox revalidation (2026-10-24)
+
+The raw captures in `target/profiles/present-mode-comparison/20261024-021252` and `20261024-120033` were compared directly. Both manifests describe the same workload: release showcase, 1,050 total frames, 60 warmup frames, grid 32, 32 active models, 32 prefetched models, 1 MiB unpinned CPU-cache budget, 300-frame lifecycle, 128-pixel textures and desired frame latency 1. In every CSV the retained frame indices are 61–1051, with 991 unique frame records and 2,973 pass records. All six latest logs confirm `target\\release\\graphics_showcase.exe`, the intended command arguments, RTX 2050 / driver 581.86 / Vulkan / 1280 × 800, and the requested mode and latency were actually selected. The two sets have identical 63-column CSV headers in identical order; timing fields are nanoseconds in the CSV and are rendered as milliseconds.
+
+| Mailbox metric (median of 3 run-level values) | Earlier capture `021252` | Latest capture `120033` | Change |
+|---|---:|---:|---:|
+| Frame wall mean | 6.734 ms | 0.583 ms | -91.34% |
+| Frame wall P50 | 6.753 ms | 0.439 ms | -93.50% |
+| Frame wall P95 | 7.092 ms | 1.661 ms | -76.58% |
+| Frame wall P99 | 7.653 ms | 2.927 ms | -61.76% |
+| Surface acquisition P95 | 6.885 ms | 0.889 ms | -87.09% |
+
+For context, FIFO frame-wall P95 was 13.982 ms before and 13.983 ms in the latest set; FIFO acquisition P95 was 13.314 ms and 13.116 ms. This is strong evidence that the Mailbox measurements differ while the FIFO control is nearly stable, but it does not identify why.
+
+The comparison is **not fully apples-to-apples**. The earlier manifest and CSV establish workload, resolved presentation mode, latency, retained rows and schema, but there are no matching logs. Thus the earlier executable/build profile, adapter/driver, render resolution and actual invocation are not recorded and cannot be verified. The new logs establish those details only for `120033`. The identical CSV schema and unchanged `profiling.rs` timer/CSV implementation between source revision `38973f7` and the current source provide no evidence of a changed metric definition; the surface-acquisition timer still brackets `get_current_texture`. The revision written into a Markdown report is read when that report is generated, not embedded by the running executable, and is not proof of the capture's source or binary. Because the earlier binary and machine/display state were not recorded, changed runtime behavior or an unrecorded environment difference remains possible. The Bloom/tone-mapping submission merge is present in the newer source, but these captures do not prove that it caused the acquisition change; no root cause is confirmed.
+
+Both report utilities now use the same linear-interpolation percentile definition at position `(n - 1) × p`; means are arithmetic means. The comparison summary reports each run's percentile and then the median/range across the three runs, without pooling frames. Earlier per-capture reports used nearest-rank, so values could differ by a few hundredths of a millisecond from the comparison summary (for example, latest Mailbox run 1 frame P95 was 1.688 ms nearest-rank and is 1.661 ms with interpolation). The six latest per-capture reports and summary were regenerated from the unchanged CSVs with the unified definition. The old captures and their reports were left intact.
+
+Latest captures have no malformed or non-finite frame timings, negative timings, duplicate frame indices, skipped GPU timestamp samples, or error/panic/failure lines in their logs. GPU timestamps are asynchronous and deduplicated by sample sequence; the valid unique GPU timing sample count varies by capture and is not expected to equal 991. Neither capture set records surface acquisition errors or dropped frames in a separate counter/CSV row. The row-count guard confirms 991 recorded successful profile frames, but cannot prove that no transient surface error occurred outside the recorded rows. The earlier capture has no logs for an error scan.
+
+The six latest per-run logs record the release executable and arguments in this form (with a mode-specific CSV path and resolved mode for each run):
+
+```powershell
+$env:RIBBON_GPU_PRESENT_MODE = 'mailbox' # 'fifo' for FIFO captures
+$env:RIBBON_GPU_FRAME_LATENCY = '1'
+cargo run --release -p graphics_showcase -- `
+    --stress-grid 32 `
+    --stress-cycle-frames 300 `
+    --frames 1050 `
+    --profile-warmup 60 `
+    --profile-csv <capture.csv> `
+    --stress-multi-asset-count 32 `
+    --stress-cache-prefetch-count 32 `
+    --asset-memory-budget-mib 1
+```
+
+The benchmark runner invocation below reproduces those manifest settings. The earlier capture did not retain a log containing its original command.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\run_present_mode_comparison.ps1 `
+    -Runs 3 `
+    -Frames 1050 `
+    -Warmup 60 `
+    -GridSide 32 `
+    -MultiAssetCount 32 `
+    -CachePrefetchCount 32 `
+    -AssetMemoryBudgetMiB 1 `
+    -CycleFrames 300 `
+    -StressTextureSize 128 `
+    -FrameLatency 1
+```
+
+The report-only revalidation command used on the existing latest CSVs was:
+
+```powershell
+$capture = Join-Path (Get-Location) 'target/profiles/present-mode-comparison/20261024-120033'
+Get-ChildItem -LiteralPath $capture -Filter '*-run*.csv' -File | ForEach-Object {
+    $report = [System.IO.Path]::ChangeExtension($_.FullName, '.md')
+    python .\tools\render_profile_report.py $_.FullName --output $report
+}
+python .\tools\compare_profile_runs.py --input-dir $capture --output (Join-Path $capture 'present-mode-comparison-summary.md') --budget-ms 16.667 --expected-frames 991
+```
+
+No new before/after runtime capture was made: the present machine can run the latest benchmark, but the earlier build and hardware/display state are not recoverable from its artifacts, so a fresh run cannot recreate that historical binary/configuration faithfully. Use a newly logged baseline and after build for the next source-level performance claim.

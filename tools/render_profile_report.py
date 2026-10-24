@@ -24,8 +24,15 @@ def percentile(values: Iterable[float], percent: float) -> float | None:
     ordered = sorted(values)
     if not ordered:
         return None
-    index = max(0, math.ceil(percent / 100.0 * len(ordered)) - 1)
-    return ordered[min(index, len(ordered) - 1)]
+    # Match compare_profile_runs.py: linear interpolation at (n - 1) * p.
+    # Keeping one convention makes per-capture and across-run percentiles agree.
+    position = (len(ordered) - 1) * (percent / 100.0)
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    fraction = position - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
 
 
 def duration_summary(values: list[float]) -> dict[str, float | int | None]:
@@ -438,7 +445,7 @@ def capture_metadata_lines(capture: Path) -> list[str]:
         resolution = "not recorded in this capture log"
 
     return [
-        f"- Source revision/archive: {revision}",
+        f"- Repository revision observed while generating this report (not capture/build provenance): {revision}",
         f"- Operating system: {platform.platform()}",
         f"- GPU adapter and driver: {adapter_info}",
         f"- Display/render resolution: {resolution}",
