@@ -15,7 +15,7 @@ pub mod gpu_window;
 
 pub use frame::{DrawCommand, DrawList, Effect, FramePlan, Framebuffer, Renderer};
 pub use profiling::{
-    RenderDiagnostics, RenderDurationSummary, RenderGraphTiming, RenderPassTiming,
-    RenderProfilePlugin, RenderProfileRecorder, RenderProfileSample, RenderProfileSummary,
-    RenderResourceStats,
+    RenderDiagnostics, RenderDurationSummary, RenderGpuTimingSample, RenderGraphTiming,
+    RenderPassTiming, RenderProfilePlugin, RenderProfileRecorder, RenderProfileSample,
+    RenderProfileSummary, RenderResourceStats,
 };

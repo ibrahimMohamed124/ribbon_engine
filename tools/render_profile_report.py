@@ -93,7 +93,26 @@ def load_capture(path: Path) -> tuple[list[dict[str, int | str | None]], dict[st
                 name = row.get("pass_name", "").strip()
                 value = number(row, "pass_cpu_ns")
                 if name and value is not None:
-                    pass_values[name].append(value)
+                    pass_values[f"Render graph: {name}"].append(value)
+            elif record_type == "phase":
+                name = row.get("pass_name", "").strip()
+                value = number(row, "pass_cpu_ns")
+                if name and value is not None:
+                    pass_values[f"CPU phase: {name}"].append(value)
+            elif record_type == "gpu":
+                source_name = row.get("pass_name", "").strip()
+                for key, label in (
+                    ("gpu_shadow_and_mesh_ns", "GPU shadow + mesh"),
+                    ("gpu_shadow_pass_ns", "GPU shadow passes"),
+                    ("gpu_mesh_pass_ns", "GPU mesh pass"),
+                    ("gpu_bloom_pass_ns", "GPU Bloom pass"),
+                    ("gpu_tone_mapping_pass_ns", "GPU tone-mapping pass"),
+                ):
+                    if label == "GPU shadow + mesh" and source_name != "shadow_mesh":
+                        continue
+                    value = number(row, key)
+                    if value is not None:
+                        pass_values[f"GPU sample: {label}"].append(value)
     if not frames:
         raise ValueError(f"{path}: no frame samples found; capture must exceed the warmup count")
     return frames, pass_values
@@ -165,11 +184,11 @@ def summary_table(metrics: dict[str, list[float]]) -> list[str]:
 
 def pass_table(pass_values: dict[str, list[int]]) -> list[str]:
     lines = [
-        "| Render graph pass | Samples | Mean CPU (ms) | P95 CPU (ms) | Peak CPU (ms) |",
+        "| CPU graph pass / render phase | Samples | Mean elapsed (ms) | P95 elapsed (ms) | Peak elapsed (ms) |",
         "|---|---:|---:|---:|---:|",
     ]
     ranked = sorted(
-        pass_values.items(),
+        ((name, values) for name, values in pass_values.items() if not name.startswith("GPU sample:")),
         key=lambda item: percentile(item[1], 95) or 0,
         reverse=True,
     )[:12]
@@ -289,6 +308,14 @@ def current_resource_summary(frames: list[dict[str, int | str | None]]) -> list[
         ("Renderer instance-buffer shrinks", "renderer_instance_buffer_shrinks_cumulative"),
         ("GPU timestamp samples completed", "gpu_timestamp_samples"),
         ("GPU timestamp samples skipped", "gpu_timestamp_samples_skipped"),
+        ("GPU samples pending at frame", "gpu_samples_pending"),
+        ("GPU samples unavailable (cumulative)", "gpu_samples_unavailable"),
+        ("GPU samples dropped (cumulative)", "gpu_samples_dropped"),
+        ("Surface acquisition timeouts", "surface_timeouts"),
+        ("Surface outdated reconfigurations", "surface_outdated"),
+        ("Surface lost reconfigurations", "surface_lost"),
+        ("Other surface errors", "surface_other_errors"),
+        ("Render-graph errors", "render_graph_errors"),
     ]
     if "material_texture_cache_hits" in latest:
         cumulative_metrics.extend([
@@ -355,7 +382,10 @@ def comparison_table(current: dict[str, list[float]], baseline: dict[str, list[f
     return lines
 
 
-def metrics_for(frames: list[dict[str, int | str | None]]) -> dict[str, list[float]]:
+def metrics_for(
+    frames: list[dict[str, int | str | None]],
+    pass_values: dict[str, list[int]] | None = None,
+) -> dict[str, list[float]]:
     metrics = {"Frame wall": values_for(frames, "frame_cpu_ns")}
     # These phase columns were added after the first baseline CSV schema. Keep old captures usable.
     if any("surface_acquire_ns" in frame for frame in frames):
@@ -374,13 +404,14 @@ def metrics_for(frames: list[dict[str, int | str | None]]) -> dict[str, list[flo
             ))
             for frame in frames
         ]
-    metrics["GPU shadow + mesh"] = unique_gpu_values(frames, "gpu_shadow_and_mesh_ns")
+    gpu_metrics = pass_values or {}
+    metrics["GPU shadow + mesh"] = [float(value) for value in gpu_metrics.get("GPU sample: GPU shadow + mesh", [])] or unique_gpu_values(frames, "gpu_shadow_and_mesh_ns")
     if any("gpu_shadow_pass_ns" in frame for frame in frames):
-        metrics["GPU shadow passes"] = unique_gpu_values(frames, "gpu_shadow_pass_ns")
-    metrics["GPU mesh pass"] = unique_gpu_values(frames, "gpu_mesh_pass_ns")
+        metrics["GPU shadow passes"] = [float(value) for value in gpu_metrics.get("GPU sample: GPU shadow passes", [])] or unique_gpu_values(frames, "gpu_shadow_pass_ns")
+    metrics["GPU mesh pass"] = [float(value) for value in gpu_metrics.get("GPU sample: GPU mesh pass", [])] or unique_gpu_values(frames, "gpu_mesh_pass_ns")
     if any("gpu_bloom_pass_ns" in frame for frame in frames):
-        metrics["GPU Bloom pass"] = unique_gpu_post_values(frames, "gpu_bloom_pass_ns")
-        metrics["GPU tone-mapping pass"] = unique_gpu_post_values(frames, "gpu_tone_mapping_pass_ns")
+        metrics["GPU Bloom pass"] = [float(value) for value in gpu_metrics.get("GPU sample: GPU Bloom pass", [])] or unique_gpu_post_values(frames, "gpu_bloom_pass_ns")
+        metrics["GPU tone-mapping pass"] = [float(value) for value in gpu_metrics.get("GPU sample: GPU tone-mapping pass", [])] or unique_gpu_post_values(frames, "gpu_tone_mapping_pass_ns")
     return metrics
 
 
@@ -457,6 +488,10 @@ def capture_metadata_lines(capture: Path) -> list[str]:
         surface_line.replace("[GPU SURFACE]", "", 1).strip()
         if surface_line else "not recorded (matching .log missing)"
     )
+    error_info = next(
+        (line for line in log_lines if line.startswith("[RENDER PROFILE ERRORS]")),
+        "not recorded in matching log",
+    )
     resolution = surface_value("resolution")
     if resolution:
         resolution += " (native window surface)"
@@ -470,12 +505,13 @@ def capture_metadata_lines(capture: Path) -> list[str]:
         f"- Display/render resolution: {resolution}",
         f"- Build profile and example command: {build_info}",
         f"- Surface configuration: {surface_info}",
+        f"- Surface/render-graph error counters at shutdown: {error_info}",
     ]
 
 
 
 def build_report(path: Path, frames: list[dict[str, int | str | None]], passes: dict[str, list[int]], compare_path: Path | None) -> str:
-    metrics = metrics_for(frames)
+    metrics = metrics_for(frames, passes)
     first_frame = frames[0].get("frame")
     last_frame = frames[-1].get("frame")
     generated = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -487,7 +523,7 @@ def build_report(path: Path, frames: list[dict[str, int | str | None]], passes: 
         f"- Frame samples: **{len(frames)}** (engine frames {first_frame}–{last_frame})",
         f"- Surface present mode: `{frames[-1].get('surface_present_mode') or 'not recorded'}`",
         f"- Desired maximum frame latency: `{frames[-1].get('surface_frame_latency') or 'not recorded'}`",
-        "- Values are from a bounded, post-warmup capture; GPU timings are asynchronously completed submissions.",
+        "- Values are from a bounded, post-warmup capture. GPU timings are explicit asynchronous completion records with submission and observation frames; CPU phase rows are opt-in and excluded from normal rendering.",
         "",
         "## Timing summary",
         "",
@@ -512,8 +548,9 @@ def build_report(path: Path, frames: list[dict[str, int | str | None]], passes: 
         "- Surface acquisition and presentation durations help identify waits outside render-graph work. They are wall-clock timings and may include driver or compositor behavior.",
         "- The frame-remainder metric is computed per sample as total frame wall minus acquisition, graph, and presentation; it represents setup/other work plus timing overhead, not a single named function.",
         "- Render graph pass durations are CPU-side encoding/invocation time and exclude asynchronous GPU execution.",
-        "- GPU samples are deduplicated by submission sequence because an older result can remain visible across multiple captured frames.",
-        "- Only the most recently completed query per profiler is exposed in each frame snapshot; cumulative completed-query counters may exceed the number of unique GPU samples retained in a capture. GPU stage percentiles therefore summarize the sequenced samples present in the CSV, which may be a subset of completed queries.",
+        "- Each GPU record represents one successfully decoded asynchronous sample and includes its submission sequence/frame plus the frame that observed completion. Pending, unavailable, skipped, and dropped counts are reported separately; outstanding readbacks are never waited on.",
+        "- CPU render-phase timings are opt-in when a bounded profile recorder is installed. They are elapsed CPU-side call timings, may include driver backpressure, and do not measure GPU execution or CPU utilization. Profile-recorder bookkeeping is included as its own phase; shutdown file writing is not a frame phase.",
+        "- Surface timeout, outdated, lost, other acquisition errors and render-graph failures are counted and emitted in the capture log at shutdown; frame CSV rows include the counters observed by each successful frame.",
         "- Resource values are engine-side estimates, not driver-reported total VRAM usage.",
         "- Material texture bytes are counted once per unique live texture content and color-space format; material uniforms are shown separately as a breakdown of the aggregate material estimate.",
         "- Texture-cache hits include repeated maps across materials and roles where their pixel content and sRGB/linear interpretation are identical.",
@@ -521,8 +558,8 @@ def build_report(path: Path, frames: list[dict[str, int | str | None]], passes: 
         "- Do not compare numbers from different GPU adapters or build profiles as if they were controlled performance tests.",
     ]
     if compare_path is not None:
-        baseline_frames, _ = load_capture(compare_path)
-        baseline_metrics = metrics_for(baseline_frames)
+        baseline_frames, baseline_passes = load_capture(compare_path)
+        baseline_metrics = metrics_for(baseline_frames, baseline_passes)
         current_mode = frames[-1].get("surface_present_mode")
         baseline_mode = baseline_frames[-1].get("surface_present_mode")
         current_latency = frames[-1].get("surface_frame_latency")

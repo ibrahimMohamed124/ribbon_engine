@@ -294,6 +294,11 @@ pub fn gpu_window_system(world: &mut World) {
     }
     let mut error = None;
     let mut completed_frame: Option<CompletedGpuWindowFrame> = None;
+    let mut surface_timeout_count = 0_u64;
+    let mut surface_outdated_count = 0_u64;
+    let mut surface_lost_count = 0_u64;
+    let mut surface_other_error_count = 0_u64;
+    let mut render_graph_error_count = 0_u64;
     world.resource_scope::<GpuWindow, _>(|world, state| {
         let GpuWindow {
             context,
@@ -365,6 +370,7 @@ pub fn gpu_window_system(world: &mut World) {
                             // Do not present or profile a partially rendered frame. Returning
                             // drops the view and SurfaceTexture, and the error is logged below.
                             error = Some(format!("GPU render graph failed: {failure}"));
+                            render_graph_error_count = render_graph_error_count.saturating_add(1);
                             return;
                         }
                     };
@@ -389,16 +395,48 @@ pub fn gpu_window_system(world: &mut World) {
                     frame_latency,
                 });
             }
-            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+            Err(wgpu::SurfaceError::Outdated) => {
+                surface_outdated_count = surface_outdated_count.saturating_add(1);
                 context.resize(size.width, size.height);
             }
-            Err(wgpu::SurfaceError::Timeout) => {}
+            Err(wgpu::SurfaceError::Lost) => {
+                surface_lost_count = surface_lost_count.saturating_add(1);
+                context.resize(size.width, size.height);
+            }
+            Err(wgpu::SurfaceError::Timeout) => {
+                surface_timeout_count = surface_timeout_count.saturating_add(1);
+            }
             Err(other) => {
+                surface_other_error_count = surface_other_error_count.saturating_add(1);
                 *failed = true;
                 error = Some(format!("GPU window disabled: {other}"));
             }
         }
     });
+    if surface_timeout_count > 0
+        || surface_outdated_count > 0
+        || surface_lost_count > 0
+        || surface_other_error_count > 0
+        || render_graph_error_count > 0
+    {
+        if world.try_resource::<RenderDiagnostics>().is_none() {
+            world.insert_resource(RenderDiagnostics::default());
+        }
+        let diagnostics = world.resource_mut::<RenderDiagnostics>();
+        diagnostics.surface_timeouts = diagnostics
+            .surface_timeouts
+            .saturating_add(surface_timeout_count);
+        diagnostics.surface_outdated = diagnostics
+            .surface_outdated
+            .saturating_add(surface_outdated_count);
+        diagnostics.surface_lost = diagnostics.surface_lost.saturating_add(surface_lost_count);
+        diagnostics.surface_other_errors = diagnostics
+            .surface_other_errors
+            .saturating_add(surface_other_error_count);
+        diagnostics.render_graph_errors = diagnostics
+            .render_graph_errors
+            .saturating_add(render_graph_error_count);
+    }
     if let Some(CompletedGpuWindowFrame {
         frame_wall_ns,
         surface_acquire_ns,

@@ -5,7 +5,7 @@
 
 use engine_app::{App, Stage};
 use engine_plugins::Plugin;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -17,6 +17,21 @@ pub struct RenderPassTiming {
     pub name: String,
     /// CPU time spent invoking this pass; does not include asynchronous GPU execution.
     pub cpu_time_ns: u64,
+}
+
+/// One asynchronously completed GPU timestamp sample, associated with the frame that observed
+/// its readback. `sequence` identifies the earlier submission being measured.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenderGpuTimingSample {
+    pub source: &'static str,
+    pub sequence: u64,
+    pub submitted_frame: u64,
+    pub observed_frame: u64,
+    pub total_ns: u64,
+    pub shadow_ns: Option<u64>,
+    pub mesh_ns: Option<u64>,
+    pub bloom_ns: Option<u64>,
+    pub tone_mapping_ns: Option<u64>,
 }
 
 /// Measurements collected while executing one render graph.
@@ -172,6 +187,26 @@ pub struct RenderDiagnostics {
     pub last_graph_cpu_ns: u64,
     /// Most recent render-graph pass timings.
     pub passes: Vec<RenderPassTiming>,
+    /// Fine-grained CPU phase timings for the most recently rendered graph frame.
+    pub cpu_phases: Vec<RenderPassTiming>,
+    /// GPU results newly completed by asynchronous readback on the most recent render frame.
+    pub completed_gpu_samples: Vec<RenderGpuTimingSample>,
+    /// GPU readbacks currently pending across render timestamp profilers.
+    pub gpu_samples_pending: u64,
+    /// GPU timestamp attempts that could not be issued because profiling is unavailable.
+    pub gpu_samples_unavailable: u64,
+    /// GPU timestamp samples lost to mapping/data failures or bounded completion-queue overflow.
+    pub gpu_samples_dropped: u64,
+    /// Native-surface acquisition timeouts that did not produce a frame.
+    pub surface_timeouts: u64,
+    /// Surface reconfiguration events reported as Outdated.
+    pub surface_outdated: u64,
+    /// Surface reconfiguration events reported as Lost.
+    pub surface_lost: u64,
+    /// Other terminal surface acquisition errors.
+    pub surface_other_errors: u64,
+    /// Render-graph failures after successful surface acquisition.
+    pub render_graph_errors: u64,
     /// Most recent completed GPU duration spanning directional shadow, optional spot shadow,
     /// and the main mesh pass, if supported.
     pub last_gpu_shadow_and_mesh_ns: Option<u64>,
@@ -345,6 +380,18 @@ pub struct RenderProfileSample {
     pub peak_tracked_gpu_bytes_estimate: u64,
     /// Per-node CPU durations from this frame's render graph.
     pub passes: Vec<RenderPassTiming>,
+    /// Fine-grained CPU render phases captured on this frame.
+    pub cpu_phases: Vec<RenderPassTiming>,
+    /// GPU timestamp samples whose asynchronous readback completed on this frame.
+    pub completed_gpu_samples: Vec<RenderGpuTimingSample>,
+    pub gpu_samples_pending: u64,
+    pub gpu_samples_unavailable: u64,
+    pub gpu_samples_dropped: u64,
+    pub surface_timeouts: u64,
+    pub surface_outdated: u64,
+    pub surface_lost: u64,
+    pub surface_other_errors: u64,
+    pub render_graph_errors: u64,
 }
 
 impl RenderProfileSample {
@@ -372,6 +419,16 @@ impl RenderProfileSample {
             resources: diagnostics.resources.clone(),
             peak_tracked_gpu_bytes_estimate: diagnostics.peak_tracked_gpu_bytes_estimate,
             passes: diagnostics.passes.clone(),
+            cpu_phases: diagnostics.cpu_phases.clone(),
+            completed_gpu_samples: diagnostics.completed_gpu_samples.clone(),
+            gpu_samples_pending: diagnostics.gpu_samples_pending,
+            gpu_samples_unavailable: diagnostics.gpu_samples_unavailable,
+            gpu_samples_dropped: diagnostics.gpu_samples_dropped,
+            surface_timeouts: diagnostics.surface_timeouts,
+            surface_outdated: diagnostics.surface_outdated,
+            surface_lost: diagnostics.surface_lost,
+            surface_other_errors: diagnostics.surface_other_errors,
+            render_graph_errors: diagnostics.render_graph_errors,
         }
     }
 }
@@ -471,33 +528,16 @@ pub struct RenderProfileRecorder {
     samples: VecDeque<RenderProfileSample>,
 }
 
-fn unique_gpu_durations(
+fn completed_gpu_durations(
     samples: &[&RenderProfileSample],
-    select: impl Fn(&RenderProfileSample) -> Option<u64>,
+    source: &'static str,
+    select: impl Fn(&RenderGpuTimingSample) -> Option<u64>,
 ) -> Vec<u64> {
-    let mut seen = HashSet::new();
     samples
         .iter()
-        .filter_map(|sample| {
-            let sequence = sample.gpu_sample_sequence?;
-            let duration = select(sample)?;
-            seen.insert(sequence).then_some(duration)
-        })
-        .collect()
-}
-
-fn unique_gpu_post_durations(
-    samples: &[&RenderProfileSample],
-    select: impl Fn(&RenderProfileSample) -> Option<u64>,
-) -> Vec<u64> {
-    let mut seen = HashSet::new();
-    samples
-        .iter()
-        .filter_map(|sample| {
-            let sequence = sample.gpu_post_sample_sequence?;
-            let duration = select(sample)?;
-            seen.insert(sequence).then_some(duration)
-        })
+        .flat_map(|sample| sample.completed_gpu_samples.iter())
+        .filter(|sample| sample.source == source)
+        .filter_map(select)
         .collect()
 }
 
@@ -550,8 +590,21 @@ impl RenderProfileRecorder {
         if self.samples.len() == self.capacity {
             let _ = self.samples.pop_front();
         }
-        self.samples
-            .push_back(RenderProfileSample::from_diagnostics(diagnostics));
+        let mut sample = RenderProfileSample::from_diagnostics(diagnostics);
+        sample
+            .completed_gpu_samples
+            .retain(|gpu| gpu.submitted_frame > self.warmup_frames);
+        self.samples.push_back(sample);
+    }
+
+    /// Attach the elapsed CPU cost of cloning/retaining one sample to that sample.
+    pub fn record_profile_overhead(&mut self, cpu_time_ns: u64) {
+        if let Some(sample) = self.samples.back_mut() {
+            sample.cpu_phases.push(RenderPassTiming {
+                name: "profile recorder bookkeeping".to_owned(),
+                cpu_time_ns,
+            });
+        }
     }
 
     /// Calculate mean, p50, p95, p99, and peak duration statistics plus resource counters.
@@ -574,25 +627,30 @@ impl RenderProfileRecorder {
             graph_cpu: RenderDurationSummary::from_values(
                 samples.iter().map(|sample| sample.graph_cpu_ns),
             ),
-            gpu_shadow_and_mesh: RenderDurationSummary::from_values(unique_gpu_durations(
+            gpu_shadow_and_mesh: RenderDurationSummary::from_values(completed_gpu_durations(
                 &samples,
-                |sample| sample.gpu_shadow_and_mesh_ns,
+                "shadow_mesh",
+                |sample| Some(sample.total_ns),
             )),
-            gpu_mesh_pass: RenderDurationSummary::from_values(unique_gpu_durations(
+            gpu_mesh_pass: RenderDurationSummary::from_values(completed_gpu_durations(
                 &samples,
-                |sample| sample.gpu_mesh_pass_ns,
+                "shadow_mesh",
+                |sample| sample.mesh_ns,
             )),
-            gpu_shadow_pass: RenderDurationSummary::from_values(unique_gpu_durations(
+            gpu_shadow_pass: RenderDurationSummary::from_values(completed_gpu_durations(
                 &samples,
-                |sample| sample.gpu_shadow_pass_ns,
+                "shadow_mesh",
+                |sample| sample.shadow_ns,
             )),
-            gpu_bloom_pass: RenderDurationSummary::from_values(unique_gpu_post_durations(
+            gpu_bloom_pass: RenderDurationSummary::from_values(completed_gpu_durations(
                 &samples,
-                |sample| sample.gpu_bloom_pass_ns,
+                "bloom_tone_mapping",
+                |sample| sample.bloom_ns,
             )),
-            gpu_tone_mapping_pass: RenderDurationSummary::from_values(unique_gpu_post_durations(
+            gpu_tone_mapping_pass: RenderDurationSummary::from_values(completed_gpu_durations(
                 &samples,
-                |sample| sample.gpu_tone_mapping_pass_ns,
+                "bloom_tone_mapping",
+                |sample| sample.tone_mapping_ns,
             )),
             latest_tracked_bytes_estimate: latest
                 .map(|sample| sample.resources.total_bytes_estimate())
@@ -691,6 +749,15 @@ impl RenderProfileRecorder {
             "visible_mesh_instances",
             "visible_draw_calls",
             "shadow_draw_calls",
+            "gpu_samples_pending",
+            "gpu_samples_unavailable",
+            "gpu_samples_dropped",
+            "gpu_submission_frame",
+            "surface_timeouts",
+            "surface_outdated",
+            "surface_lost",
+            "surface_other_errors",
+            "render_graph_errors",
         ];
         write_csv_record(&mut writer, HEADER.iter().map(|field| (*field).to_owned()))?;
         for sample in &self.samples {
@@ -708,6 +775,14 @@ impl RenderProfileRecorder {
             row[9] = sample.gpu_timestamp_queries_supported.to_string();
             row[10] = sample.gpu_timestamp_samples.to_string();
             row[11] = sample.gpu_timestamp_samples_skipped.to_string();
+            row[70] = sample.gpu_samples_pending.to_string();
+            row[71] = sample.gpu_samples_unavailable.to_string();
+            row[72] = sample.gpu_samples_dropped.to_string();
+            row[74] = sample.surface_timeouts.to_string();
+            row[75] = sample.surface_outdated.to_string();
+            row[76] = sample.surface_lost.to_string();
+            row[77] = sample.surface_other_errors.to_string();
+            row[78] = sample.render_graph_errors.to_string();
             row[12] = resources.live_meshes.to_string();
             row[13] = resources.live_materials.to_string();
             row[14] = resources.mesh_bytes_estimate.to_string();
@@ -778,6 +853,31 @@ impl RenderProfileRecorder {
                 pass_row[31] = pass.name.clone();
                 pass_row[32] = pass.cpu_time_ns.to_string();
                 write_csv_record(&mut writer, pass_row)?;
+            }
+            for phase in &sample.cpu_phases {
+                let mut phase_row = vec![String::new(); HEADER.len()];
+                phase_row[0] = "phase".to_owned();
+                phase_row[1] = sample.frame.to_string();
+                phase_row[31] = phase.name.clone();
+                phase_row[32] = phase.cpu_time_ns.to_string();
+                write_csv_record(&mut writer, phase_row)?;
+            }
+            for gpu in &sample.completed_gpu_samples {
+                let mut gpu_row = vec![String::new(); HEADER.len()];
+                gpu_row[0] = "gpu".to_owned();
+                gpu_row[1] = gpu.observed_frame.to_string();
+                gpu_row[6] = gpu.total_ns.to_string();
+                gpu_row[7] = csv_option(gpu.mesh_ns);
+                gpu_row[8] = gpu.sequence.to_string();
+                gpu_row[73] = gpu.submitted_frame.to_string();
+                gpu_row[31] = gpu.source.to_owned();
+                gpu_row[63] = csv_option(gpu.shadow_ns);
+                gpu_row[64] = csv_option(gpu.bloom_ns);
+                gpu_row[65] = csv_option(gpu.tone_mapping_ns);
+                if gpu.source == "bloom_tone_mapping" {
+                    gpu_row[66] = gpu.sequence.to_string();
+                }
+                write_csv_record(&mut writer, gpu_row)?;
             }
         }
         writer.flush()
@@ -856,13 +956,25 @@ impl Plugin for RenderProfilePlugin {
                 .try_resource::<RenderProfileRecorder>()
                 .is_some_and(|recorder| recorder.should_capture_frame(frame));
             if should_capture {
+                let started = std::time::Instant::now();
                 let diagnostics = world.resource::<RenderDiagnostics>().clone();
-                world
-                    .resource_mut::<RenderProfileRecorder>()
-                    .record_diagnostics(&diagnostics);
+                let recorder = world.resource_mut::<RenderProfileRecorder>();
+                recorder.record_diagnostics(&diagnostics);
+                let elapsed = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+                recorder.record_profile_overhead(elapsed);
             }
         });
         app.add_system(Stage::Shutdown, |world| {
+            if let Some(diagnostics) = world.try_resource::<RenderDiagnostics>() {
+                println!(
+                    "[RENDER PROFILE ERRORS] surface_timeout={} surface_outdated={} surface_lost={} surface_other={} render_graph={}",
+                    diagnostics.surface_timeouts,
+                    diagnostics.surface_outdated,
+                    diagnostics.surface_lost,
+                    diagnostics.surface_other_errors,
+                    diagnostics.render_graph_errors,
+                );
+            }
             let Some(recorder) = world.try_resource::<RenderProfileRecorder>() else {
                 return;
             };

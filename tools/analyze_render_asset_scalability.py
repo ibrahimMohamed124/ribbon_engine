@@ -52,7 +52,7 @@ def validate(path: Path, count: int, mode: str):
         raise ValueError(f"{log_path}: validation error/panic detected")
     report_path = path.with_suffix(".md")
     text = report_path.read_text(encoding="utf-8")
-    for line in profile.summary_table(profile.metrics_for(frames))[2:]:
+    for line in profile.summary_table(profile.metrics_for(frames, passes))[2:]:
         if line not in text:
             raise ValueError(f"{report_path}: summary mismatch with raw CSV: {line}")
     return frames, passes
@@ -73,8 +73,11 @@ def main() -> int:
         if key in seen:
             raise ValueError(f"duplicate capture {key}")
         seen.add(key)
-        frames, _ = validate(path, count, mode)
-        metrics = profile.metrics_for(frames)
+        frames, passes = validate(path, count, mode)
+        metrics = profile.metrics_for(frames, passes)
+        for label, samples in passes.items():
+            if label.startswith("CPU phase:"):
+                metrics[label] = [float(value) for value in samples]
         for label, field in {
             "Tracked GPU allocation estimate": "total_bytes_estimate",
             "Material texture allocation estimate": "material_texture_bytes_estimate",
@@ -116,6 +119,9 @@ def main() -> int:
         "CPU resident asset estimate", "Visible mesh instances", "Visible draw calls",
         "GPU model cache entries", "Cumulative model uploads",
     ]
+    metrics_order.extend(sorted({
+        str(row["metric"]) for row in runs if str(row["metric"]).startswith("CPU phase:")
+    }))
     lines = [
         "# Active asset and texture scalability results", "",
         "All statistics come from the raw, validated CSVs. Each active-asset count has five runs per presentation mode at a fixed 576 placements. Percentiles use linear interpolation at `(n - 1) * p`; brackets show min/max run-level P95 values. GPU values are asynchronous sequenced samples and counts are retained per run in the results CSV.", "",

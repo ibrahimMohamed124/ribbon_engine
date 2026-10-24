@@ -2,13 +2,15 @@
 
 use crate::components::{FogSettings, PointLight, SpotLight, SunLight};
 use crate::mesh::{self, Vertex};
-use crate::profiling::{GpuTimestampProfiler, GpuTimingSnapshot};
+use crate::profiling::{GpuCompletedSample, GpuTimestampProfiler, GpuTimingSnapshot};
 use bytemuck::{Pod, Zeroable};
+use engine_render::profiling::RenderPassTiming;
 use glam::{Mat4, Vec3, Vec4};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Weak};
+use std::time::Instant;
 use wgpu::util::DeviceExt;
 
 /// Depth format used by the mesh pass.
@@ -307,6 +309,19 @@ fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
+}
+
+fn record_cpu_phase(
+    phases: &mut Vec<RenderPassTiming>,
+    name: &'static str,
+    started: Option<Instant>,
+) {
+    if let Some(started) = started {
+        phases.push(RenderPassTiming {
+            name: name.to_owned(),
+            cpu_time_ns: started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+        });
+    }
 }
 
 fn srgb_to_linear(value: u8) -> f32 {
@@ -1197,6 +1212,18 @@ impl MeshRenderer {
             .unwrap_or_default()
     }
 
+    pub(crate) fn drain_gpu_timing_samples(&mut self) -> Vec<GpuCompletedSample> {
+        self.gpu_timing
+            .as_mut()
+            .map_or_else(Vec::new, GpuTimestampProfiler::drain_completed)
+    }
+
+    pub(crate) fn clear_gpu_timing_samples(&mut self) {
+        if let Some(profiler) = self.gpu_timing.as_mut() {
+            profiler.clear_completed();
+        }
+    }
+
     fn update_peak_resource_estimate(&mut self) {
         let estimate = self.resource_stats().total_bytes_estimate();
         self.peak_resource_bytes_estimate = self.peak_resource_bytes_estimate.max(estimate);
@@ -1488,15 +1515,42 @@ impl MeshRenderer {
         size: (u32, u32),
         scene: &Scene<'_>,
     ) {
+        let _ = self.render_internal(device, queue, view, size, scene, false, 0);
+    }
+
+    pub(crate) fn render_profiled(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        size: (u32, u32),
+        scene: &Scene<'_>,
+        submitted_frame: u64,
+    ) -> Vec<RenderPassTiming> {
+        self.render_internal(device, queue, view, size, scene, true, submitted_frame)
+    }
+
+    fn render_internal(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        size: (u32, u32),
+        scene: &Scene<'_>,
+        profile_cpu: bool,
+        submitted_frame: u64,
+    ) -> Vec<RenderPassTiming> {
+        let mut cpu_phases = Vec::new();
         if size.0 == 0 || size.1 == 0 {
-            return;
+            return cpu_phases;
         }
+        let mut phase_started = profile_cpu.then(Instant::now);
         self.last_visible_mesh_instances = 0;
         self.last_visible_draw_calls = 0;
         self.last_shadow_draw_calls = 0;
         self.maintain_instance_buffers(device, scene.draws.len());
         if scene.draws.is_empty() {
-            return;
+            return cpu_phases;
         }
         self.ensure_depth(device, size);
         // Keep every valid draw for shadow casting, but only upload camera-visible instances
@@ -1516,7 +1570,7 @@ impl MeshRenderer {
             .collect();
         draws.sort_by_key(|draw| (draw.mesh, draw.material));
         if draws.is_empty() {
-            return;
+            return cpu_phases;
         }
         let planes = frustum_planes(scene.view_proj);
         let visible_draws: Vec<Draw> = draws
@@ -1536,7 +1590,7 @@ impl MeshRenderer {
             })
             .collect();
         if visible_draws.is_empty() {
-            return;
+            return cpu_phases;
         }
         self.last_visible_mesh_instances = visible_draws.len();
         self.last_visible_draw_calls = visible_draws
@@ -1545,6 +1599,12 @@ impl MeshRenderer {
         self.last_shadow_draw_calls = draws
             .chunk_by(|left, right| left.mesh == right.mesh)
             .count();
+        record_cpu_phase(
+            &mut cpu_phases,
+            "draw validation, sorting, and visibility",
+            phase_started.take(),
+        );
+        phase_started = profile_cpu.then(Instant::now);
         let to_raw = |instances: &[Draw]| {
             instances
                 .iter()
@@ -1556,8 +1616,20 @@ impl MeshRenderer {
         };
         let shadow_raw = to_raw(&draws);
         let visible_raw = to_raw(&visible_draws);
+        record_cpu_phase(
+            &mut cpu_phases,
+            "instance data preparation",
+            phase_started.take(),
+        );
+        phase_started = profile_cpu.then(Instant::now);
         queue.write_buffer(&self.shadow_instances, 0, bytemuck::cast_slice(&shadow_raw));
         queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&visible_raw));
+        record_cpu_phase(
+            &mut cpu_phases,
+            "instance buffer updates",
+            phase_started.take(),
+        );
+        phase_started = profile_cpu.then(Instant::now);
         let light_view_proj = Self::directional_shadow_matrix(scene);
         let (active_spot, shadow_spot) = select_spot_lights(scene.spot_lights);
         let spot_view_proj = shadow_spot
@@ -1635,13 +1707,18 @@ impl MeshRenderer {
                 bytemuck::bytes_of(&spot_globals),
             );
         }
+        record_cpu_phase(
+            &mut cpu_phases,
+            "uniform preparation and updates",
+            phase_started.take(),
+        );
         let Some(depth) = self.depth.as_ref() else {
-            return;
+            return cpu_phases;
         };
         let timing_slot = self
             .gpu_timing
             .as_mut()
-            .and_then(GpuTimestampProfiler::reserve_slot);
+            .and_then(|profiler| profiler.reserve_slot(submitted_frame));
         let timestamp_query_set = if timing_slot.is_some() {
             self.gpu_timing
                 .as_ref()
@@ -1652,6 +1729,7 @@ impl MeshRenderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("mesh and directional shadow passes"),
         });
+        phase_started = profile_cpu.then(Instant::now);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("directional shadow map"),
@@ -1736,6 +1814,12 @@ impl MeshRenderer {
                 start = end;
             }
         }
+        record_cpu_phase(
+            &mut cpu_phases,
+            "shadow pass command encoding",
+            phase_started.take(),
+        );
+        phase_started = profile_cpu.then(Instant::now);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("meshes"),
@@ -1790,14 +1874,26 @@ impl MeshRenderer {
                 start = end;
             }
         }
+        record_cpu_phase(
+            &mut cpu_phases,
+            "mesh pass command encoding",
+            phase_started.take(),
+        );
+        phase_started = profile_cpu.then(Instant::now);
         if let (Some(slot), Some(profiler)) = (timing_slot, self.gpu_timing.as_ref()) {
             profiler.encode_resolve(&mut encoder, slot);
         }
         queue.submit(Some(encoder.finish()));
+        record_cpu_phase(
+            &mut cpu_phases,
+            "mesh queue submission",
+            phase_started.take(),
+        );
         if let (Some(slot), Some(profiler)) = (timing_slot, self.gpu_timing.as_mut()) {
             profiler.submitted(slot);
         }
         self.update_peak_resource_estimate();
+        cpu_phases
     }
 
     /// Grow instance buffers immediately when demand increases, but shrink them only after 120

@@ -1,6 +1,8 @@
 //! HDR scene target and fullscreen tone-mapping pass.
 
-use crate::profiling::{GpuTimestampProfiler, GpuTimingSnapshot};
+use crate::profiling::{GpuCompletedSample, GpuTimestampProfiler, GpuTimingSnapshot};
+use engine_render::profiling::RenderPassTiming;
+use std::time::Instant;
 
 /// Linear HDR color format used between the mesh renderer and presentation.
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -320,6 +322,18 @@ impl ToneMapper {
             .unwrap_or_default()
     }
 
+    pub(crate) fn drain_gpu_timing_samples(&mut self) -> Vec<GpuCompletedSample> {
+        self.gpu_timing
+            .as_mut()
+            .map_or_else(Vec::new, GpuTimestampProfiler::drain_completed)
+    }
+
+    pub(crate) fn clear_gpu_timing_samples(&mut self) {
+        if let Some(profiler) = self.gpu_timing.as_mut() {
+            profiler.clear_completed();
+        }
+    }
+
     /// Draw the fullscreen tone-mapping triangle into the acquired window image.
     pub fn render(
         &mut self,
@@ -327,12 +341,34 @@ impl ToneMapper {
         queue: &wgpu::Queue,
         target: &wgpu::TextureView,
     ) {
+        let _ = self.render_internal(device, queue, target, false, 0);
+    }
+
+    pub(crate) fn render_profiled(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        submitted_frame: u64,
+    ) -> Vec<RenderPassTiming> {
+        self.render_internal(device, queue, target, true, submitted_frame)
+    }
+
+    fn render_internal(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        profile_cpu: bool,
+        submitted_frame: u64,
+    ) -> Vec<RenderPassTiming> {
+        let mut cpu_phases = Vec::new();
         // Keep bloom extraction and tone mapping in one command buffer. The two render
         // passes remain ordered, while the queue only needs one submission for post-processing.
         let timing_slot = self
             .gpu_timing
             .as_mut()
-            .and_then(GpuTimestampProfiler::reserve_slot);
+            .and_then(|profiler| profiler.reserve_slot(submitted_frame));
         let query_set = timing_slot.and_then(|_| {
             self.gpu_timing
                 .as_ref()
@@ -341,6 +377,7 @@ impl ToneMapper {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("bloom and tone mapping encoder"),
         });
+        let mut phase_started = profile_cpu.then(Instant::now);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("quarter-resolution bloom extraction and blur"),
@@ -364,6 +401,12 @@ impl ToneMapper {
             pass.set_bind_group(0, &self.bloom_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
+        record_cpu_phase(
+            &mut cpu_phases,
+            "Bloom command encoding",
+            phase_started.take(),
+        );
+        phase_started = profile_cpu.then(Instant::now);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("tone mapping"),
@@ -387,12 +430,37 @@ impl ToneMapper {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
+        record_cpu_phase(
+            &mut cpu_phases,
+            "tone-mapping command encoding",
+            phase_started.take(),
+        );
+        phase_started = profile_cpu.then(Instant::now);
         if let (Some(slot), Some(profiler)) = (timing_slot, self.gpu_timing.as_ref()) {
             profiler.encode_resolve(&mut encoder, slot);
         }
         queue.submit(Some(encoder.finish()));
+        record_cpu_phase(
+            &mut cpu_phases,
+            "post-process queue submission",
+            phase_started.take(),
+        );
         if let (Some(slot), Some(profiler)) = (timing_slot, self.gpu_timing.as_mut()) {
             profiler.submitted(slot);
         }
+        cpu_phases
+    }
+}
+
+fn record_cpu_phase(
+    phases: &mut Vec<RenderPassTiming>,
+    name: &'static str,
+    started: Option<Instant>,
+) {
+    if let Some(started) = started {
+        phases.push(RenderPassTiming {
+            name: name.to_owned(),
+            cpu_time_ns: started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+        });
     }
 }

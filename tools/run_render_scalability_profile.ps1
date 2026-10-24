@@ -1,16 +1,28 @@
+param(
+    [string]$Executable = '',
+    [string]$Variant = 'cpu-profile-baseline',
+    [string]$OutputRoot = '',
+    [string]$BuildCommand = 'cargo build --release -p graphics_showcase'
+)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$out = Join-Path $repo "target/profiles/render-scalability/$stamp"
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    $out = Join-Path $repo "target/profiles/render-scalability/$stamp"
+} else {
+    $out = Join-Path (Join-Path $repo $OutputRoot) $stamp
+}
 $captures = Join-Path $out 'captures'
 New-Item -ItemType Directory -Force -Path $captures | Out-Null
-$exe = Join-Path $repo 'target/release/graphics_showcase.exe'
+$exe = if ([string]::IsNullOrWhiteSpace($Executable)) { Join-Path $repo 'target/release/graphics_showcase.exe' } else { (Resolve-Path -LiteralPath $Executable).Path }
 $frames = 600
 $warmup = 60
 $expectedRows = $frames - $warmup + 1
 $revision = (git -C $repo rev-parse HEAD).Trim()
 $dirty = [bool](git -C $repo status --porcelain)
 $exeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+$rustcVersion = (& rustc --version).Trim()
+$windowsVersion = [Environment]::OSVersion.VersionString
 $scenes = @(
     [pscustomobject]@{ Name = 'small'; Side = 8; Instances = 64 },
     [pscustomobject]@{ Name = 'medium'; Side = 24; Instances = 576 },
@@ -24,6 +36,9 @@ $manifest = Join-Path $out 'capture-manifest.md'
     "- Source revision: ``$revision``; dirty at capture: $dirty",
     "- Executable: ``$exe``",
     "- Executable SHA-256: ``$exeHash``",
+    "- Build command: ``$BuildCommand``",
+    "- Rust compiler: ``$rustcVersion``",
+    "- Windows version: ``$windowsVersion``",
     "- Profile: release; resolution configured by showcase: 1280x800",
     "- Frames: $frames; warmup: $warmup; expected retained frame rows per run: $expectedRows",
     '- Stress workload is static-camera, one shared checker model/material, one sun, fixed transforms, no lifecycle cycling.',
@@ -31,8 +46,8 @@ $manifest = Join-Path $out 'capture-manifest.md'
     '- FIFO and Mailbox requested with desired maximum frame latency 1; actual mode and adapter recorded in logs.',
     '- Five repetitions per scene/presentation combination, with scene/mode order rotated per repetition.',
     '',
-    '| Order | Scene | Placements | Mode | CSV | Log | Report | Exit | Valid rows |',
-    '|---:|---|---:|---|---|---|---|---:|---:|'
+    '| Order | Scene | Placements | Mode | CSV | Log | Report | Exit | Frame rows | GPU samples | Surface/render errors |',
+    '|---:|---|---:|---|---|---|---|---:|---:|---:|---|'
 ) | Set-Content -LiteralPath $manifest -Encoding utf8
 
 $previousMode = $env:RIBBON_GPU_PRESENT_MODE
@@ -71,7 +86,7 @@ try {
                 "started_utc=$([DateTime]::UtcNow.ToString('o'))",
                 "source_revision=$revision",
                 "source_dirty=$dirty",
-                'variant=current-render-scalability-instrumented',
+                "variant=$Variant",
                 "executable=$exe",
                 "executable_sha256=$exeHash",
                 "RIBBON_GPU_PRESENT_MODE=$mode",
@@ -96,7 +111,7 @@ try {
             finally { Pop-Location }
             Add-Content -LiteralPath $log -Value "capture_process_exit_code=$code"
             if ($code -ne 0) {
-                Add-Content -LiteralPath $manifest -Value "| $order | $($scene.Name) | $($scene.Instances) | $mode | ``$csv`` | ``$log`` | — | $code | 0 |"
+                Add-Content -LiteralPath $manifest -Value "| $order | $($scene.Name) | $($scene.Instances) | $mode | ``$csv`` | ``$log`` | — | $code | 0 | 0 | capture failed |"
                 throw "Capture process failed: $stem (exit $code)"
             }
 
@@ -113,11 +128,26 @@ try {
                 throw "Capture configuration mismatch: $stem (mode=$($last.surface_present_mode), latency=$($last.surface_frame_latency))"
             }
             if (-not [bool]::Parse($last.gpu_timestamp_queries_supported)) { throw "GPU timestamps unsupported in capture $stem" }
+            if ([long]$last.gpu_samples_dropped -ne 0) { throw "GPU timestamp readback failures/drops in capture $stem" }
+            $gpuRows = @(Import-Csv -LiteralPath $csv | Where-Object record_type -eq 'gpu')
+            if ($gpuRows.Count -eq 0) { throw "No explicit GPU sample records in capture $stem" }
+            $gpuSequences = @{}
+            foreach ($gpuRow in $gpuRows) {
+                $key = "$($gpuRow.pass_name):$($gpuRow.gpu_sample_sequence)"
+                if ($gpuSequences.ContainsKey($key)) { throw "Duplicate GPU sequence $key in capture $stem" }
+                $gpuSequences[$key] = $true
+                if ([long]$gpuRow.gpu_submission_frame -le 0 -or [long]$gpuRow.gpu_submission_frame -gt [long]$gpuRow.frame) {
+                    throw "Invalid GPU submission/observation frame association in capture $stem"
+                }
+            }
 
             & python (Join-Path $repo 'tools/render_profile_report.py') $csv --output $report
             if ($LASTEXITCODE -ne 0) { throw "Report generation failed: $stem" }
-            Add-Content -LiteralPath $manifest -Value "| $order | $($scene.Name) | $($scene.Instances) | $mode | ``$csv`` | ``$log`` | ``$report`` | $code | $($frameRows.Count) |"
-            Write-Host "[$order/30] $stem rows=$($frameRows.Count) exit=$code"
+            $errorLine = Get-Content -LiteralPath $log | Where-Object { $_ -match '^\[RENDER PROFILE ERRORS\]' } | Select-Object -Last 1
+            if (-not $errorLine) { throw "Capture log is missing final surface/render error counters: $stem" }
+            $errorSummary = $errorLine -replace '^\[RENDER PROFILE ERRORS\]\s*', ''
+            Add-Content -LiteralPath $manifest -Value "| $order | $($scene.Name) | $($scene.Instances) | $mode | ``$csv`` | ``$log`` | ``$report`` | $code | $($frameRows.Count) | $($gpuRows.Count) | $errorSummary |"
+            Write-Host "[$order/30] $stem rows=$($frameRows.Count) gpuSamples=$($gpuRows.Count) exit=$code"
         }
     }
 }

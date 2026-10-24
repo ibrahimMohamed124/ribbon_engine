@@ -43,11 +43,26 @@ def parse_capture_name(path: Path) -> tuple[str, str, int]:
     return match.group(1), match.group(2), int(match.group(3))
 
 
-def metric_values(frames: list[dict[str, int | str | None]]) -> dict[str, list[float]]:
-    values = profile.metrics_for(frames)
+def metric_values(frames: list[dict[str, int | str | None]], passes: dict[str, list[int]]) -> dict[str, list[float]]:
+    values = profile.metrics_for(frames, passes)
+    for name, samples in passes.items():
+        if name.startswith("CPU phase:"):
+            values[name] = [float(sample) for sample in samples]
     values["Visible mesh instances"] = [float(row["visible_mesh_instances"]) for row in frames if row.get("visible_mesh_instances") is not None]
     values["Visible draw calls"] = [float(row["visible_draw_calls"]) for row in frames if row.get("visible_draw_calls") is not None]
     values["Shadow draw calls"] = [float(row["shadow_draw_calls"]) for row in frames if row.get("shadow_draw_calls") is not None]
+    for label, field in {
+        "Surface acquisition timeouts": "surface_timeouts",
+        "Surface outdated reconfigurations": "surface_outdated",
+        "Surface lost reconfigurations": "surface_lost",
+        "Other surface errors": "surface_other_errors",
+        "Render-graph errors": "render_graph_errors",
+        "GPU samples pending at frame": "gpu_samples_pending",
+        "GPU samples unavailable": "gpu_samples_unavailable",
+        "GPU samples dropped": "gpu_samples_dropped",
+    }.items():
+        if all(row.get(field) is not None for row in frames):
+            values[label] = [float(row[field]) for row in frames if row.get(field) is not None]
     values["Tracked GPU allocation estimate"] = [float(row["total_bytes_estimate"]) for row in frames if row.get("total_bytes_estimate") is not None]
     resource_metrics = {
         "Material texture allocation estimate": "material_texture_bytes_estimate",
@@ -70,6 +85,12 @@ def validate_capture(path: Path, workload: str, mode: str, repeat: int) -> tuple
     missing = REQUIRED_COLUMNS - header
     if missing:
         raise ValueError(f"{path}: missing columns: {', '.join(sorted(missing))}")
+    explicit_gpu_samples = "gpu_submission_frame" in header
+    if explicit_gpu_samples:
+        new_gpu_columns = {"gpu_samples_pending", "gpu_samples_unavailable", "gpu_samples_dropped"}
+        missing_gpu = new_gpu_columns - header
+        if missing_gpu:
+            raise ValueError(f"{path}: incomplete explicit GPU diagnostics: {', '.join(sorted(missing_gpu))}")
     if len(frames) != EXPECTED_ROWS:
         raise ValueError(f"{path}: expected {EXPECTED_ROWS} frame rows, found {len(frames)}")
     frame_numbers = [int(row["frame"]) for row in frames]
@@ -82,6 +103,8 @@ def validate_capture(path: Path, workload: str, mode: str, repeat: int) -> tuple
             raise ValueError(f"{path}: timestamp support is missing")
         if frame.get("gpu_timestamp_samples_skipped") != 0:
             raise ValueError(f"{path}: GPU timestamp samples were skipped")
+        if explicit_gpu_samples and frame.get("gpu_samples_dropped") != 0:
+            raise ValueError(f"{path}: GPU timestamp samples were dropped")
         if frame.get("scene_model_placements") != {"small": 64, "medium": 576, "large": 1600}[workload]:
             raise ValueError(f"{path}: scene placement count does not match {workload}")
         for key in ("frame_cpu_ns", "surface_acquire_ns", "graph_cpu_ns", "present_ns", "total_bytes_estimate"):
@@ -90,19 +113,45 @@ def validate_capture(path: Path, workload: str, mode: str, repeat: int) -> tuple
                 raise ValueError(f"{path}: invalid {key} sample {value!r}")
     stage_counts = {
         metric: len(values)
-        for metric, values in metric_values(frames).items()
-        if metric.startswith("GPU ")
+        for metric, values in metric_values(frames, passes).items()
+        if metric.startswith("GPU ") or metric.startswith("GPU sample:")
     }
-    # GPU timings are asynchronous and the CSV stores only the latest completed result per
-    # frame snapshot. They are intentionally not required to equal the frame row count.
-    # Reject an absent metric, but report the actual distinct sample count per run.
+    gpu_rows = []
+    seen_gpu_sequences: set[tuple[str, int]] = set()
+    with path.open("r", encoding="utf-8-sig", newline="") as source:
+        for row in csv.DictReader(source):
+            if row.get("record_type") != "gpu":
+                continue
+            sequence = int(row["gpu_sample_sequence"])
+            source_name = row["pass_name"]
+            submitted = int(row["gpu_submission_frame"])
+            observed = int(row["frame"])
+            if (source_name, sequence) in seen_gpu_sequences:
+                raise ValueError(f"{path}: duplicate GPU sample sequence {source_name}/{sequence}")
+            if submitted <= 0 or submitted > observed:
+                raise ValueError(f"{path}: invalid GPU sample frame association {submitted}->{observed}")
+            stage_columns = (
+                ("gpu_shadow_and_mesh_ns", "gpu_shadow_pass_ns", "gpu_mesh_pass_ns")
+                if source_name == "shadow_mesh"
+                else ("gpu_bloom_pass_ns", "gpu_tone_mapping_pass_ns")
+                if source_name == "bloom_tone_mapping"
+                else ()
+            )
+            if not stage_columns or any(not row.get(column, "").strip() for column in stage_columns):
+                raise ValueError(f"{path}: unknown GPU source or missing stage timing in {source_name}/{sequence}")
+            seen_gpu_sequences.add((source_name, sequence))
+            gpu_rows.append(row)
+    if explicit_gpu_samples and not gpu_rows:
+        raise ValueError(f"{path}: no explicit completed GPU sample records")
+    # Async GPU coverage is reported from individual completion records; it is not expected to
+    # equal the frame count because readbacks are nonblocking and outstanding results can remain.
     for metric, count in stage_counts.items():
-        if count == 0:
+        if metric.startswith("GPU") and count == 0:
             raise ValueError(f"{path}: no asynchronous samples for {metric}")
 
     log_path = path.with_suffix(".log")
     log = log_path.read_text(encoding="utf-8", errors="replace")
-    for required in ("source_revision=", "source_dirty=", "executable_sha256=", "command=", "capture_process_exit_code=0", "[GPU ADAPTER]", "[GPU SURFACE]"):
+    for required in ("source_revision=", "source_dirty=", "variant=", "executable_sha256=", "command=", "capture_process_exit_code=0", "[GPU ADAPTER]", "[GPU SURFACE]", "[RENDER PROFILE ERRORS]"):
         if required not in log:
             raise ValueError(f"{log_path}: missing run provenance {required!r}")
     if "validation error" in log.lower() or "panicked at" in log.lower():
@@ -112,7 +161,7 @@ def validate_capture(path: Path, workload: str, mode: str, repeat: int) -> tuple
 
     report_path = path.with_suffix(".md")
     report_text = report_path.read_text(encoding="utf-8")
-    expected_rows = profile.summary_table(profile.metrics_for(frames))
+    expected_rows = profile.summary_table(profile.metrics_for(frames, passes))
     for row in expected_rows[2:]:
         if row not in report_text:
             raise ValueError(f"{report_path}: report summary differs from raw CSV: {row}")
@@ -123,6 +172,13 @@ def build_outputs(capture_dir: Path, output_dir: Path) -> None:
     captures = sorted(capture_dir.glob("*-run*.csv"))
     runs = []
     seen: set[tuple[str, str, int]] = set()
+    adapters: set[str] = set()
+    executable_hashes: set[str] = set()
+    resolutions: set[str] = set()
+    latencies: set[str] = set()
+    source_revisions: set[str] = set()
+    dirty_states: set[str] = set()
+    variants: set[str] = set()
     expected_keys = {(scene, mode, repeat) for scene, mode, _ in EXPECTED for repeat in range(1, 6)}
     for path in captures:
         scene, mode, repeat = parse_capture_name(path)
@@ -130,10 +186,34 @@ def build_outputs(capture_dir: Path, output_dir: Path) -> None:
         if key in seen:
             raise ValueError(f"duplicate capture: {key}")
         seen.add(key)
-        frames, _passes = validate_capture(path, scene, mode, repeat)
-        for metric, values in metric_values(frames).items():
+        frames, passes = validate_capture(path, scene, mode, repeat)
+        capture_log = path.with_suffix(".log").read_text(encoding="utf-8", errors="replace")
+        adapter_line = next((line for line in capture_log.splitlines() if line.startswith("[GPU ADAPTER]")), None)
+        surface_line = next((line for line in capture_log.splitlines() if line.startswith("[GPU SURFACE]")), None)
+        if adapter_line is None or surface_line is None:
+            raise ValueError(f"{path}: missing adapter/surface provenance")
+        adapters.add(adapter_line)
+        exe_match = re.search(r"^executable_sha256=([0-9A-Fa-f]+)$", capture_log, flags=re.MULTILINE)
+        resolution_match = re.search(r"(?:^|; )resolution=([^;]+)", surface_line)
+        latency_match = re.search(r"desired_maximum_frame_latency=(\d+)", surface_line)
+        if not exe_match or not resolution_match or not latency_match:
+            raise ValueError(f"{path}: incomplete executable/resolution/latency provenance")
+        executable_hashes.add(exe_match.group(1).lower())
+        resolutions.add(resolution_match.group(1))
+        latencies.add(latency_match.group(1))
+        revision_match = re.search(r"^source_revision=(\S+)$", capture_log, flags=re.MULTILINE)
+        dirty_match = re.search(r"^source_dirty=(\S+)$", capture_log, flags=re.MULTILINE)
+        if not revision_match or not dirty_match:
+            raise ValueError(f"{path}: incomplete source provenance")
+        source_revisions.add(revision_match.group(1))
+        dirty_states.add(dirty_match.group(1))
+        variant_match = re.search(r"^variant=(\S+)$", capture_log, flags=re.MULTILINE)
+        if not variant_match:
+            raise ValueError(f"{path}: missing variant identity")
+        variants.add(variant_match.group(1))
+        for metric, values in metric_values(frames, passes).items():
             stats = profile.duration_summary(values)
-            count_metrics = {"Visible mesh instances", "Visible draw calls", "Shadow draw calls", "Cumulative model uploads", "GPU model cache entries", "Renderer instance-buffer capacity"}
+            count_metrics = {"Visible mesh instances", "Visible draw calls", "Shadow draw calls", "Cumulative model uploads", "GPU model cache entries", "Renderer instance-buffer capacity", "GPU samples pending at frame", "GPU samples unavailable", "GPU samples dropped", "Surface acquisition timeouts", "Surface outdated reconfigurations", "Surface lost reconfigurations", "Other surface errors", "Render-graph errors"}
             resource_metrics = {"Tracked GPU allocation estimate", "Material texture allocation estimate", "Active transient texture estimate", "Cached transient texture estimate", "CPU resident asset estimate"}
             unit = "count" if metric in count_metrics else "bytes" if metric in resource_metrics else "ms"
             divisor = 1_000_000 if unit == "ms" else 1
@@ -150,6 +230,10 @@ def build_outputs(capture_dir: Path, output_dir: Path) -> None:
         missing = sorted(expected_keys - seen)
         extra = sorted(seen - expected_keys)
         raise ValueError(f"capture set incomplete; missing={missing}; unexpected={extra}")
+    if any(len(values) != 1 for values in (adapters, executable_hashes, resolutions, latencies, source_revisions, dirty_states, variants)):
+        raise ValueError(
+            "capture run is not controlled: adapter, executable hash, resolution, or frame latency varies"
+        )
 
     csv_path = output_dir / "run-level-results.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as destination:
@@ -174,8 +258,14 @@ def build_outputs(capture_dir: Path, output_dir: Path) -> None:
         "Visible draw calls", "Shadow draw calls", "Tracked GPU allocation estimate",
         "Material texture allocation estimate", "Active transient texture estimate",
         "Cached transient texture estimate", "CPU resident asset estimate",
-        "Cumulative model uploads", "GPU model cache entries", "Renderer instance-buffer capacity"
+        "Cumulative model uploads", "GPU model cache entries", "Renderer instance-buffer capacity",
+        "GPU samples pending at frame", "GPU samples unavailable", "GPU samples dropped",
+        "Surface acquisition timeouts", "Surface outdated reconfigurations", "Surface lost reconfigurations",
+        "Other surface errors", "Render-graph errors",
     ]
+    metric_order.extend(sorted({
+        str(run["metric"]) for run in runs if str(run["metric"]).startswith("CPU phase:")
+    }))
     for scene in ("small", "medium", "large"):
         for mode in ("fifo", "mailbox"):
             for metric in metric_order:

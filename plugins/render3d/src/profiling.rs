@@ -3,6 +3,7 @@
 //! The profiler never waits for the GPU. It uses a small readback-buffer ring, reports completed
 //! samples on a later frame, and skips a sample when every ring slot is still busy.
 
+use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Mutex;
 
@@ -20,6 +21,7 @@ struct TimestampSlot {
     receiver: Option<TimestampReceiver>,
     reserved: bool,
     sequence: u64,
+    submitted_frame: u64,
 }
 
 /// Snapshot of timestamp profiler state for diagnostics/UI.
@@ -43,6 +45,10 @@ pub struct GpuTimingSnapshot {
     pub completed_samples: u64,
     /// Number of attempted frames skipped because every readback slot was busy.
     pub skipped_samples: u64,
+    /// Readback slots currently waiting for their asynchronous map callback.
+    pub pending_samples: u64,
+    /// Mapping failures or invalid timestamp payloads.
+    pub dropped_samples: u64,
     /// Bytes used by the timestamp resolve/readback buffers (query-set storage is driver-owned).
     pub buffer_bytes_estimate: u64,
 }
@@ -60,6 +66,19 @@ pub(crate) struct GpuTimestampProfiler {
     latest_sequence: Option<u64>,
     completed_samples: u64,
     skipped_samples: u64,
+    dropped_samples: u64,
+    completed: VecDeque<GpuCompletedSample>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GpuCompletedSample {
+    pub sequence: u64,
+    pub submitted_frame: u64,
+    pub total_ns: u64,
+    pub shadow_ns: Option<u64>,
+    pub mesh_ns: Option<u64>,
+    pub bloom_ns: Option<u64>,
+    pub tone_mapping_ns: Option<u64>,
 }
 
 impl GpuTimestampProfiler {
@@ -89,6 +108,7 @@ impl GpuTimestampProfiler {
                 receiver: None,
                 reserved: false,
                 sequence: 0,
+                submitted_frame: 0,
             })
             .collect();
         Some(Self {
@@ -104,12 +124,14 @@ impl GpuTimestampProfiler {
             latest_sequence: None,
             completed_samples: 0,
             skipped_samples: 0,
+            dropped_samples: 0,
+            completed: VecDeque::with_capacity(READBACK_SLOTS),
         })
     }
 
     /// Reserve a result slot for the upcoming mesh submission. A slot remains occupied until
     /// asynchronous mapping has completed and its buffer has been unmapped.
-    pub(crate) fn reserve_slot(&mut self) -> Option<usize> {
+    pub(crate) fn reserve_slot(&mut self, submitted_frame: u64) -> Option<usize> {
         let slot_index = (0..self.slots.len())
             .map(|offset| (self.next_slot + offset) % self.slots.len())
             .find(|index| {
@@ -125,6 +147,7 @@ impl GpuTimestampProfiler {
         let slot = &mut self.slots[slot_index];
         slot.reserved = true;
         slot.sequence = self.sequence;
+        slot.submitted_frame = submitted_frame;
         Some(slot_index)
     }
 
@@ -178,6 +201,9 @@ impl GpuTimestampProfiler {
                         let second_ns = elapsed_ns(timestamps[2], timestamps[3], period_ns);
                         let total_ns = elapsed_ns(timestamps[0], timestamps[3], period_ns);
                         if let Some(duration) = total_ns {
+                            if first_ns.is_none() || second_ns.is_none() {
+                                self.dropped_samples = self.dropped_samples.saturating_add(1);
+                            }
                             let is_newest = self
                                 .latest_sequence
                                 .is_none_or(|latest| slot.sequence >= latest);
@@ -190,6 +216,23 @@ impl GpuTimestampProfiler {
                                 self.latest_sequence = Some(slot.sequence);
                             }
                             self.completed_samples = self.completed_samples.saturating_add(1);
+                            if self.completed.len() == READBACK_SLOTS {
+                                // The render pass drains this queue once per frame. Retain a
+                                // bounded fallback for callers that poll without profiling.
+                                self.dropped_samples = self.dropped_samples.saturating_add(1);
+                                let _ = self.completed.pop_front();
+                            }
+                            self.completed.push_back(GpuCompletedSample {
+                                sequence: slot.sequence,
+                                submitted_frame: slot.submitted_frame,
+                                total_ns: duration,
+                                shadow_ns: first_ns,
+                                mesh_ns: second_ns,
+                                bloom_ns: None,
+                                tone_mapping_ns: None,
+                            });
+                        } else {
+                            self.dropped_samples = self.dropped_samples.saturating_add(1);
                         }
                     }
                     drop(mapped);
@@ -197,6 +240,7 @@ impl GpuTimestampProfiler {
                     slot.receiver = None;
                 }
                 Some(Ok(Err(_))) | Some(Err(TryRecvError::Disconnected)) => {
+                    self.dropped_samples = self.dropped_samples.saturating_add(1);
                     slot.receiver = None;
                 }
                 Some(Err(TryRecvError::Empty)) | None => {}
@@ -215,8 +259,22 @@ impl GpuTimestampProfiler {
             latest_sequence: self.latest_sequence,
             completed_samples: self.completed_samples,
             skipped_samples: self.skipped_samples,
+            pending_samples: self
+                .slots
+                .iter()
+                .filter(|slot| slot.reserved || slot.receiver.is_some())
+                .count() as u64,
+            dropped_samples: self.dropped_samples,
             buffer_bytes_estimate: (self.slots.len() as u64).saturating_mul(BUFFER_BYTES * 2),
         }
+    }
+
+    pub(crate) fn drain_completed(&mut self) -> Vec<GpuCompletedSample> {
+        self.completed.drain(..).collect()
+    }
+
+    pub(crate) fn clear_completed(&mut self) {
+        self.completed.clear();
     }
 }
 

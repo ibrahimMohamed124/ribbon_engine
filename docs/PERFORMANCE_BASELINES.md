@@ -353,3 +353,30 @@ accepted all 30 static placement runs and all 30 unique-asset runs, each with 54
 matching report statistics. No workspace-wide test or Clippy matrix was run. This is a scalability profile of
 one implementation, not a baseline/current speedup claim; see the capture and measurement limits above before
 selecting any optimization.
+
+## CPU phase profiling and cache-resolution A/B (2026-10-24)
+
+An opt-in CPU phase profiler and frame-associated asynchronous GPU timing records were added to support the
+large-scene CPU investigation. CPU timings separate scene conversion, asset cache reconciliation, model
+resolution/draw assembly, visibility/sorting, instance and uniform preparation, shadow/mesh/Bloom/tone-map
+encoding, queue submissions, GPU query polling, and profile-recorder bookkeeping. These are CPU wall durations
+for the named call scopes; they are not CPU utilization. GPU timestamp records are emitted separately, retain
+their submission and observation frame IDs, and are not artificially repeated across frame rows.
+
+The controlled A/B result supports one targeted CPU change: deduplicate model-handle lookups during extraction
+for repeated placements of the same `(asset id, generation)`. For 576 and 1,600 placements, asset-cache
+reconciliation median run-level P95 fell 68–73% in both FIFO and Mailbox, and the five-run ranges do not
+overlap. This is a phase-level result. Overall frame and surface-acquisition timings do not show a consistent
+end-to-end improvement; Mailbox wall timings are noisy and cannot be causally attributed to this CPU change.
+No rendering output equivalence test was performed. Full setup, commands, per-phase/per-mode results,
+run-to-run ranges, A/B executable hashes, and limitations are documented in
+[`render-cpu-phase-ab-20261024.md`](performance-results/render-cpu-phase-ab-20261024.md). Its companion
+[`render-cpu-phase-ab-runs-20261024.csv`](performance-results/render-cpu-phase-ab-runs-20261024.csv) records
+per-workload run-level mean/P50/P95/P99 summaries and percent changes.
+
+The preserved raw A/B captures and logs are in ignored local output directories:
+`target/profiles/render-cpu-ab/baseline/20261024-183953/captures/` and
+`target/profiles/render-cpu-ab/optimized/20261024-184601/captures/`. Each variant has 30 captures with 541
+contiguous retained frame rows each; captured GPU timing records number 1,076–1,080 per run. All recorded
+GPU dropped/unavailable and surface/render-graph error counters were zero. Pending GPU queries can remain at
+capture boundaries because query results are polled asynchronously.

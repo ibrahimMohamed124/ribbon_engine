@@ -39,12 +39,16 @@ use engine_render::gpu::{
     TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool,
 };
 use engine_render::gpu_window::{clear_view, ClearColor, FramePass, FrameTarget, GpuWindow};
-use engine_render::profiling::{RenderDiagnostics, RenderProfileRecorder, RenderResourceStats};
+use engine_render::profiling::{
+    RenderDiagnostics, RenderGpuTimingSample, RenderPassTiming, RenderProfileRecorder,
+    RenderResourceStats,
+};
 use glam::Mat4;
 use plugin_voxel::VoxelChunkMesh;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 type ModelAssetKey = (u64, u32);
 type ModelAssetRevision = (ModelAssetKey, u64);
@@ -71,6 +75,7 @@ struct MeshPass {
     model_gpu_releases_cumulative: u64,
     voxel_mesh_gpu_uploads_cumulative: u64,
     voxel_mesh_gpu_releases_cumulative: u64,
+    cpu_phases: Vec<RenderPassTiming>,
 }
 
 struct CachedVoxelMesh {
@@ -90,21 +95,28 @@ impl FramePass for MeshPass {
         if world.try_resource::<ExtractedScene3D>().is_none() {
             return;
         }
+        self.cpu_phases.clear();
+        let profile_cpu = world.try_resource::<RenderProfileRecorder>().is_some();
+        let frame = world
+            .try_resource::<RenderDiagnostics>()
+            .map_or(1, |diagnostics| diagnostics.frame_count.saturating_add(1));
+        let poll_started = profile_cpu.then(Instant::now);
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.poll_gpu_timing(target.device, target.queue);
         }
         if let Some((_, tonemapper)) = self.tonemapper.as_mut() {
             tonemapper.poll_gpu_timing(target.device, target.queue);
         }
+        record_cpu_phase(&mut self.cpu_phases, "GPU timestamp polling", poll_started);
         world.resource_scope::<ExtractedScene3D, _>(|world, extracted| {
-            self.render_extracted(world, extracted, target);
+            self.render_extracted(world, extracted, target, profile_cpu, frame);
         });
         self.publish_diagnostics(world, target.device);
     }
 }
 
 impl MeshPass {
-    fn publish_diagnostics(&self, world: &mut World, device: &wgpu::Device) {
+    fn publish_diagnostics(&mut self, world: &mut World, device: &wgpu::Device) {
         let renderer_stats = self
             .renderer
             .as_ref()
@@ -122,6 +134,52 @@ impl MeshPass {
             .as_ref()
             .map(|(_, tonemapper)| tonemapper.gpu_timing_snapshot())
             .unwrap_or_default();
+        let frame = world
+            .try_resource::<RenderDiagnostics>()
+            .map_or(0, |diagnostics| diagnostics.frame_count.saturating_add(1));
+        let capture_gpu_samples = world.try_resource::<RenderProfileRecorder>().is_some();
+        let mut completed_gpu_samples = Vec::new();
+        if let Some(renderer) = self.renderer.as_mut() {
+            if capture_gpu_samples {
+                completed_gpu_samples.extend(renderer.drain_gpu_timing_samples().into_iter().map(
+                    |sample| RenderGpuTimingSample {
+                        source: "shadow_mesh",
+                        sequence: sample.sequence,
+                        submitted_frame: sample.submitted_frame,
+                        observed_frame: frame,
+                        total_ns: sample.total_ns,
+                        shadow_ns: sample.shadow_ns,
+                        mesh_ns: sample.mesh_ns,
+                        bloom_ns: None,
+                        tone_mapping_ns: None,
+                    },
+                ));
+            } else {
+                renderer.clear_gpu_timing_samples();
+            }
+        }
+        if let Some((_, tonemapper)) = self.tonemapper.as_mut() {
+            if capture_gpu_samples {
+                completed_gpu_samples.extend(
+                    tonemapper
+                        .drain_gpu_timing_samples()
+                        .into_iter()
+                        .map(|sample| RenderGpuTimingSample {
+                            source: "bloom_tone_mapping",
+                            sequence: sample.sequence,
+                            submitted_frame: sample.submitted_frame,
+                            observed_frame: frame,
+                            total_ns: sample.total_ns,
+                            shadow_ns: None,
+                            mesh_ns: None,
+                            bloom_ns: sample.shadow_ns,
+                            tone_mapping_ns: sample.mesh_ns,
+                        }),
+                );
+            } else {
+                tonemapper.clear_gpu_timing_samples();
+            }
+        }
         let pool_stats = self.transient_targets.stats();
         let post_process_bytes = self
             .tonemapper
@@ -172,6 +230,28 @@ impl MeshPass {
                 stats.instance_buffer_grows_cumulative;
             resources.renderer_instance_buffer_shrinks_cumulative =
                 stats.instance_buffer_shrinks_cumulative;
+        }
+        if world.try_resource::<RenderDiagnostics>().is_none() {
+            world.insert_resource(RenderDiagnostics::default());
+        }
+        {
+            let diagnostics = world.resource_mut::<RenderDiagnostics>();
+            diagnostics.completed_gpu_samples = completed_gpu_samples;
+            diagnostics.cpu_phases = self.cpu_phases.clone();
+            diagnostics.gpu_samples_pending = gpu_timing
+                .pending_samples
+                .saturating_add(post_gpu_timing.pending_samples);
+            diagnostics.gpu_samples_dropped = gpu_timing
+                .dropped_samples
+                .saturating_add(post_gpu_timing.dropped_samples);
+            if !gpu_timing.supported {
+                diagnostics.gpu_samples_unavailable =
+                    diagnostics.gpu_samples_unavailable.saturating_add(1);
+            }
+            if !post_gpu_timing.supported {
+                diagnostics.gpu_samples_unavailable =
+                    diagnostics.gpu_samples_unavailable.saturating_add(1);
+            }
         }
         // CPU cache accounting scans resident asset metadata. Keep it off the normal render path
         // and collect it only when an explicit bounded profile capture is installed.
@@ -225,8 +305,11 @@ impl MeshPass {
         world: &mut World,
         extracted: &mut ExtractedScene3D,
         target: &FrameTarget<'_>,
+        profile_cpu: bool,
+        frame: u64,
     ) {
         let (width, height) = target.size;
+        let cache_started = profile_cpu.then(Instant::now);
 
         // A successful hot reload retains its weak handle ID/generation but advances the CPU asset
         // revision. Rebuild this pass's GPU-side caches when an already-observed model changes.
@@ -245,15 +328,18 @@ impl MeshPass {
                 let mut seen = HashSet::new();
                 let mut revisions = Vec::new();
                 for placement in &extracted.models {
+                    let key = (placement.model.id(), placement.model.generation());
+                    // A scene commonly repeats one model across many placements. Asset residency
+                    // is unchanged during this pass, so query each generation-checked key once.
+                    if !seen.insert(key) {
+                        continue;
+                    }
                     if server.get(placement.model).is_none() {
                         continue;
                     }
-                    let key = (placement.model.id(), placement.model.generation());
                     live_keys.insert(key);
-                    if seen.insert(key) {
-                        if let Some(revision) = server.revision(placement.model) {
-                            revisions.push((key, revision));
-                        }
+                    if let Some(revision) = server.revision(placement.model) {
+                        revisions.push((key, revision));
                     }
                 }
                 (live_keys, revisions)
@@ -330,6 +416,11 @@ impl MeshPass {
                 }
             }
         }
+        record_cpu_phase(
+            &mut self.cpu_phases,
+            "asset cache reconciliation",
+            cache_started,
+        );
 
         if width == 0 || height == 0 {
             // A minimized/zero-sized target must not postpone asset-cache cleanup. Release any
@@ -359,6 +450,7 @@ impl MeshPass {
             return;
         };
 
+        let scene_conversion_started = profile_cpu.then(Instant::now);
         let mut draws: Vec<Draw> = extracted
             .meshes
             .iter()
@@ -369,7 +461,13 @@ impl MeshPass {
                 tint: mesh.color,
             })
             .collect();
+        record_cpu_phase(
+            &mut self.cpu_phases,
+            "built-in scene conversion",
+            scene_conversion_started,
+        );
 
+        let asset_resolution_started = profile_cpu.then(Instant::now);
         if !extracted.models.is_empty() {
             if let Some(server) = world.try_resource::<AssetServer>() {
                 // Lazily create the device resources before importing model parts.
@@ -461,6 +559,11 @@ impl MeshPass {
                 });
             }
         }
+        record_cpu_phase(
+            &mut self.cpu_phases,
+            "model/voxel resolution and draw assembly",
+            asset_resolution_started,
+        );
 
         if draws.is_empty() {
             if let Some(renderer) = self.renderer.as_mut() {
@@ -517,25 +620,53 @@ impl MeshPass {
         .inverse();
         let view_proj = camera.camera.projection(width as f32 / height as f32) * view;
         if let Some(renderer) = self.renderer.as_mut() {
-            renderer.render(
-                target.device,
-                target.queue,
-                hdr_view,
-                target.size,
-                &Scene {
-                    view_proj,
-                    camera_position: camera.transform.translation,
-                    sun: &extracted.sun,
-                    spot_lights: &extracted.spot_lights,
-                    point_lights: &extracted.point_lights,
-                    fog: extracted.fog,
-                    draws: &draws,
-                },
-            );
+            let scene = Scene {
+                view_proj,
+                camera_position: camera.transform.translation,
+                sun: &extracted.sun,
+                spot_lights: &extracted.spot_lights,
+                point_lights: &extracted.point_lights,
+                fog: extracted.fog,
+                draws: &draws,
+            };
+            if profile_cpu {
+                self.cpu_phases.extend(renderer.render_profiled(
+                    target.device,
+                    target.queue,
+                    hdr_view,
+                    target.size,
+                    &scene,
+                    frame,
+                ));
+            } else {
+                renderer.render(target.device, target.queue, hdr_view, target.size, &scene);
+            }
         }
         if let Some((_, tonemapper)) = self.tonemapper.as_mut() {
-            tonemapper.render(target.device, target.queue, target.view);
+            if profile_cpu {
+                self.cpu_phases.extend(tonemapper.render_profiled(
+                    target.device,
+                    target.queue,
+                    target.view,
+                    frame,
+                ));
+            } else {
+                tonemapper.render(target.device, target.queue, target.view);
+            }
         }
+    }
+}
+
+fn record_cpu_phase(
+    phases: &mut Vec<RenderPassTiming>,
+    name: &'static str,
+    started: Option<Instant>,
+) {
+    if let Some(started) = started {
+        phases.push(RenderPassTiming {
+            name: name.to_owned(),
+            cpu_time_ns: started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+        });
     }
 }
 
