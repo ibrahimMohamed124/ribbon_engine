@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import platform
 import statistics
+import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -356,6 +358,96 @@ def metrics_for(frames: list[dict[str, int | str | None]]) -> dict[str, list[flo
     return metrics
 
 
+def capture_metadata_lines(capture: Path) -> list[str]:
+    """Collect metadata available in the matching capture log."""
+    log_path = capture.with_suffix(".log")
+    try:
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        log_text = ""
+
+    log_lines = [line.strip() for line in log_text.splitlines()]
+    adapter_line = next(
+        (line for line in log_lines if "[GPU ADAPTER]" in line), ""
+    )
+    surface_line = next(
+        (line for line in log_lines if "[GPU SURFACE]" in line), ""
+    )
+
+    def surface_value(key: str) -> str:
+        prefix = f"{key}="
+        clean_line = surface_line.replace("[GPU SURFACE]", "")
+        for item in clean_line.split(";"):
+            item = item.strip()
+            if item.startswith(prefix):
+                return item[len(prefix):].strip()
+        return ""
+
+    repo_root = Path(__file__).resolve().parent.parent
+    revision = "not recorded (Git metadata unavailable)"
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo_root, capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            revision = f"`{result.stdout.strip()}`"
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=repo_root, capture_output=True, text=True, check=False
+            )
+            if status.returncode == 0 and status.stdout.strip():
+                revision += " (working tree modified)"
+    except OSError:
+        pass
+
+    profile = "not recorded"
+    if any("Finished `release` profile" in line for line in log_lines):
+        profile = "release"
+    elif any("Finished `dev` profile" in line for line in log_lines):
+        profile = "dev/debug"
+
+    running = next(
+        (line for line in log_lines if "Running `" in line), ""
+    )
+    command = ""
+    if running:
+        command = running.split("Running `", 1)[1].rsplit("`", 1)[0]
+
+    if profile == "not recorded" and "target\\release\\" in command:
+        profile = "release"
+    elif profile == "not recorded" and "target\\debug\\" in command:
+        profile = "debug"
+
+    build_info = (
+        f"{profile}; `{command}`" if command
+        else f"{profile}; command not recorded in matching log"
+    )
+    adapter_info = (
+        adapter_line.replace("[GPU ADAPTER]", "", 1).strip()
+        if adapter_line else "not recorded (matching .log missing)"
+    )
+    surface_info = (
+        surface_line.replace("[GPU SURFACE]", "", 1).strip()
+        if surface_line else "not recorded (matching .log missing)"
+    )
+    resolution = surface_value("resolution")
+    if resolution:
+        resolution += " (native window surface)"
+    else:
+        resolution = "not recorded in this capture log"
+
+    return [
+        f"- Source revision/archive: {revision}",
+        f"- Operating system: {platform.platform()}",
+        f"- GPU adapter and driver: {adapter_info}",
+        f"- Display/render resolution: {resolution}",
+        f"- Build profile and example command: {build_info}",
+        f"- Surface configuration: {surface_info}",
+    ]
+
+
+
 def build_report(path: Path, frames: list[dict[str, int | str | None]], passes: dict[str, list[int]], compare_path: Path | None) -> str:
     metrics = metrics_for(frames)
     first_frame = frames[0].get("frame")
@@ -383,13 +475,9 @@ def build_report(path: Path, frames: list[dict[str, int | str | None]], passes: 
         "",
         *current_resource_summary(frames),
         "",
-        "## Capture metadata (fill before comparing or sharing)",
+        "## Capture metadata (automatic where available)",
         "",
-        "- Source revision/archive: _fill in_",
-        "- Operating system: _fill in_",
-        "- GPU adapter and driver: _fill in_",
-        "- Display/render resolution: _fill in_",
-        "- Build profile and example command: _fill in_",
+        *capture_metadata_lines(path),
         "- Warmup and captured frame range: recorded above; note any scene/input variation here",
         "",
         "## Interpretation notes",

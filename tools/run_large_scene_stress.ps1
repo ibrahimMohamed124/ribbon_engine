@@ -10,7 +10,7 @@ param(
     [ValidateRange(1, 5000)]
     [int]$CycleFrames = 300,
     [ValidateSet('fifo', 'auto-vsync', 'auto-no-vsync', 'fifo-relaxed', 'immediate', 'mailbox')]
-    [string]$PresentMode = 'fifo',
+    [string]$PresentMode = 'mailbox',
     [ValidateRange(1, 3)]
     [int]$FrameLatency = 1,
     [ValidateRange(0, 128)]
@@ -27,6 +27,31 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Invoke-CargoCapture {
+    param([string[]]$Arguments, [string]$LogPath, [string]$Description)
+
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        Set-Content -LiteralPath $LogPath -Value '' -Encoding UTF8
+        & cargo @Arguments 2>&1 | ForEach-Object {
+            $line = $_.ToString()
+            Write-Host $line
+            [System.IO.File]::AppendAllText(
+                $LogPath,
+                $line + [Environment]::NewLine,
+                [System.Text.UTF8Encoding]::new($false)
+            )
+        }
+        $cargoExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($cargoExitCode -ne 0) {
+        throw "$Description failed (exit code $cargoExitCode). See log: $LogPath"
+    }
+}
 if ($Warmup -ge $Frames) {
     throw 'Warmup must be smaller than the steady-scene frame count.'
 }
@@ -86,7 +111,7 @@ $manifest.Add("- Generated source texture size: $StressTextureSize x $StressText
 $manifest.Add("- Unpinned decoded CPU cache budget: $AssetMemoryBudgetMiB MiB")
 $manifest.Add("- Multi-asset grid side: $MultiAssetGridSide")
 $manifest.Add('')
-$manifest.Add('| Scenario | CSV | Markdown report |')
+$manifest.Add('| Scenario | CSV | Markdown report | Console log |')
 $manifest.Add('|---|---|---|')
 
 $previousPresentMode = $env:RIBBON_GPU_PRESENT_MODE
@@ -112,36 +137,34 @@ try {
         $label = 'grid-{0}x{0}' -f $side
         $csvPath = Join-Path $captureDir "$label.csv"
         $reportPath = Join-Path $captureDir "$label.md"
+        $logPath = Join-Path $captureDir "$label.log"
         Write-Host "`n=== Large scene $side x $side ===" -ForegroundColor Cyan
         Write-Host "CSV: $csvPath"
 
-        & cargo run --release -p graphics_showcase -- --stress-grid $side --frames $Frames --profile-warmup $Warmup --profile-csv $csvPath
-        if ($LASTEXITCODE -ne 0) {
-            throw "Large-scene capture failed for grid $side (exit code $LASTEXITCODE)."
-        }
+        $cargoArgs = @('run', '--release', '-p', 'graphics_showcase', '--', '--stress-grid', [string]$side, '--frames', [string]$Frames, '--profile-warmup', [string]$Warmup, '--profile-csv', $csvPath)
+        Invoke-CargoCapture -Arguments $cargoArgs -LogPath $logPath -Description "Large-scene capture for grid $side"
         & python tools/render_profile_report.py $csvPath --output $reportPath
         if ($LASTEXITCODE -ne 0) {
             throw "Profile report failed for $csvPath (exit code $LASTEXITCODE)."
         }
-        $manifest.Add("| $label | ``${label}.csv`` | ``${label}.md`` |")
+        $manifest.Add("| $label | ``${label}.csv`` | ``${label}.md`` | ``${label}.log`` |")
     }
 
     if ($MultiAssetCount -gt 0) {
         $label = 'multi-asset-{0}x{0}-active{1}-prefetch{2}' -f $MultiAssetGridSide, $MultiAssetCount, $CachePrefetchCount
         $csvPath = Join-Path $captureDir "$label.csv"
         $reportPath = Join-Path $captureDir "$label.md"
+        $logPath = Join-Path $captureDir "$label.log"
         Write-Host "`n=== Multi-asset steady scene: grid $MultiAssetGridSide, active $MultiAssetCount, prefetch $CachePrefetchCount, budget $AssetMemoryBudgetMiB MiB ===" -ForegroundColor Cyan
         Write-Host "CSV: $csvPath"
 
-        & cargo run --release -p graphics_showcase -- --stress-grid $MultiAssetGridSide --stress-multi-asset-count $MultiAssetCount --stress-cache-prefetch-count $CachePrefetchCount --asset-memory-budget-mib $AssetMemoryBudgetMiB --frames $Frames --profile-warmup $Warmup --profile-csv $csvPath
-        if ($LASTEXITCODE -ne 0) {
-            throw "Multi-asset steady capture failed (exit code $LASTEXITCODE)."
-        }
+        $cargoArgs = @('run', '--release', '-p', 'graphics_showcase', '--', '--stress-grid', [string]$MultiAssetGridSide, '--stress-multi-asset-count', [string]$MultiAssetCount, '--stress-cache-prefetch-count', [string]$CachePrefetchCount, '--asset-memory-budget-mib', [string]$AssetMemoryBudgetMiB, '--frames', [string]$Frames, '--profile-warmup', [string]$Warmup, '--profile-csv', $csvPath)
+        Invoke-CargoCapture -Arguments $cargoArgs -LogPath $logPath -Description 'Multi-asset steady capture'
         & python tools/render_profile_report.py $csvPath --output $reportPath
         if ($LASTEXITCODE -ne 0) {
             throw "Multi-asset profile report failed for $csvPath (exit code $LASTEXITCODE)."
         }
-        $manifest.Add("| $label | ``${label}.csv`` | ``${label}.md`` |")
+        $manifest.Add("| $label | ``${label}.csv`` | ``${label}.md`` | ``${label}.log`` |")
     }
 
     if (-not $SkipLifecycle) {
@@ -153,36 +176,34 @@ try {
         }
         $csvPath = Join-Path $captureDir 'asset-lifecycle.csv'
         $reportPath = Join-Path $captureDir 'asset-lifecycle.md'
+        $logPath = Join-Path $captureDir 'asset-lifecycle.log'
         Write-Host "`n=== Asset lifecycle cycle: grid $LifecycleSide, cycle $CycleFrames frames ===" -ForegroundColor Cyan
         Write-Host "CSV: $csvPath"
 
-        & cargo run --release -p graphics_showcase -- --stress-grid $LifecycleSide --stress-cycle-frames $CycleFrames --frames $lifecycleFrames --profile-warmup $Warmup --profile-csv $csvPath
-        if ($LASTEXITCODE -ne 0) {
-            throw "Asset lifecycle capture failed (exit code $LASTEXITCODE)."
-        }
+        $cargoArgs = @('run', '--release', '-p', 'graphics_showcase', '--', '--stress-grid', [string]$LifecycleSide, '--stress-cycle-frames', [string]$CycleFrames, '--frames', [string]$lifecycleFrames, '--profile-warmup', [string]$Warmup, '--profile-csv', $csvPath)
+        Invoke-CargoCapture -Arguments $cargoArgs -LogPath $logPath -Description 'Asset lifecycle capture'
         & python tools/render_profile_report.py $csvPath --output $reportPath
         if ($LASTEXITCODE -ne 0) {
             throw "Asset lifecycle report failed for $csvPath (exit code $LASTEXITCODE)."
         }
-        $manifest.Add("| asset lifecycle ($LifecycleSide x $LifecycleSide, cycle $CycleFrames) | ``asset-lifecycle.csv`` | ``asset-lifecycle.md`` |")
+        $manifest.Add("| asset lifecycle ($LifecycleSide x $LifecycleSide, cycle $CycleFrames) | ``asset-lifecycle.csv`` | ``asset-lifecycle.md`` | ``asset-lifecycle.log`` |")
 
         if ($MultiAssetCount -gt 0) {
             $multiLifecycleFrames = $Frames + [Math]::Max(1, [int][Math]::Floor($CycleFrames / 2))
             $label = 'multi-asset-lifecycle-{0}x{0}-active{1}-prefetch{2}' -f $MultiAssetGridSide, $MultiAssetCount, $CachePrefetchCount
             $csvPath = Join-Path $captureDir "$label.csv"
             $reportPath = Join-Path $captureDir "$label.md"
+            $logPath = Join-Path $captureDir "$label.log"
             Write-Host "`n=== Multi-asset lifecycle: grid $MultiAssetGridSide, cycle $CycleFrames frames, budget $AssetMemoryBudgetMiB MiB ===" -ForegroundColor Cyan
             Write-Host "CSV: $csvPath"
 
-            & cargo run --release -p graphics_showcase -- --stress-grid $MultiAssetGridSide --stress-multi-asset-count $MultiAssetCount --stress-cache-prefetch-count $CachePrefetchCount --asset-memory-budget-mib $AssetMemoryBudgetMiB --stress-cycle-frames $CycleFrames --frames $multiLifecycleFrames --profile-warmup $Warmup --profile-csv $csvPath
-            if ($LASTEXITCODE -ne 0) {
-                throw "Multi-asset lifecycle capture failed (exit code $LASTEXITCODE)."
-            }
+            $cargoArgs = @('run', '--release', '-p', 'graphics_showcase', '--', '--stress-grid', [string]$MultiAssetGridSide, '--stress-multi-asset-count', [string]$MultiAssetCount, '--stress-cache-prefetch-count', [string]$CachePrefetchCount, '--asset-memory-budget-mib', [string]$AssetMemoryBudgetMiB, '--stress-cycle-frames', [string]$CycleFrames, '--frames', [string]$multiLifecycleFrames, '--profile-warmup', [string]$Warmup, '--profile-csv', $csvPath)
+            Invoke-CargoCapture -Arguments $cargoArgs -LogPath $logPath -Description 'Multi-asset lifecycle capture'
             & python tools/render_profile_report.py $csvPath --output $reportPath
             if ($LASTEXITCODE -ne 0) {
                 throw "Multi-asset lifecycle profile report failed for $csvPath (exit code $LASTEXITCODE)."
             }
-            $manifest.Add("| $label | ``${label}.csv`` | ``${label}.md`` |")
+            $manifest.Add("| $label | ``${label}.csv`` | ``${label}.md`` | ``${label}.log`` |")
         }
     }
 
@@ -196,6 +217,22 @@ try {
     $manifest.Add('- The CPU asset budget is a soft cap for unpinned decoded assets; pinned bytes can exceed it by design. Estimates use loader-reported capacities and are not allocator/RSS telemetry.')
     $manifest.Add('- Generated assets are under target/asset-stress-corpus and are regenerated before the run. They are not checked-in assets.')
     $manifest.Add('- These runs are machine-, driver-, resolution-, and scene-specific. GPU resource bytes are estimates, not driver-reported VRAM.')
+    $manifest.Add('')
+    $manifest.Add('## Adapter and surface logs')
+    $manifest.Add('')
+    foreach ($log in Get-ChildItem -LiteralPath $captureDir -Filter '*.log' -File | Sort-Object Name) {
+        $manifest.Add("### $($log.Name)")
+        $manifest.Add('')
+        $logLines = @(Get-Content -LiteralPath $log.FullName | Where-Object { $_ -match '^\[GPU ADAPTER\]|^\[GPU SURFACE\]' })
+        if ($logLines.Count -eq 0) {
+            $manifest.Add('- No GPU adapter/surface configuration lines were captured.')
+        } else {
+            foreach ($line in $logLines) {
+                $manifest.Add("- ``$line``")
+            }
+        }
+        $manifest.Add('')
+    }
     Set-Content -LiteralPath $manifestPath -Value ($manifest.ToArray()) -Encoding utf8
     Write-Host "`nLarge-scene stress captures are complete." -ForegroundColor Green
     Write-Host "Run manifest: $manifestPath"

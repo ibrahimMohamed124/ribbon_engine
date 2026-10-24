@@ -10,6 +10,31 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Invoke-CargoCapture {
+    param([string[]]$Arguments, [string]$LogPath, [string]$Description)
+
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        Set-Content -LiteralPath $LogPath -Value '' -Encoding UTF8
+        & cargo @Arguments 2>&1 | ForEach-Object {
+            $line = $_.ToString()
+            Write-Host $line
+            [System.IO.File]::AppendAllText(
+                $LogPath,
+                $line + [Environment]::NewLine,
+                [System.Text.UTF8Encoding]::new($false)
+            )
+        }
+        $cargoExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($cargoExitCode -ne 0) {
+        throw "$Description failed (exit code $cargoExitCode). See log: $LogPath"
+    }
+}
 if ($Warmup -ge $Frames) {
     throw 'Warmup must be smaller than the total frame count.'
 }
@@ -45,16 +70,16 @@ try {
             $runText = '{0:D2}' -f $run
             $csvPath = Join-Path $captureDir "$($configuration.Name)-run$runText.csv"
             $reportPath = Join-Path $captureDir "$($configuration.Name)-run$runText.md"
+            $logPath = Join-Path $captureDir "$($configuration.Name)-run$runText.log"
 
             $env:RIBBON_GPU_PRESENT_MODE = $configuration.Mode
             $env:RIBBON_GPU_FRAME_LATENCY = $configuration.Latency
             Write-Host "`n=== $($configuration.Name), run $run/$Runs ===" -ForegroundColor Cyan
             Write-Host "CSV: $csvPath"
+            Write-Host "Console log: $logPath"
 
-            & cargo run --release -p graphics_showcase -- --frames $Frames --profile-warmup $Warmup --profile-csv $csvPath
-            if ($LASTEXITCODE -ne 0) {
-                throw "Capture failed for $($configuration.Name), run $run (exit code $LASTEXITCODE)."
-            }
+            $cargoArgs = @('run', '--release', '-p', 'graphics_showcase', '--', '--frames', [string]$Frames, '--profile-warmup', [string]$Warmup, '--profile-csv', $csvPath)
+            Invoke-CargoCapture -Arguments $cargoArgs -LogPath $logPath -Description "Capture for $($configuration.Name), run $run"
 
             & python tools/render_profile_report.py $csvPath --output $reportPath
             if ($LASTEXITCODE -ne 0) {

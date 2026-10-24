@@ -70,8 +70,9 @@ def stats_ms(values_ns: list[float]) -> dict[str, float | None]:
     }
 
 
-def load_capture(path: Path, budget_ms: float) -> dict:
+def load_capture(path: Path, budget_ms: float, expected_frames: int | None = None) -> dict:
     frames: list[dict[str, str]] = []
+    pass_cpu_ns: dict[str, list[float]] = defaultdict(list)
     with path.open("r", newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames or "record_type" not in reader.fieldnames:
@@ -79,8 +80,17 @@ def load_capture(path: Path, budget_ms: float) -> dict:
         for row in reader:
             if row.get("record_type") == "frame":
                 frames.append(row)
+            elif row.get("record_type") == "pass":
+                pass_name = (row.get("pass_name") or "").strip()
+                pass_time = number(row.get("pass_cpu_ns"))
+                if pass_name and pass_time is not None:
+                    pass_cpu_ns[pass_name].append(pass_time)
     if not frames:
         raise ValueError(f"{path}: no frame records")
+    if expected_frames is not None and len(frames) != expected_frames:
+        raise ValueError(
+            f"{path}: incomplete capture has {len(frames)} frame records; expected {expected_frames}"
+        )
 
     metric_ns: dict[str, list[float]] = defaultdict(list)
     gpu_unique: dict[str, dict[str, float]] = defaultdict(dict)
@@ -99,8 +109,9 @@ def load_capture(path: Path, budget_ms: float) -> dict:
             else:
                 metric_ns[label].append(value)
         value = number(frame.get("frame_cpu_ns"))
-        if value is not None:
-            frame_ms.append(value / NS_PER_MS)
+        if value is None:
+            raise ValueError(f"{path}: frame record is missing a valid frame_cpu_ns value")
+        frame_ms.append(value / NS_PER_MS)
 
     for label, samples in gpu_unique.items():
         metric_ns[label] = list(samples.values())
@@ -124,6 +135,7 @@ def load_capture(path: Path, budget_ms: float) -> dict:
         "latency": first.get("surface_frame_latency") or "not recorded",
         "over_budget_pct": over_budget,
         "metrics": metrics,
+        "passes": {name: stats_ms(values) for name, values in pass_cpu_ns.items()},
     }
 
 
@@ -137,15 +149,22 @@ def main() -> int:
     parser.add_argument("--input-dir", type=Path, required=True, help="directory containing *-runNN.csv files")
     parser.add_argument("--output", type=Path, required=True, help="Markdown report path")
     parser.add_argument("--budget-ms", type=float, default=16.667, help="frame-wall threshold used for exceedance rate")
+    parser.add_argument(
+        "--expected-frames",
+        type=int,
+        help="required frame-record count for every capture; rejects incomplete profiles",
+    )
     args = parser.parse_args()
     if args.budget_ms <= 0:
         parser.error("--budget-ms must be positive")
+    if args.expected_frames is not None and args.expected_frames <= 0:
+        parser.error("--expected-frames must be positive")
 
     paths = sorted(path for path in args.input_dir.glob("*-run*.csv") if path.is_file())
     if not paths:
         parser.error(f"no *-run*.csv captures found in {args.input_dir}")
 
-    captures = [load_capture(path, args.budget_ms) for path in paths]
+    captures = [load_capture(path, args.budget_ms, args.expected_frames) for path in paths]
     groups: dict[str, list[dict]] = defaultdict(list)
     for capture in captures:
         groups[capture["config"]].append(capture)
@@ -161,14 +180,14 @@ def main() -> int:
         "",
         "## Per-capture results",
         "",
-        "| Configuration | Run | Resolved mode / latency | Frames | Frame P95 (ms) | Frame P99 (ms) | Above budget | Acquire P95 (ms) | Graph P95 (ms) | Present P95 (ms) | GPU shadow+mesh P95 (ms) |",
-        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Configuration | Run | Resolved mode / latency | Frames | Frame P50 (ms) | Frame P95 (ms) | Frame P99 (ms) | Above budget | Acquire P95 (ms) | Graph P95 (ms) | Present P95 (ms) | GPU shadow+mesh P95 (ms) |",
+        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for capture in captures:
         metrics = capture["metrics"]
         lines.append(
             f"| {capture['config']} | {capture['run'] or '—'} | {capture['mode']} / {capture['latency']} | "
-            f"{capture['frames']} | {fmt_ms(metrics['Frame wall']['p95'])} | {fmt_ms(metrics['Frame wall']['p99'])} | "
+            f"{capture['frames']} | {fmt_ms(metrics['Frame wall']['p50'])} | {fmt_ms(metrics['Frame wall']['p95'])} | {fmt_ms(metrics['Frame wall']['p99'])} | "
             f"{fmt_pct(capture['over_budget_pct'])} | {fmt_ms(metrics['Surface acquisition']['p95'])} | "
             f"{fmt_ms(metrics['Render graph CPU']['p95'])} | {fmt_ms(metrics['Surface presentation']['p95'])} | "
             f"{fmt_ms(metrics['GPU shadow + mesh']['p95'])} |"
@@ -180,8 +199,8 @@ def main() -> int:
         "",
         "Values below are the median of each configuration's run-level metrics; bracketed values are the observed minimum and maximum across captures.",
         "",
-        "| Configuration | Captures | Frame P95 median [min, max] ms | Frame P99 median [min, max] ms | Acquire P95 median [min, max] ms | Graph P95 median [min, max] ms | Samples above budget median |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Configuration | Captures | Frame P50 median [min, max] ms | Frame P95 median [min, max] ms | Frame P99 median [min, max] ms | Acquire P95 median [min, max] ms | Graph P95 median [min, max] ms | Samples above budget median |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ])
     warnings: list[str] = []
     for config, runs in sorted(groups.items()):
@@ -196,7 +215,7 @@ def main() -> int:
             return f"{mid:.3f} [{min(usable):.3f}, {max(usable):.3f}]"
 
         lines.append(
-            f"| {config} | {len(runs)} | {range_text(run_metric('Frame wall', 'p95'))} | "
+            f"| {config} | {len(runs)} | {range_text(run_metric('Frame wall', 'p50'))} | {range_text(run_metric('Frame wall', 'p95'))} | "
             f"{range_text(run_metric('Frame wall', 'p99'))} | {range_text(run_metric('Surface acquisition', 'p95'))} | "
             f"{range_text(run_metric('Render graph CPU', 'p95'))} | {fmt_pct(median_or_none(run['over_budget_pct'] for run in runs))} |"
         )
@@ -208,6 +227,148 @@ def main() -> int:
 
     lines.extend([""])
     lines.extend(warnings)
+
+    # When the canonical FIFO and Mailbox groups are present, add a direct comparison.
+    # Compare the median of per-run statistics; never pool frame rows across runs.
+    fifo_runs = groups.get("fifo", [])
+    mailbox_runs = groups.get("mailbox", [])
+    if fifo_runs and mailbox_runs:
+        def range_text(values: Iterable[float | None]) -> str:
+            usable = [value for value in values if value is not None]
+            if not usable:
+                return "—"
+            mid = median(usable)
+            return f"{mid:.3f} [{min(usable):.3f}, {max(usable):.3f}]"
+
+        def group_metric(runs: list[dict], metric: str, stat: str) -> list[float | None]:
+            return [run["metrics"][metric][stat] for run in runs]
+
+        def delta_text(fifo_values: list[float | None], mailbox_values: list[float | None]) -> str:
+            fifo_mid = median_or_none(fifo_values)
+            mailbox_mid = median_or_none(mailbox_values)
+            if fifo_mid is None or mailbox_mid is None or fifo_mid == 0:
+                return "n/a"
+            delta = (mailbox_mid - fifo_mid) / fifo_mid * 100.0
+            direction = "slower" if delta > 0 else "faster" if delta < 0 else "unchanged"
+            return f"{delta:+.2f}% ({direction})"
+
+        fifo_modes = sorted({run["mode"] for run in fifo_runs})
+        mailbox_modes = sorted({run["mode"] for run in mailbox_runs})
+        fifo_latencies = sorted({run["latency"] for run in fifo_runs})
+        mailbox_latencies = sorted({run["latency"] for run in mailbox_runs})
+        fifo_frame_counts = sorted({run["frames"] for run in fifo_runs})
+        mailbox_frame_counts = sorted({run["frames"] for run in mailbox_runs})
+        setup_valid = (
+            all(run["mode"] == "fifo" for run in fifo_runs)
+            and all(run["mode"] == "mailbox" for run in mailbox_runs)
+            and len(fifo_latencies) == 1
+            and len(mailbox_latencies) == 1
+            and fifo_latencies[0] != "not recorded"
+            and mailbox_latencies[0] != "not recorded"
+            and fifo_latencies == mailbox_latencies
+            and len(fifo_frame_counts) == 1
+            and len(mailbox_frame_counts) == 1
+            and fifo_frame_counts == mailbox_frame_counts
+        )
+        lines.extend([
+            "",
+            "## Direct FIFO vs Mailbox comparison",
+            "",
+            f"- FIFO captures: {len(fifo_runs)}; resolved modes: `{', '.join(fifo_modes)}`; frame-latency values: `{', '.join(fifo_latencies)}`; retained frame counts: `{', '.join(str(value) for value in fifo_frame_counts)}`.",
+            f"- Mailbox captures: {len(mailbox_runs)}; resolved modes: `{', '.join(mailbox_modes)}`; frame-latency values: `{', '.join(mailbox_latencies)}`; retained frame counts: `{', '.join(str(value) for value in mailbox_frame_counts)}`.",
+        ])
+        if setup_valid:
+            lines.append("Resolved present modes, frame-latency settings and retained frame counts match the requested A/B setup. The values below summarize run-level statistics; frame rows are not pooled.")
+        else:
+            lines.append("> **Invalid direct A/B setup:** resolved modes, frame-latency settings, or retained frame counts differ. Do not attribute timing deltas to present mode until captures are repeated with matching settings.")
+
+        comparison_rows = [
+            ("Frame wall mean (ms)", "Frame wall", "mean"),
+            ("Frame wall P50 (ms)", "Frame wall", "p50"),
+            ("Frame wall P95 (ms)", "Frame wall", "p95"),
+            ("Frame wall P99 (ms)", "Frame wall", "p99"),
+            ("Frame wall peak (ms)", "Frame wall", "peak"),
+            ("Surface acquisition mean (ms)", "Surface acquisition", "mean"),
+            ("Surface acquisition P50 (ms)", "Surface acquisition", "p50"),
+            ("Surface acquisition P95 (ms)", "Surface acquisition", "p95"),
+            ("Surface acquisition P99 (ms)", "Surface acquisition", "p99"),
+            ("Render graph CPU mean (ms)", "Render graph CPU", "mean"),
+            ("Render graph CPU P50 (ms)", "Render graph CPU", "p50"),
+            ("Render graph CPU P95 (ms)", "Render graph CPU", "p95"),
+            ("Render graph CPU P99 (ms)", "Render graph CPU", "p99"),
+            ("Surface presentation mean (ms)", "Surface presentation", "mean"),
+            ("Surface presentation P50 (ms)", "Surface presentation", "p50"),
+            ("Surface presentation P95 (ms)", "Surface presentation", "p95"),
+            ("Surface presentation P99 (ms)", "Surface presentation", "p99"),
+            ("GPU shadow + mesh mean (ms)", "GPU shadow + mesh", "mean"),
+            ("GPU shadow + mesh P50 (ms)", "GPU shadow + mesh", "p50"),
+            ("GPU shadow + mesh P95 (ms)", "GPU shadow + mesh", "p95"),
+            ("GPU shadow + mesh P99 (ms)", "GPU shadow + mesh", "p99"),
+            ("GPU mesh pass mean (ms)", "GPU mesh pass", "mean"),
+            ("GPU mesh pass P50 (ms)", "GPU mesh pass", "p50"),
+            ("GPU mesh pass P95 (ms)", "GPU mesh pass", "p95"),
+            ("GPU mesh pass P99 (ms)", "GPU mesh pass", "p99"),
+        ]
+        lines.extend([
+            "",
+            "| Metric | FIFO median [min, max] | Mailbox median [min, max] | Mailbox vs FIFO median delta |",
+            "|---|---:|---:|---:|",
+        ])
+        for label, metric, stat in comparison_rows:
+            fifo_values = group_metric(fifo_runs, metric, stat)
+            mailbox_values = group_metric(mailbox_runs, metric, stat)
+            lines.append(
+                f"| {label} | {range_text(fifo_values)} | {range_text(mailbox_values)} | "
+                f"{delta_text(fifo_values, mailbox_values)} |"
+            )
+        def range_pct_text(values: Iterable[float | None]) -> str:
+            usable = [value for value in values if value is not None]
+            if not usable:
+                return "—"
+            mid = median(usable)
+            return f"{mid:.2f} [{min(usable):.2f}, {max(usable):.2f}]"
+
+        fifo_over = [run["over_budget_pct"] for run in fifo_runs]
+        mailbox_over = [run["over_budget_pct"] for run in mailbox_runs]
+        lines.append(
+            f"| Samples above frame budget (%) | {range_pct_text(fifo_over)} | {range_pct_text(mailbox_over)} | n/a (FIFO median may be zero) |"
+        )
+
+        common_passes = sorted(set.intersection(
+            *(set(run["passes"]) for run in fifo_runs + mailbox_runs)
+        )) if fifo_runs and mailbox_runs else []
+        if common_passes:
+            def pass_p95_values(runs: list[dict], name: str) -> list[float | None]:
+                return [run["passes"].get(name, {}).get("p95") for run in runs]
+
+            pass_rows = []
+            for name in common_passes:
+                fifo_pass = pass_p95_values(fifo_runs, name)
+                mailbox_pass = pass_p95_values(mailbox_runs, name)
+                fifo_mid = median_or_none(fifo_pass)
+                mailbox_mid = median_or_none(mailbox_pass)
+                gap = abs((mailbox_mid or 0.0) - (fifo_mid or 0.0))
+                pass_rows.append((gap, name, fifo_pass, mailbox_pass))
+            pass_rows.sort(reverse=True, key=lambda row: row[0])
+            lines.extend([
+                "",
+                "### Render-graph pass CPU P95 comparison",
+                "",
+                "Pass durations are elapsed CPU-side node times and may include time spent inside backend/queue calls; they are not GPU execution timings.",
+                "",
+                "| Pass | FIFO median [min, max] ms | Mailbox median [min, max] ms | Mailbox vs FIFO median delta |",
+                "|---|---:|---:|---:|",
+            ])
+            for _, name, fifo_pass, mailbox_pass in pass_rows:
+                safe_name = name.replace("|", "\\|").replace("\n", " ")
+                lines.append(
+                    f"| {safe_name} | {range_text(fifo_pass)} | {range_text(mailbox_pass)} | "
+                    f"{delta_text(fifo_pass, mailbox_pass)} |"
+                )
+
+        lines.append("")
+        lines.append("Positive timing deltas mean Mailbox was slower on that statistic; negative deltas mean Mailbox was faster. Frame rows contain only successfully recorded frames; acquisition errors and dropped frames are not currently counted as separate CSV records. Results are adapter-, display-, driver- and workload-specific.")
+
     lines.extend([
         "",
         "## Interpretation",
