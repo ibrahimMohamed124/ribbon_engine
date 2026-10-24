@@ -8,7 +8,9 @@ The engine uses `assets/engine_icon.jpg` as the original supplied logo. Three de
 
 ## Runtime windows
 
-`crates/ribbon_platform/src/window.rs` applies the icon through a shared `with_engine_icons` helper. The generic Winit `with_window_icon` sets the small Windows icon (`ICON_SMALL`) used in the titlebar. On Windows, the helper also uses Winit's `WindowAttributesExtWindows::with_taskbar_icon` to set the large icon (`ICON_BIG`) used by the taskbar. All active windowed applications use this helper through the shared `WinitRunner`.
+`crates/ribbon_platform/src/window.rs` applies the Ribbon icon by default through `with_engine_icons`. On Windows, it loads the 32 x 32 image from the executable's multi-resolution icon resource for the taskbar (`ICON_BIG`) and uses the RGBA asset for the titlebar (`ICON_SMALL`). If a downstream executable does not embed the PE resource, the RGBA image is used for both. All active windowed applications use this helper through the shared `WinitRunner`.
+
+Applications can change the icon after window creation with the public handle API. `WindowHandle::set_icon` updates both the titlebar and Windows taskbar icon; `WindowHandle::clear_icon` removes them. Applications that create their own Winit window can use `with_window_icon(attributes, Some(icon))` at creation or `set_window_icon(&window, Some(icon))` afterward. `Icon` is re-exported by `ribbon_platform` and can be constructed from RGBA pixels with `Icon::from_rgba`.
 
 ## Launcher / executable icon on Windows
 

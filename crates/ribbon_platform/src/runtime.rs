@@ -70,6 +70,18 @@ pub struct Focused(pub bool);
 #[derive(Clone)]
 pub struct WindowHandle(pub std::sync::Arc<winit::window::Window>);
 
+impl WindowHandle {
+    /// Change the window icon and, on Windows, its taskbar icon.
+    pub fn set_icon(&self, icon: winit::window::Icon) {
+        crate::window::set_window_icon(&self.0, Some(icon));
+    }
+
+    /// Remove a custom icon from the window and its Windows taskbar button.
+    pub fn clear_icon(&self) {
+        crate::window::set_window_icon(&self.0, None);
+    }
+}
+
 /// Renderer-neutral CPU frame submitted for presentation by the platform runner.
 ///
 /// Pixel values use `0x00RRGGBB`; zero dimensions mean that no frame is ready.

@@ -15,4 +15,5 @@ pub mod window;
 pub use config::{MouseButtons, MouseInput, WindowConfig};
 pub use runner::WinitRunner;
 pub use runtime::{Input, PlatformConfig, PlatformPlugin, VirtualInput, WindowFrame, WindowHandle};
-pub use winit::window::Window;
+pub use window::{engine_window_icon, set_window_icon, with_window_icon};
+pub use winit::window::{Icon, Window};

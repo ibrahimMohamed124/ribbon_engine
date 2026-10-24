@@ -20,18 +20,60 @@ pub fn engine_window_icon() -> Option<Icon> {
 /// which appears in the titlebar. Windows taskbar buttons use the large icon (`ICON_BIG`),
 /// configured with the Windows-specific `with_taskbar_icon` extension.
 pub fn with_engine_icons(attributes: WindowAttributes) -> WindowAttributes {
-    let attributes = attributes.with_window_icon(engine_window_icon());
+    #[cfg(target_os = "windows")]
+    {
+        let attributes = attributes.with_window_icon(engine_window_icon());
+        use winit::platform::windows::WindowAttributesExtWindows;
+        attributes.with_taskbar_icon(engine_taskbar_icon().or_else(engine_window_icon))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        with_window_icon(attributes, engine_window_icon())
+    }
+}
+
+/// Apply a custom icon to the window and, on Windows, its taskbar button.
+///
+/// Use this when creating a custom window outside [`crate::WinitRunner`]. For a
+/// running engine window, use [`crate::WindowHandle::set_icon`].
+pub fn with_window_icon(attributes: WindowAttributes, icon: Option<Icon>) -> WindowAttributes {
+    let attributes = attributes.with_window_icon(icon.clone());
 
     #[cfg(target_os = "windows")]
     {
         use winit::platform::windows::WindowAttributesExtWindows;
-        attributes.with_taskbar_icon(engine_window_icon())
+        attributes.with_taskbar_icon(icon)
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         attributes
     }
+}
+
+/// Set a custom icon on an existing window and its Windows taskbar button.
+pub fn set_window_icon(window: &Window, icon: Option<Icon>) {
+    window.set_window_icon(icon.clone());
+
+    #[cfg(target_os = "windows")]
+    {
+        use winit::platform::windows::WindowExtWindows;
+        window.set_taskbar_icon(icon);
+    }
+}
+
+/// Load the Windows taskbar icon at the native large-icon size from the executable's
+/// multi-resolution icon resource. Keep the RGBA asset as a fallback for downstream
+/// applications that do not embed the workspace's PE icon resource.
+#[cfg(target_os = "windows")]
+fn engine_taskbar_icon() -> Option<Icon> {
+    use winit::dpi::PhysicalSize;
+    use winit::platform::windows::IconExtWindows;
+
+    Icon::from_resource(101, Some(PhysicalSize::new(32, 32)))
+        .ok()
+        .or_else(engine_window_icon)
 }
 
 pub fn attributes(config: &WindowConfig) -> WindowAttributes {
