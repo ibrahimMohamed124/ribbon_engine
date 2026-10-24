@@ -1130,10 +1130,12 @@ impl MeshRenderer {
 
     /// Current tracked GPU allocation estimates for this renderer.
     pub fn resource_stats(&self) -> MeshRendererResourceStats {
-        let mut stats = MeshRendererResourceStats::default();
-        stats.visible_mesh_instances = self.last_visible_mesh_instances;
-        stats.visible_draw_calls = self.last_visible_draw_calls;
-        stats.shadow_draw_calls = self.last_shadow_draw_calls;
+        let mut stats = MeshRendererResourceStats {
+            visible_mesh_instances: self.last_visible_mesh_instances,
+            visible_draw_calls: self.last_visible_draw_calls,
+            shadow_draw_calls: self.last_shadow_draw_calls,
+            ..MeshRendererResourceStats::default()
+        };
         for mesh in self.meshes.iter().filter_map(|slot| slot.mesh.as_ref()) {
             stats.live_meshes = stats.live_meshes.saturating_add(1);
             stats.mesh_bytes_estimate = stats
@@ -1515,7 +1517,7 @@ impl MeshRenderer {
         size: (u32, u32),
         scene: &Scene<'_>,
     ) {
-        let _ = self.render_internal(device, queue, view, size, scene, false, 0);
+        let _ = self.render_internal(device, queue, view, size, scene, None);
     }
 
     pub(crate) fn render_profiled(
@@ -1527,7 +1529,7 @@ impl MeshRenderer {
         scene: &Scene<'_>,
         submitted_frame: u64,
     ) -> Vec<RenderPassTiming> {
-        self.render_internal(device, queue, view, size, scene, true, submitted_frame)
+        self.render_internal(device, queue, view, size, scene, Some(submitted_frame))
     }
 
     fn render_internal(
@@ -1537,9 +1539,10 @@ impl MeshRenderer {
         view: &wgpu::TextureView,
         size: (u32, u32),
         scene: &Scene<'_>,
-        profile_cpu: bool,
-        submitted_frame: u64,
+        profile_frame: Option<u64>,
     ) -> Vec<RenderPassTiming> {
+        let profile_cpu = profile_frame.is_some();
+        let submitted_frame = profile_frame.unwrap_or_default();
         let mut cpu_phases = Vec::new();
         if size.0 == 0 || size.1 == 0 {
             return cpu_phases;

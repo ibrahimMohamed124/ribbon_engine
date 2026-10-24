@@ -190,11 +190,11 @@ impl GpuTimestampProfiler {
                     let mapped = slot.readback.slice(..).get_mapped_range();
                     if mapped.len() >= BUFFER_BYTES as usize {
                         let timestamps: Vec<u64> = mapped
-                            .chunks_exact(8)
+                            .as_chunks::<8>()
+                            .0
+                            .iter()
                             .take(TIMESTAMP_COUNT as usize)
-                            .map(|bytes| {
-                                u64::from_le_bytes(bytes.try_into().expect("8-byte timestamp"))
-                            })
+                            .map(|bytes| u64::from_le_bytes(*bytes))
                             .collect();
                         let period_ns = f64::from(queue.get_timestamp_period());
                         let first_ns = elapsed_ns(timestamps[0], timestamps[1], period_ns);

@@ -2242,11 +2242,34 @@ mod tests {
         assets.register_loader(TextLoader);
         assets.set_poll_interval(Duration::ZERO);
         let handle = assets.load::<TextAsset>("config.txt").unwrap();
+        let initial_revision = assets.revision(handle).unwrap();
         source.insert("config.txt", b"after".to_vec());
         assert_eq!(
             assets.poll_hot_reload(),
             [AssetEvent::Modified { id: handle.id() }]
         );
         assert_eq!(assets.get(handle), Some(&TextAsset("after".to_owned())));
+        let reloaded_revision = assets.revision(handle).unwrap();
+        assert!(reloaded_revision > initial_revision);
+    }
+
+    #[test]
+    fn evicted_asset_reloads_with_new_generation_and_stales_old_handle() {
+        let source = MemorySource::default();
+        source.insert("config.txt", b"before".to_vec());
+        let mut assets = AssetServer::default();
+        assets.add_source(0, source.clone());
+        assets.register_loader(TextLoader);
+        let first = assets.load::<TextAsset>("config.txt").unwrap();
+
+        assert_eq!(assets.evict_unused(), 1);
+        assert!(assets.get(first).is_none());
+
+        source.insert("config.txt", b"after".to_vec());
+        let second = assets.load::<TextAsset>("config.txt").unwrap();
+        assert_eq!(first.id(), second.id());
+        assert_eq!(second.generation(), first.generation() + 1);
+        assert!(assets.get(first).is_none());
+        assert_eq!(assets.get(second), Some(&TextAsset("after".to_owned())));
     }
 }

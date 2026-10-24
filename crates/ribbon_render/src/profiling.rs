@@ -34,6 +34,25 @@ pub struct RenderGpuTimingSample {
     pub tone_mapping_ns: Option<u64>,
 }
 
+/// Latest GPU-timing summary published by a renderer backend.
+///
+/// The mesh/shadow and post-processing profilers run independently, so their latest completed
+/// samples can have different sequence numbers. `mesh_sequence` and `post_sequence` preserve that
+/// distinction rather than implying that all stage durations came from one GPU submission.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderGpuTimingSummary {
+    pub supported: bool,
+    pub latest_total_ns: Option<u64>,
+    pub latest_shadow_ns: Option<u64>,
+    pub latest_mesh_ns: Option<u64>,
+    pub mesh_sequence: Option<u64>,
+    pub latest_bloom_ns: Option<u64>,
+    pub latest_tone_mapping_ns: Option<u64>,
+    pub post_sequence: Option<u64>,
+    pub successful_samples: u64,
+    pub skipped_samples: u64,
+}
+
 /// Measurements collected while executing one render graph.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RenderGraphTiming {
@@ -277,33 +296,21 @@ impl RenderDiagnostics {
     }
 
     /// Publish GPU timestamp-query availability and the latest completed sample.
-    pub fn record_gpu_timing(
-        &mut self,
-        supported: bool,
-        latest_total_ns: Option<u64>,
-        latest_shadow_ns: Option<u64>,
-        latest_mesh_ns: Option<u64>,
-        mesh_sequence: Option<u64>,
-        latest_bloom_ns: Option<u64>,
-        latest_tone_mapping_ns: Option<u64>,
-        post_sequence: Option<u64>,
-        successful_samples: u64,
-        skipped_samples: u64,
-    ) {
-        self.gpu_timestamp_queries_supported = supported;
-        if let Some(duration) = latest_total_ns {
+    pub fn record_gpu_timing(&mut self, timing: RenderGpuTimingSummary) {
+        self.gpu_timestamp_queries_supported = timing.supported;
+        if let Some(duration) = timing.latest_total_ns {
             self.last_gpu_shadow_and_mesh_ns = Some(duration);
-            self.last_gpu_shadow_pass_ns = latest_shadow_ns;
-            self.last_gpu_mesh_pass_ns = latest_mesh_ns;
-            self.gpu_sample_sequence = mesh_sequence;
+            self.last_gpu_shadow_pass_ns = timing.latest_shadow_ns;
+            self.last_gpu_mesh_pass_ns = timing.latest_mesh_ns;
+            self.gpu_sample_sequence = timing.mesh_sequence;
         }
-        if latest_bloom_ns.is_some() || latest_tone_mapping_ns.is_some() {
-            self.last_gpu_bloom_pass_ns = latest_bloom_ns;
-            self.last_gpu_tone_mapping_pass_ns = latest_tone_mapping_ns;
-            self.gpu_post_sample_sequence = post_sequence;
+        if timing.latest_bloom_ns.is_some() || timing.latest_tone_mapping_ns.is_some() {
+            self.last_gpu_bloom_pass_ns = timing.latest_bloom_ns;
+            self.last_gpu_tone_mapping_pass_ns = timing.latest_tone_mapping_ns;
+            self.gpu_post_sample_sequence = timing.post_sequence;
         }
-        self.gpu_timestamp_samples = successful_samples;
-        self.gpu_timestamp_samples_skipped = skipped_samples;
+        self.gpu_timestamp_samples = timing.successful_samples;
+        self.gpu_timestamp_samples_skipped = timing.skipped_samples;
     }
 
     /// Publish a current backend resource snapshot.

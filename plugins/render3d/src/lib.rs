@@ -42,8 +42,8 @@ use ribbon_render::gpu::{
 };
 use ribbon_render::gpu_window::{clear_view, ClearColor, FramePass, FrameTarget, GpuWindow};
 use ribbon_render::profiling::{
-    RenderDiagnostics, RenderGpuTimingSample, RenderPassTiming, RenderProfileRecorder,
-    RenderResourceStats,
+    RenderDiagnostics, RenderGpuTimingSample, RenderGpuTimingSummary, RenderPassTiming,
+    RenderProfileRecorder, RenderResourceStats,
 };
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -271,22 +271,22 @@ impl MeshPass {
         }
         if world.try_resource::<RenderDiagnostics>().is_some() {
             let diagnostics = world.resource_mut::<RenderDiagnostics>();
-            diagnostics.record_gpu_timing(
-                gpu_timing.supported || post_gpu_timing.supported,
-                gpu_timing.latest_duration_ns,
-                gpu_timing.latest_shadow_pass_ns,
-                gpu_timing.latest_mesh_pass_ns,
-                gpu_timing.latest_sequence,
-                post_gpu_timing.latest_shadow_pass_ns,
-                post_gpu_timing.latest_mesh_pass_ns,
-                post_gpu_timing.latest_sequence,
-                gpu_timing
+            diagnostics.record_gpu_timing(RenderGpuTimingSummary {
+                supported: gpu_timing.supported || post_gpu_timing.supported,
+                latest_total_ns: gpu_timing.latest_duration_ns,
+                latest_shadow_ns: gpu_timing.latest_shadow_pass_ns,
+                latest_mesh_ns: gpu_timing.latest_mesh_pass_ns,
+                mesh_sequence: gpu_timing.latest_sequence,
+                latest_bloom_ns: post_gpu_timing.latest_shadow_pass_ns,
+                latest_tone_mapping_ns: post_gpu_timing.latest_mesh_pass_ns,
+                post_sequence: post_gpu_timing.latest_sequence,
+                successful_samples: gpu_timing
                     .completed_samples
                     .saturating_add(post_gpu_timing.completed_samples),
-                gpu_timing
+                skipped_samples: gpu_timing
                     .skipped_samples
                     .saturating_add(post_gpu_timing.skipped_samples),
-            );
+            });
             diagnostics.record_resources(resources);
         }
     }
