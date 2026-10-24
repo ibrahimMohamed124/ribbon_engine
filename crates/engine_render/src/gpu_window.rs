@@ -362,8 +362,10 @@ pub fn gpu_window_system(world: &mut World) {
                     match graph.run_frame_profiled(&mut RenderContext::default(), world, &target) {
                         Ok(timing) => timing,
                         Err(failure) => {
+                            // Do not present or profile a partially rendered frame. Returning
+                            // drops the view and SurfaceTexture, and the error is logged below.
                             error = Some(format!("GPU render graph failed: {failure}"));
-                            RenderGraphTiming::default()
+                            return;
                         }
                     };
                 // The graph's final `window present` node acts as the resource-ordering

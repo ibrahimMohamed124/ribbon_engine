@@ -444,9 +444,22 @@ impl GpuContext {
             })
             .await
             .map_err(|error| RenderError(format!("no compatible wgpu adapter: {error}")))?;
+        let adapter_info = adapter.get_info();
+        let adapter_features = adapter.features();
+        eprintln!(
+            "[GPU ADAPTER] name={:?}; vendor=0x{:04X}; device=0x{:04X}; device_type={:?}; driver={:?}; driver_info={:?}; backend={:?}; power_preference=HighPerformance; surface_compatible={}; timestamp_queries_supported={}",
+            adapter_info.name,
+            adapter_info.vendor,
+            adapter_info.device,
+            adapter_info.device_type,
+            adapter_info.driver,
+            adapter_info.driver_info,
+            adapter_info.backend,
+            surface.is_some(),
+            adapter_features.contains(wgpu::Features::TIMESTAMP_QUERY),
+        );
         // RenderPassTimestampWrites requires TIMESTAMP_QUERY. Keep it optional so limited
         // adapters retain the regular rendering path without profiling.
-        let adapter_features = adapter.features();
         let required_features = if adapter_features.contains(wgpu::Features::TIMESTAMP_QUERY) {
             wgpu::Features::TIMESTAMP_QUERY
         } else {
@@ -471,8 +484,10 @@ impl GpuContext {
                 .find(wgpu::TextureFormat::is_srgb)
                 .or_else(|| capabilities.formats.first().copied())
                 .ok_or_else(|| RenderError("wgpu surface exposes no color formats".to_owned()))?;
+            // Mailbox is the measured default for the current target setup. Keep the
+            // override and a FIFO fallback so the choice remains portable and observable.
             let requested_mode =
-                std::env::var("RIBBON_GPU_PRESENT_MODE").unwrap_or_else(|_| "fifo".to_owned());
+                std::env::var("RIBBON_GPU_PRESENT_MODE").unwrap_or_else(|_| "mailbox".to_owned());
             let (present_mode, mode_fallback) =
                 choose_present_mode(&requested_mode, &capabilities.present_modes);
             let (desired_maximum_frame_latency, latency_fallback) =
@@ -501,9 +516,11 @@ impl GpuContext {
                     view_formats: vec![],
                 };
             eprintln!(
-                "[GPU SURFACE] requested_mode={requested_mode:?}; selected_mode={}; desired_maximum_frame_latency={}; supported_modes={:?}",
+                "[GPU SURFACE] requested_mode={requested_mode:?}; selected_mode={}; desired_maximum_frame_latency={}; resolution={}x{}; supported_modes={:?}",
                 present_mode_label(config.present_mode),
                 config.desired_maximum_frame_latency,
+                config.width,
+                config.height,
                 capabilities.present_modes,
             );
             surface.configure(&device, &config);

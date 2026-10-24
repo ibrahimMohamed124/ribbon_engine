@@ -299,11 +299,13 @@ impl ToneMapper {
 
     /// Draw the fullscreen tone-mapping triangle into the acquired window image.
     pub fn render(&self, device: &wgpu::Device, queue: &wgpu::Queue, target: &wgpu::TextureView) {
-        let mut bloom_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("bloom bright-pass encoder"),
+        // Keep bloom extraction and tone mapping in one command buffer. The two render
+        // passes remain ordered, while the queue only needs one submission for post-processing.
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("bloom and tone mapping encoder"),
         });
         {
-            let mut pass = bloom_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("quarter-resolution bloom extraction and blur"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.bloom_view,
@@ -321,10 +323,6 @@ impl ToneMapper {
             pass.set_bind_group(0, &self.bloom_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
-        queue.submit(Some(bloom_encoder.finish()));
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("tone mapping pass"),
-        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("tone mapping"),
