@@ -765,6 +765,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut stress_multi_asset_count = 0_usize;
     let mut stress_cache_prefetch_count = 0_usize;
     let mut asset_memory_budget_mib: Option<u64> = None;
+    let mut profile_static_scene = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -784,6 +785,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .ok_or("--profile-warmup expects a number")?
                     .parse::<u64>()?;
             }
+            "--profile-static-scene" => profile_static_scene = true,
             "--stress-grid" => {
                 stress_grid_side = args
                     .next()
@@ -818,7 +820,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             "--help" | "-h" => {
                 println!(
-                    "graphics_showcase\n\nOptions:\n  --frames N                  Exit after N frames\n  --profile-csv PATH          Write a render profile CSV at shutdown\n  --profile-warmup N          Frames excluded before capture (default: 120)\n  --stress-grid SIDE          Render SIDE x SIDE stress placements (0 disables; max 128)\n  --stress-cycle-frames N     Despawn/reload the active stress scene every N frames\n  --stress-multi-asset-count N Use N distinct generated GLB assets in the active scene (max 128)\n  --stress-cache-prefetch-count N Request N extra low-priority, unleased assets (max 128)\n  --asset-memory-budget-mib N Set the soft decoded-CPU cache budget for unpinned assets\n  -h, --help                  Show this help\n\nStress examples:\n  --stress-grid 32 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/large-scene.csv\n  --stress-grid 48 --stress-multi-asset-count 32 --stress-cache-prefetch-count 32 --asset-memory-budget-mib 1 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/multi-asset.csv\n  --stress-grid 24 --stress-multi-asset-count 16 --stress-cache-prefetch-count 48 --asset-memory-budget-mib 1 --stress-cycle-frames 300 --frames 1950 --profile-warmup 60 --profile-csv target/profiles/multi-asset-lifecycle.csv"
+                    "graphics_showcase\n\nOptions:\n  --frames N                  Exit after N frames\n  --profile-csv PATH          Write a render profile CSV at shutdown\n  --profile-warmup N          Frames excluded before capture (default: 120)\n  --profile-static-scene      Keep stress-scene camera fixed during capture\n  --stress-grid SIDE          Render SIDE x SIDE stress placements (0 disables; max 128)\n  --stress-cycle-frames N     Despawn/reload the active stress scene every N frames\n  --stress-multi-asset-count N Use N distinct generated GLB assets in the active scene (max 128)\n  --stress-cache-prefetch-count N Request N extra low-priority, unleased assets (max 128)\n  --asset-memory-budget-mib N Set the soft decoded-CPU cache budget for unpinned assets\n  -h, --help                  Show this help\n\nStress examples:\n  --stress-grid 32 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/large-scene.csv\n  --stress-grid 48 --stress-multi-asset-count 32 --stress-cache-prefetch-count 32 --asset-memory-budget-mib 1 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/multi-asset.csv\n  --stress-grid 24 --stress-multi-asset-count 16 --stress-cache-prefetch-count 48 --asset-memory-budget-mib 1 --stress-cycle-frames 300 --frames 1950 --profile-warmup 60 --profile-csv target/profiles/multi-asset-lifecycle.csv"
                 );
                 return Ok(());
             }
@@ -969,15 +971,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.insert_resource(ClearColor([0.018, 0.028, 0.048, 1.0]));
     app.insert_resource(ShowcaseState {
         orbit_angle: 0.35,
-        orbit_speed: 0.24,
+        orbit_speed: if profile_static_scene { 0.0 } else { 0.24 },
         camera_height,
         camera_height_max,
         camera_distance,
-        paused: false,
+        paused: profile_static_scene,
         frame_limit,
         extraction_reported: false,
         extraction_empty_frames: 0,
     });
+    if profile_static_scene {
+        println!(
+            "[PROFILE] static scene enabled; camera, model transforms, and lighting are paused"
+        );
+    }
     app.add_plugin(GpuWindowPlugin)?;
     app.insert_resource(SunLight {
         direction: Vec3::new(-0.45, -0.78, -0.45).normalize(),

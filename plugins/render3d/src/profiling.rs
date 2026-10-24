@@ -1,4 +1,4 @@
-//! Asynchronous GPU timestamp readback for shadow and main mesh rendering.
+//! Asynchronous GPU timestamp readback for render passes.
 //!
 //! The profiler never waits for the GPU. It uses a small readback-buffer ring, reports completed
 //! samples on a later frame, and skips a sample when every ring slot is still busy.
@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Mutex;
 
 const TIMESTAMP_BYTES: u64 = 8;
-const TIMESTAMP_COUNT: u32 = 3;
+const TIMESTAMP_COUNT: u32 = 4;
 const READBACK_SLOTS: usize = 4;
 const BUFFER_BYTES: u64 = TIMESTAMP_BYTES * TIMESTAMP_COUNT as u64;
 type TimestampMapResult = Result<(), wgpu::BufferAsyncError>;
@@ -27,10 +27,16 @@ struct TimestampSlot {
 pub struct GpuTimingSnapshot {
     /// Whether the device supports timestamp queries.
     pub supported: bool,
-    /// Most recent completed directional/spot-shadow plus mesh GPU duration in nanoseconds.
+    /// Most recent completed combined GPU duration in nanoseconds.
     pub latest_duration_ns: Option<u64>,
+    /// Most recent completed shadow-pass GPU duration in nanoseconds.
+    pub latest_shadow_pass_ns: Option<u64>,
     /// Most recent completed main color/depth mesh pass GPU duration in nanoseconds.
     pub latest_mesh_pass_ns: Option<u64>,
+    /// Most recent completed bloom-pass GPU duration in nanoseconds.
+    pub latest_bloom_pass_ns: Option<u64>,
+    /// Most recent completed tone-mapping GPU duration in nanoseconds.
+    pub latest_tone_mapping_pass_ns: Option<u64>,
     /// Monotonic profiler sequence number for the latest completed sample.
     pub latest_sequence: Option<u64>,
     /// Number of successfully completed timestamp samples.
@@ -47,7 +53,10 @@ pub(crate) struct GpuTimestampProfiler {
     next_slot: usize,
     sequence: u64,
     latest_duration_ns: Option<u64>,
+    latest_shadow_pass_ns: Option<u64>,
     latest_mesh_pass_ns: Option<u64>,
+    latest_bloom_pass_ns: Option<u64>,
+    latest_tone_mapping_pass_ns: Option<u64>,
     latest_sequence: Option<u64>,
     completed_samples: u64,
     skipped_samples: u64,
@@ -88,7 +97,10 @@ impl GpuTimestampProfiler {
             next_slot: 0,
             sequence: 0,
             latest_duration_ns: None,
+            latest_shadow_pass_ns: None,
             latest_mesh_pass_ns: None,
+            latest_bloom_pass_ns: None,
+            latest_tone_mapping_pass_ns: None,
             latest_sequence: None,
             completed_samples: 0,
             skipped_samples: 0,
@@ -154,31 +166,27 @@ impl GpuTimestampProfiler {
                 Some(Ok(Ok(()))) => {
                     let mapped = slot.readback.slice(..).get_mapped_range();
                     if mapped.len() >= BUFFER_BYTES as usize {
-                        let shadow_start = u64::from_le_bytes(
-                            mapped[0..8]
-                                .try_into()
-                                .expect("timestamp readback has an eight-byte shadow start value"),
-                        );
-                        let mesh_start = u64::from_le_bytes(
-                            mapped[8..16]
-                                .try_into()
-                                .expect("timestamp readback has an eight-byte mesh start value"),
-                        );
-                        let mesh_end = u64::from_le_bytes(
-                            mapped[16..24]
-                                .try_into()
-                                .expect("timestamp readback has an eight-byte mesh end value"),
-                        );
+                        let timestamps: Vec<u64> = mapped
+                            .chunks_exact(8)
+                            .take(TIMESTAMP_COUNT as usize)
+                            .map(|bytes| {
+                                u64::from_le_bytes(bytes.try_into().expect("8-byte timestamp"))
+                            })
+                            .collect();
                         let period_ns = f64::from(queue.get_timestamp_period());
-                        let total_ns = elapsed_ns(shadow_start, mesh_end, period_ns);
-                        let mesh_ns = elapsed_ns(mesh_start, mesh_end, period_ns);
+                        let first_ns = elapsed_ns(timestamps[0], timestamps[1], period_ns);
+                        let second_ns = elapsed_ns(timestamps[2], timestamps[3], period_ns);
+                        let total_ns = elapsed_ns(timestamps[0], timestamps[3], period_ns);
                         if let Some(duration) = total_ns {
                             let is_newest = self
                                 .latest_sequence
                                 .is_none_or(|latest| slot.sequence >= latest);
                             if is_newest {
                                 self.latest_duration_ns = Some(duration);
-                                self.latest_mesh_pass_ns = mesh_ns;
+                                self.latest_shadow_pass_ns = first_ns;
+                                self.latest_mesh_pass_ns = second_ns;
+                                self.latest_bloom_pass_ns = None;
+                                self.latest_tone_mapping_pass_ns = None;
                                 self.latest_sequence = Some(slot.sequence);
                             }
                             self.completed_samples = self.completed_samples.saturating_add(1);
@@ -200,7 +208,10 @@ impl GpuTimestampProfiler {
         GpuTimingSnapshot {
             supported: true,
             latest_duration_ns: self.latest_duration_ns,
+            latest_shadow_pass_ns: self.latest_shadow_pass_ns,
             latest_mesh_pass_ns: self.latest_mesh_pass_ns,
+            latest_bloom_pass_ns: self.latest_bloom_pass_ns,
+            latest_tone_mapping_pass_ns: self.latest_tone_mapping_pass_ns,
             latest_sequence: self.latest_sequence,
             completed_samples: self.completed_samples,
             skipped_samples: self.skipped_samples,

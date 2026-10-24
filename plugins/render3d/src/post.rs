@@ -1,5 +1,7 @@
 //! HDR scene target and fullscreen tone-mapping pass.
 
+use crate::profiling::{GpuTimestampProfiler, GpuTimingSnapshot};
+
 /// Linear HDR color format used between the mesh renderer and presentation.
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -48,6 +50,7 @@ pub struct ToneMapper {
     bloom_view: wgpu::TextureView,
     _sampler: wgpu::Sampler,
     estimated_bytes: u64,
+    gpu_timing: Option<GpuTimestampProfiler>,
 }
 
 impl ToneMapper {
@@ -288,19 +291,53 @@ impl ToneMapper {
             bloom_view,
             _sampler: sampler,
             estimated_bytes,
+            gpu_timing: GpuTimestampProfiler::new(device),
         }
     }
 
-    /// Estimated bytes for the quarter-resolution RGBA16Float bloom target.
-    /// Pipelines, bind groups, and allocator overhead are not included.
+    /// Estimated bytes for the bloom target and timestamp readback buffers.
+    /// Pipelines, bind groups, query-set storage and allocator overhead are not included.
     pub fn estimated_bytes(&self) -> u64 {
-        self.estimated_bytes
+        self.estimated_bytes.saturating_add(
+            self.gpu_timing
+                .as_ref()
+                .map_or(0, |profiler| profiler.snapshot().buffer_bytes_estimate),
+        )
+    }
+
+    /// Poll completed pass timings without waiting for unfinished GPU work.
+    pub fn poll_gpu_timing(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if let Some(profiler) = self.gpu_timing.as_mut() {
+            profiler.poll(device, queue);
+        }
+    }
+
+    /// Latest asynchronous timings for Bloom and tone mapping.
+    pub fn gpu_timing_snapshot(&self) -> GpuTimingSnapshot {
+        self.gpu_timing
+            .as_ref()
+            .map(GpuTimestampProfiler::snapshot)
+            .unwrap_or_default()
     }
 
     /// Draw the fullscreen tone-mapping triangle into the acquired window image.
-    pub fn render(&self, device: &wgpu::Device, queue: &wgpu::Queue, target: &wgpu::TextureView) {
+    pub fn render(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+    ) {
         // Keep bloom extraction and tone mapping in one command buffer. The two render
         // passes remain ordered, while the queue only needs one submission for post-processing.
+        let timing_slot = self
+            .gpu_timing
+            .as_mut()
+            .and_then(GpuTimestampProfiler::reserve_slot);
+        let query_set = timing_slot.and_then(|_| {
+            self.gpu_timing
+                .as_ref()
+                .map(GpuTimestampProfiler::query_set)
+        });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("bloom and tone mapping encoder"),
         });
@@ -316,7 +353,11 @@ impl ToneMapper {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: query_set.map(|query_set| wgpu::RenderPassTimestampWrites {
+                    query_set,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }),
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.bloom_pipeline);
@@ -335,13 +376,23 @@ impl ToneMapper {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: query_set.map(|query_set| wgpu::RenderPassTimestampWrites {
+                    query_set,
+                    beginning_of_pass_write_index: Some(2),
+                    end_of_pass_write_index: Some(3),
+                }),
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
+        if let (Some(slot), Some(profiler)) = (timing_slot, self.gpu_timing.as_ref()) {
+            profiler.encode_resolve(&mut encoder, slot);
+        }
         queue.submit(Some(encoder.finish()));
+        if let (Some(slot), Some(profiler)) = (timing_slot, self.gpu_timing.as_mut()) {
+            profiler.submitted(slot);
+        }
     }
 }

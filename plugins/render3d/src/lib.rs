@@ -93,6 +93,9 @@ impl FramePass for MeshPass {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.poll_gpu_timing(target.device, target.queue);
         }
+        if let Some((_, tonemapper)) = self.tonemapper.as_mut() {
+            tonemapper.poll_gpu_timing(target.device, target.queue);
+        }
         world.resource_scope::<ExtractedScene3D, _>(|world, extracted| {
             self.render_extracted(world, extracted, target);
         });
@@ -114,6 +117,11 @@ impl MeshPass {
                 supported: device.features().contains(wgpu::Features::TIMESTAMP_QUERY),
                 ..crate::profiling::GpuTimingSnapshot::default()
             });
+        let post_gpu_timing = self
+            .tonemapper
+            .as_ref()
+            .map(|(_, tonemapper)| tonemapper.gpu_timing_snapshot())
+            .unwrap_or_default();
         let pool_stats = self.transient_targets.stats();
         let post_process_bytes = self
             .tonemapper
@@ -146,6 +154,9 @@ impl MeshPass {
         if let Some(stats) = renderer_stats {
             resources.live_meshes = stats.live_meshes;
             resources.live_materials = stats.live_materials;
+            resources.visible_mesh_instances = stats.visible_mesh_instances;
+            resources.visible_draw_calls = stats.visible_draw_calls;
+            resources.shadow_draw_calls = stats.shadow_draw_calls;
             resources.mesh_bytes_estimate = stats.mesh_bytes_estimate;
             resources.material_bytes_estimate = stats.material_bytes_estimate;
             resources.live_material_textures = stats.live_material_textures;
@@ -181,12 +192,20 @@ impl MeshPass {
         if world.try_resource::<RenderDiagnostics>().is_some() {
             let diagnostics = world.resource_mut::<RenderDiagnostics>();
             diagnostics.record_gpu_timing(
-                gpu_timing.supported,
+                gpu_timing.supported || post_gpu_timing.supported,
                 gpu_timing.latest_duration_ns,
+                gpu_timing.latest_shadow_pass_ns,
                 gpu_timing.latest_mesh_pass_ns,
-                gpu_timing.completed_samples,
-                gpu_timing.skipped_samples,
                 gpu_timing.latest_sequence,
+                post_gpu_timing.latest_shadow_pass_ns,
+                post_gpu_timing.latest_mesh_pass_ns,
+                post_gpu_timing.latest_sequence,
+                gpu_timing
+                    .completed_samples
+                    .saturating_add(post_gpu_timing.completed_samples),
+                gpu_timing
+                    .skipped_samples
+                    .saturating_add(post_gpu_timing.skipped_samples),
             );
             diagnostics.record_resources(resources);
         }
@@ -514,7 +533,7 @@ impl MeshPass {
                 },
             );
         }
-        if let Some((_, tonemapper)) = self.tonemapper.as_ref() {
+        if let Some((_, tonemapper)) = self.tonemapper.as_mut() {
             tonemapper.render(target.device, target.queue, target.view);
         }
     }

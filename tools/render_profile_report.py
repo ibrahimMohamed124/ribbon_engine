@@ -118,6 +118,20 @@ def unique_gpu_values(frames: list[dict[str, int | str | None]], key: str) -> li
     return result
 
 
+def unique_gpu_post_values(frames: list[dict[str, int | str | None]], key: str) -> list[float]:
+    """Deduplicate asynchronous post-process measurements by their own submission sequence."""
+    seen: set[int] = set()
+    result: list[float] = []
+    for frame in frames:
+        sequence = frame.get("gpu_post_sample_sequence")
+        value = frame.get(key)
+        if not isinstance(sequence, int) or value is None or sequence in seen:
+            continue
+        seen.add(sequence)
+        result.append(float(value))
+    return result
+
+
 def ms(value: float | int | None) -> str:
     return "—" if value is None else f"{float(value) / 1_000_000.0:.3f}"
 
@@ -361,7 +375,12 @@ def metrics_for(frames: list[dict[str, int | str | None]]) -> dict[str, list[flo
             for frame in frames
         ]
     metrics["GPU shadow + mesh"] = unique_gpu_values(frames, "gpu_shadow_and_mesh_ns")
+    if any("gpu_shadow_pass_ns" in frame for frame in frames):
+        metrics["GPU shadow passes"] = unique_gpu_values(frames, "gpu_shadow_pass_ns")
     metrics["GPU mesh pass"] = unique_gpu_values(frames, "gpu_mesh_pass_ns")
+    if any("gpu_bloom_pass_ns" in frame for frame in frames):
+        metrics["GPU Bloom pass"] = unique_gpu_post_values(frames, "gpu_bloom_pass_ns")
+        metrics["GPU tone-mapping pass"] = unique_gpu_post_values(frames, "gpu_tone_mapping_pass_ns")
     return metrics
 
 
@@ -494,6 +513,7 @@ def build_report(path: Path, frames: list[dict[str, int | str | None]], passes: 
         "- The frame-remainder metric is computed per sample as total frame wall minus acquisition, graph, and presentation; it represents setup/other work plus timing overhead, not a single named function.",
         "- Render graph pass durations are CPU-side encoding/invocation time and exclude asynchronous GPU execution.",
         "- GPU samples are deduplicated by submission sequence because an older result can remain visible across multiple captured frames.",
+        "- Only the most recently completed query per profiler is exposed in each frame snapshot; cumulative completed-query counters may exceed the number of unique GPU samples retained in a capture. GPU stage percentiles therefore summarize the sequenced samples present in the CSV, which may be a subset of completed queries.",
         "- Resource values are engine-side estimates, not driver-reported total VRAM usage.",
         "- Material texture bytes are counted once per unique live texture content and color-space format; material uniforms are shown separately as a breakdown of the aggregate material estimate.",
         "- Texture-cache hits include repeated maps across materials and roles where their pixel content and sRGB/linear interpretation are identical.",

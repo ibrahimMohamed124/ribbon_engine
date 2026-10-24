@@ -35,6 +35,12 @@ pub struct RenderResourceStats {
     pub live_meshes: usize,
     /// Live uploaded materials.
     pub live_materials: usize,
+    /// Camera-visible mesh instances prepared for the main color pass.
+    pub visible_mesh_instances: usize,
+    /// Grouped indexed draw calls issued by the main color pass.
+    pub visible_draw_calls: usize,
+    /// Grouped indexed draw calls issued by the directional shadow pass.
+    pub shadow_draw_calls: usize,
     /// Estimated bytes used by live mesh vertex/index buffers.
     pub mesh_bytes_estimate: u64,
     /// Estimated bytes used by material factors and material textures (aggregate).
@@ -169,10 +175,18 @@ pub struct RenderDiagnostics {
     /// Most recent completed GPU duration spanning directional shadow, optional spot shadow,
     /// and the main mesh pass, if supported.
     pub last_gpu_shadow_and_mesh_ns: Option<u64>,
+    /// Most recent completed GPU duration for the shadow passes.
+    pub last_gpu_shadow_pass_ns: Option<u64>,
     /// Most recent completed GPU duration for the main color/depth mesh pass, if supported.
     pub last_gpu_mesh_pass_ns: Option<u64>,
+    /// Most recent completed GPU duration for the bloom render pass.
+    pub last_gpu_bloom_pass_ns: Option<u64>,
+    /// Most recent completed GPU duration for tone mapping.
+    pub last_gpu_tone_mapping_pass_ns: Option<u64>,
     /// Profiler sequence assigned when the most recent GPU sample was submitted.
     pub gpu_sample_sequence: Option<u64>,
+    /// Profiler sequence for the latest completed Bloom/tone-mapping sample.
+    pub gpu_post_sample_sequence: Option<u64>,
     /// True when the backend device supports GPU timestamp queries.
     pub gpu_timestamp_queries_supported: bool,
     /// Number of successful asynchronous GPU timestamp samples.
@@ -232,16 +246,26 @@ impl RenderDiagnostics {
         &mut self,
         supported: bool,
         latest_total_ns: Option<u64>,
+        latest_shadow_ns: Option<u64>,
         latest_mesh_ns: Option<u64>,
+        mesh_sequence: Option<u64>,
+        latest_bloom_ns: Option<u64>,
+        latest_tone_mapping_ns: Option<u64>,
+        post_sequence: Option<u64>,
         successful_samples: u64,
         skipped_samples: u64,
-        sample_sequence: Option<u64>,
     ) {
         self.gpu_timestamp_queries_supported = supported;
         if let Some(duration) = latest_total_ns {
             self.last_gpu_shadow_and_mesh_ns = Some(duration);
+            self.last_gpu_shadow_pass_ns = latest_shadow_ns;
             self.last_gpu_mesh_pass_ns = latest_mesh_ns;
-            self.gpu_sample_sequence = sample_sequence;
+            self.gpu_sample_sequence = mesh_sequence;
+        }
+        if latest_bloom_ns.is_some() || latest_tone_mapping_ns.is_some() {
+            self.last_gpu_bloom_pass_ns = latest_bloom_ns;
+            self.last_gpu_tone_mapping_pass_ns = latest_tone_mapping_ns;
+            self.gpu_post_sample_sequence = post_sequence;
         }
         self.gpu_timestamp_samples = successful_samples;
         self.gpu_timestamp_samples_skipped = skipped_samples;
@@ -299,8 +323,16 @@ pub struct RenderProfileSample {
     pub gpu_shadow_and_mesh_ns: Option<u64>,
     /// Latest available asynchronous GPU duration for the main mesh pass.
     pub gpu_mesh_pass_ns: Option<u64>,
+    /// GPU timestamp duration for all shadow passes.
+    pub gpu_shadow_pass_ns: Option<u64>,
+    /// GPU timestamp duration for Bloom.
+    pub gpu_bloom_pass_ns: Option<u64>,
+    /// GPU timestamp duration for tone mapping.
+    pub gpu_tone_mapping_pass_ns: Option<u64>,
     /// Submission sequence for the latest completed GPU timestamp sample.
     pub gpu_sample_sequence: Option<u64>,
+    /// Sequence for the latest completed Bloom/tone-mapping sample.
+    pub gpu_post_sample_sequence: Option<u64>,
     /// Whether the renderer's adapter supports timestamp queries.
     pub gpu_timestamp_queries_supported: bool,
     /// Cumulative successful timestamp samples since diagnostics were created.
@@ -328,8 +360,12 @@ impl RenderProfileSample {
             surface_frame_latency: diagnostics.surface_frame_latency,
             graph_cpu_ns: diagnostics.last_graph_cpu_ns,
             gpu_shadow_and_mesh_ns: diagnostics.last_gpu_shadow_and_mesh_ns,
+            gpu_shadow_pass_ns: diagnostics.last_gpu_shadow_pass_ns,
             gpu_mesh_pass_ns: diagnostics.last_gpu_mesh_pass_ns,
+            gpu_bloom_pass_ns: diagnostics.last_gpu_bloom_pass_ns,
+            gpu_tone_mapping_pass_ns: diagnostics.last_gpu_tone_mapping_pass_ns,
             gpu_sample_sequence: diagnostics.gpu_sample_sequence,
+            gpu_post_sample_sequence: diagnostics.gpu_post_sample_sequence,
             gpu_timestamp_queries_supported: diagnostics.gpu_timestamp_queries_supported,
             gpu_timestamp_samples: diagnostics.gpu_timestamp_samples,
             gpu_timestamp_samples_skipped: diagnostics.gpu_timestamp_samples_skipped,
@@ -402,6 +438,12 @@ pub struct RenderProfileSummary {
     pub gpu_shadow_and_mesh: RenderDurationSummary,
     /// Distribution of available asynchronous GPU mesh-pass durations.
     pub gpu_mesh_pass: RenderDurationSummary,
+    /// Distribution of available asynchronous GPU shadow-pass durations.
+    pub gpu_shadow_pass: RenderDurationSummary,
+    /// Distribution of available asynchronous GPU Bloom durations.
+    pub gpu_bloom_pass: RenderDurationSummary,
+    /// Distribution of available asynchronous GPU tone-mapping durations.
+    pub gpu_tone_mapping_pass: RenderDurationSummary,
     /// Latest currently tracked estimated bytes retained by the sampled renderer.
     pub latest_tracked_bytes_estimate: u64,
     /// Cumulative high-water estimate carried by diagnostics at the latest retained sample.
@@ -438,6 +480,21 @@ fn unique_gpu_durations(
         .iter()
         .filter_map(|sample| {
             let sequence = sample.gpu_sample_sequence?;
+            let duration = select(sample)?;
+            seen.insert(sequence).then_some(duration)
+        })
+        .collect()
+}
+
+fn unique_gpu_post_durations(
+    samples: &[&RenderProfileSample],
+    select: impl Fn(&RenderProfileSample) -> Option<u64>,
+) -> Vec<u64> {
+    let mut seen = HashSet::new();
+    samples
+        .iter()
+        .filter_map(|sample| {
+            let sequence = sample.gpu_post_sample_sequence?;
             let duration = select(sample)?;
             seen.insert(sequence).then_some(duration)
         })
@@ -524,6 +581,18 @@ impl RenderProfileRecorder {
             gpu_mesh_pass: RenderDurationSummary::from_values(unique_gpu_durations(
                 &samples,
                 |sample| sample.gpu_mesh_pass_ns,
+            )),
+            gpu_shadow_pass: RenderDurationSummary::from_values(unique_gpu_durations(
+                &samples,
+                |sample| sample.gpu_shadow_pass_ns,
+            )),
+            gpu_bloom_pass: RenderDurationSummary::from_values(unique_gpu_post_durations(
+                &samples,
+                |sample| sample.gpu_bloom_pass_ns,
+            )),
+            gpu_tone_mapping_pass: RenderDurationSummary::from_values(unique_gpu_post_durations(
+                &samples,
+                |sample| sample.gpu_tone_mapping_pass_ns,
             )),
             latest_tracked_bytes_estimate: latest
                 .map(|sample| sample.resources.total_bytes_estimate())
@@ -615,6 +684,13 @@ impl RenderProfileRecorder {
             "cpu_asset_budget_bytes",
             "cpu_asset_over_budget_bytes",
             "cpu_asset_budget_evictions_cumulative",
+            "gpu_shadow_pass_ns",
+            "gpu_bloom_pass_ns",
+            "gpu_tone_mapping_pass_ns",
+            "gpu_post_sample_sequence",
+            "visible_mesh_instances",
+            "visible_draw_calls",
+            "shadow_draw_calls",
         ];
         write_csv_record(&mut writer, HEADER.iter().map(|field| (*field).to_owned()))?;
         for sample in &self.samples {
@@ -687,6 +763,13 @@ impl RenderProfileRecorder {
             }
             row[61] = resources.cpu_asset_over_budget_bytes.to_string();
             row[62] = resources.cpu_asset_budget_evictions_cumulative.to_string();
+            row[63] = csv_option(sample.gpu_shadow_pass_ns);
+            row[64] = csv_option(sample.gpu_bloom_pass_ns);
+            row[65] = csv_option(sample.gpu_tone_mapping_pass_ns);
+            row[66] = csv_option(sample.gpu_post_sample_sequence);
+            row[67] = resources.visible_mesh_instances.to_string();
+            row[68] = resources.visible_draw_calls.to_string();
+            row[69] = resources.shadow_draw_calls.to_string();
             write_csv_record(&mut writer, row)?;
             for pass in &sample.passes {
                 let mut pass_row = vec![String::new(); HEADER.len()];

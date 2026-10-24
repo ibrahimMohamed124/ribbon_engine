@@ -329,7 +329,8 @@ impl OffscreenVoxelRenderer {
             }
         }
 
-        if let Some(tonemapper) = self.tonemapper.as_ref() {
+        if let Some(tonemapper) = self.tonemapper.as_mut() {
+            tonemapper.poll_gpu_timing(self.context.device(), self.context.queue());
             tonemapper.render(
                 self.context.device(),
                 self.context.queue(),

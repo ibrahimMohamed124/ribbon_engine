@@ -231,9 +231,125 @@ captures, so treat these values as an initial observation, not a portable engine
 - Debug and release timings must not be compared as equivalent. Do not add a performance claim until the
   same workload has been captured before and after on target hardware.
 
+## Static scene and asset scalability profile (2026-10-24)
+
+This is a scaling investigation, not another before/after rendering optimization. It was run on the
+current single-submit post-processing implementation at source revision
+`b4626931a7253edf2d7882b5a5ecb2a785d7ef6a` (dirty working tree, due to the profiling instrumentation
+being measured). All runs used the Release `graphics_showcase` executable, NVIDIA GeForce RTX 2050,
+driver 581.86, Vulkan, 1280x800, desired frame latency 1, 600 frames with 60 warmup frames and 541
+contiguous retained successful-frame rows. FIFO and Mailbox both resolved as requested. Every capture
+recorded the executable hash, invocation, revision/dirty state, adapter, driver, resolution, mode and
+workload in its adjacent log and capture manifest.
+
+The static placement sweep used 64, 576 and 1,600 placements of one shared model/material, one sun,
+fixed transforms and a paused camera. This isolates placement scaling more cleanly than cycling assets.
+The second sweep held 576 placements fixed and changed the number of distinct active GLB model/material/
+texture assets from 1 to 8 to 32. Those assets were generated at 128x128 texture size; model count,
+material count, texture bytes and renderer draw groups therefore vary together. Both sweeps contain five
+runs per size and presentation mode. Every run has 541 frame rows; capture reports were regenerated and
+their mean, P50, P95 and P99 rows checked against the raw CSVs. Percentiles use linear interpolation at
+`(n - 1) * p`.
+
+### Placement count: median run P95 [minimum, maximum] (ms)
+
+The brackets are variability across the five run-level P95 values; the full report includes each
+workload/mode's mean, P50, P95 and P99 and asynchronous GPU sample counts.
+
+| Mode | Placements | Frame wall | Surface acquisition | Render graph CPU | GPU mesh pass |
+|---|---:|---:|---:|---:|---:|
+| FIFO | 64 | 14.038 [13.921, 14.109] | 13.000 [12.842, 13.184] | 1.201 [1.144, 1.467] | 0.073 [0.069, 0.078] |
+| FIFO | 576 | 14.120 [13.890, 14.162] | 12.839 [12.648, 12.982] | 1.659 [1.520, 1.815] | 0.099 [0.092, 0.102] |
+| FIFO | 1,600 | 14.081 [13.816, 14.146] | 12.447 [12.342, 12.612] | 2.319 [1.766, 2.521] | 0.152 [0.148, 0.155] |
+| Mailbox | 64 | 1.138 [1.060, 2.952] | 0.845 [0.698, 2.192] | 0.371 [0.352, 1.080] | 0.023 [0.022, 0.023] |
+| Mailbox | 576 | 1.339 [0.966, 2.163] | 0.927 [0.568, 1.714] | 0.560 [0.439, 0.785] | 0.022 [0.020, 0.022] |
+| Mailbox | 1,600 | 1.024 [0.818, 1.376] | 0.270 [0.241, 0.914] | 0.682 [0.540, 0.862] | 0.033 [0.030, 0.033] |
+
+The GPU shadow-plus-mesh interval includes the time between its shadow and mesh timestamps; Bloom and
+tone-mapping GPU timings are reported separately in the full capture report. In the static workload,
+render-graph CPU P95 rises with placement count in both modes, while the GPU mesh P95 remains below
+0.16 ms. FIFO frame P95 stays near 14 ms and surface acquisition alone is about 12.4–13.0 ms. That is
+surface pacing/compositor wall time, not evidence that mesh rendering consumes that time. Mailbox frame
+P95 and acquisition vary substantially across runs and are not monotonic in placement count.
+
+The tracked allocation estimate for the one-model placement sweep rises from 25,298,384 B at 64
+placements to 25,615,824 B at 1,600 placements; renderer instance-buffer capacity grows from 64 to
+1,024. The material texture estimate remains 352 B and cumulative model uploads stay at one, as
+expected for a single reused model/material.
+
+### Unique asset count at 576 placements: median run P95 [minimum, maximum]
+
+| Mode | Active assets | Frame wall (ms) | Surface acquisition (ms) | Render graph CPU (ms) | GPU mesh (ms) | Estimated total GPU allocations (MiB) | Estimated material textures (MiB) | Estimated decoded CPU assets (MiB) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| FIFO | 1 | 14.146 [14.129, 14.613] | 12.795 [12.692, 12.836] | 2.000 [1.645, 2.507] | 0.065 [0.062, 0.068] | 24.35 | 0.08 | 0.06 |
+| FIFO | 8 | 14.167 [13.960, 14.385] | 12.745 [12.508, 12.912] | 2.089 [1.511, 2.531] | 0.101 [0.098, 0.104] | 24.94 | 0.67 | 0.52 |
+| FIFO | 32 | 14.242 [13.855, 14.577] | 12.716 [12.407, 12.836] | 2.208 [1.165, 2.526] | 0.108 [0.104, 0.111] | 26.97 | 2.67 | 2.07 |
+| Mailbox | 1 | 1.363 [1.245, 2.164] | 0.834 [0.485, 1.788] | 0.746 [0.449, 0.832] | 0.019 [0.018, 0.019] | 24.35 | 0.08 | 0.06 |
+| Mailbox | 8 | 1.383 [1.211, 2.122] | 0.796 [0.660, 1.743] | 0.683 [0.471, 1.042] | 0.026 [0.025, 0.026] | 24.94 | 0.67 | 0.52 |
+| Mailbox | 32 | 1.526 [1.358, 2.180] | 0.717 [0.149, 1.050] | 0.955 [0.599, 1.871] | 0.027 [0.025, 0.027] | 26.97 | 2.67 | 2.07 |
+
+Increasing active assets also grows draw groups and uploads from 1 to 32, and the estimated material
+texture and decoded-asset footprints scale accordingly. The Mailbox graph P95 increase at 32 assets has
+a wide run range, so this data points to CPU-side multi-group draw preparation/encoding as the next
+place to profile, but does not yet isolate a specific function or establish an optimization win.
+
+### What the captures establish and what they do not
+
+- FIFO's high P95 frame duration is dominated by surface-acquisition pacing in this setup. Mailbox has
+  lower frame-wall times, but its tails and acquisition vary between runs. Neither observation proves
+  that the post-processing submission merge changed acquisition behavior.
+- Increasing placements increases render-graph CPU time and GPU mesh time, but measured GPU mesh P95
+  remains small relative to FIFO pacing and sub-millisecond Mailbox frame-wall P95/medians.
+- Increasing unique assets increases draw groups, uploads and estimated resource use. The experiment
+  changes geometry/material/texture count together and cannot attribute cost to texture memory alone.
+- The async timestamp readbacks are nonblocking and retain the latest completed value per frame
+  snapshot. Deduplication means GPU stage samples are lower than 541 frame rows (roughly 320–533 per
+  stage/run here); the exact per-run counts are in `run-level-results.csv` and
+  `asset-run-level-results.csv`. Zero samples were reported skipped by the timestamp rings, but a
+  result can complete between snapshots and not appear as a distinct CSV sample.
+- Frame rows represent successful presentations only. `SurfaceError::Timeout` is ignored and Lost /
+  Outdated surfaces are reconfigured without a CSV error counter. Thus these captures cannot quantify
+  dropped, timed-out or failed acquisition frames. The reported GPU allocation and CPU asset byte
+  counts are estimates, not driver VRAM or process RSS.
+- The renderer exposes an offscreen framebuffer readback API, but there is no existing repeatable
+  baseline-vs-optimized pixel-capture runner for the native HDR/Bloom path. No pixel equivalence claim
+  was tested here. Empty/no-camera and post-process image comparisons remain a follow-up correctness
+  check rather than an inference from timing captures.
+- The first moving-scene attempt is preserved at
+  `profiles/render-scalability/20261024-131416/` and excluded: the previous static flag froze camera
+  motion but not model/light animation. The final runs use the corrected flag that pauses those updates.
+
+No rendering optimization is made from these measurements. The strongest next step is to split CPU
+instance collection/culling and draw encoding/submission timing for the large multi-placement/multi-asset
+cases. Keep presentation wait as its own investigation, and do not target GPU shaders unless a workload
+shows GPU stage time becoming material.
+
+Exact commands used from the repository root (capture scripts each build no source and log the
+executable SHA-256, revision, command line, actual adapter/surface configuration and exit code):
+
+```powershell
+cargo fmt --all --check
+cargo check --release -p graphics_showcase
+cargo build --release -p graphics_showcase
+python tools/generate_asset_stress_corpus.py --count 64 --texture-size 128 --output-root target/asset-stress-corpus
+& .\tools\run_render_scalability_profile.ps1
+python tools\analyze_render_scalability.py profiles\render-scalability\20261024-133006\captures profiles\render-scalability\20261024-133006
+& .\tools\run_render_asset_scalability.ps1
+python tools\analyze_render_asset_scalability.py target\profiles\render-scalability-assets\20261024-175552\captures target\profiles\render-scalability-assets\20261024-175552
+```
+
+The raw static placement captures, logs and per-capture reports are retained locally under
+`profiles/render-scalability/20261024-133006/`; the raw asset/texture set is under
+`target/profiles/render-scalability-assets/20261024-175552/`. These generated profile directories are
+ignored by Git so they do not pollute the source tree. The manifests, aggregate reports and run-level
+CSVs are also checked in under `docs/performance-results/render-scalability-20261024/` for review on
+the branch; the raw CSV/log captures remain on the measurement machine.
+
 ## Validation boundary
 
-No new tests were added for this milestone and no Cargo build/test command was run during its implementation.
-Run the workspace format, Clippy, default test and `--no-default-features` test commands on the target
-Windows checkout before accepting this capture workflow. Then collect a baseline and a current capture before
-choosing the first rendering optimization.
+`cargo fmt --all --check`, `cargo check --release -p graphics_showcase`, and
+`cargo build --release -p graphics_showcase` succeeded on the target Windows machine. The capture validators
+accepted all 30 static placement runs and all 30 unique-asset runs, each with 541 contiguous frame rows and
+matching report statistics. No workspace-wide test or Clippy matrix was run. This is a scalability profile of
+one implementation, not a baseline/current speedup claim; see the capture and measurement limits above before
+selecting any optimization.

@@ -203,6 +203,12 @@ pub struct MeshRendererResourceStats {
     pub live_meshes: usize,
     /// Number of currently live materials, including the built-in white material.
     pub live_materials: usize,
+    /// Number of camera-visible mesh instances prepared for the main color pass.
+    pub visible_mesh_instances: usize,
+    /// Number of grouped indexed draw calls issued by the main color pass.
+    pub visible_draw_calls: usize,
+    /// Number of grouped indexed draw calls issued by the directional shadow pass.
+    pub shadow_draw_calls: usize,
     /// Estimated live vertex/index buffer bytes.
     pub mesh_bytes_estimate: u64,
     /// Estimated material texture and uniform bytes. Texture allocations are counted once even
@@ -267,9 +273,12 @@ pub struct MeshRenderer {
     texture_cache: HashMap<TextureCacheKey, Weak<GpuTexture>>,
     texture_cache_hits: u64,
     texture_cache_misses: u64,
-    /// Optional adapter-supported GPU timer for mesh + shadow commands.
+    /// Optional adapter-supported GPU timer for shadow and mesh render passes.
     gpu_timing: Option<GpuTimestampProfiler>,
     peak_resource_bytes_estimate: u64,
+    last_visible_mesh_instances: usize,
+    last_visible_draw_calls: usize,
+    last_shadow_draw_calls: usize,
     /// Compact, frustum-visible instances used by the main color pass.
     instances: wgpu::Buffer,
     /// All instances, including off-screen casters, used by the shadow pass.
@@ -979,6 +988,9 @@ impl MeshRenderer {
             texture_cache_misses: 0,
             gpu_timing: GpuTimestampProfiler::new(device),
             peak_resource_bytes_estimate: 0,
+            last_visible_mesh_instances: 0,
+            last_visible_draw_calls: 0,
+            last_shadow_draw_calls: 0,
             instances: instance_buffer(device, 16),
             shadow_instances: instance_buffer(device, 16),
             instance_capacity: MIN_INSTANCE_CAPACITY,
@@ -1104,6 +1116,9 @@ impl MeshRenderer {
     /// Current tracked GPU allocation estimates for this renderer.
     pub fn resource_stats(&self) -> MeshRendererResourceStats {
         let mut stats = MeshRendererResourceStats::default();
+        stats.visible_mesh_instances = self.last_visible_mesh_instances;
+        stats.visible_draw_calls = self.last_visible_draw_calls;
+        stats.shadow_draw_calls = self.last_shadow_draw_calls;
         for mesh in self.meshes.iter().filter_map(|slot| slot.mesh.as_ref()) {
             stats.live_meshes = stats.live_meshes.saturating_add(1);
             stats.mesh_bytes_estimate = stats
@@ -1476,6 +1491,9 @@ impl MeshRenderer {
         if size.0 == 0 || size.1 == 0 {
             return;
         }
+        self.last_visible_mesh_instances = 0;
+        self.last_visible_draw_calls = 0;
+        self.last_shadow_draw_calls = 0;
         self.maintain_instance_buffers(device, scene.draws.len());
         if scene.draws.is_empty() {
             return;
@@ -1520,6 +1538,13 @@ impl MeshRenderer {
         if visible_draws.is_empty() {
             return;
         }
+        self.last_visible_mesh_instances = visible_draws.len();
+        self.last_visible_draw_calls = visible_draws
+            .chunk_by(|left, right| (left.mesh, left.material) == (right.mesh, right.material))
+            .count();
+        self.last_shadow_draw_calls = draws
+            .chunk_by(|left, right| left.mesh == right.mesh)
+            .count();
         let to_raw = |instances: &[Draw]| {
             instances
                 .iter()
@@ -1643,7 +1668,7 @@ impl MeshRenderer {
                     wgpu::RenderPassTimestampWrites {
                         query_set,
                         beginning_of_pass_write_index: Some(0),
-                        end_of_pass_write_index: None,
+                        end_of_pass_write_index: shadow_spot.is_none().then_some(1),
                     }
                 }),
                 occlusion_query_set: None,
@@ -1681,7 +1706,13 @@ impl MeshRenderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: timestamp_query_set.and_then(|query_set| {
+                    shadow_spot.map(|_| wgpu::RenderPassTimestampWrites {
+                        query_set,
+                        beginning_of_pass_write_index: None,
+                        end_of_pass_write_index: Some(1),
+                    })
+                }),
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.spot_shadow_pipeline);
@@ -1727,8 +1758,8 @@ impl MeshRenderer {
                 timestamp_writes: timestamp_query_set.map(|query_set| {
                     wgpu::RenderPassTimestampWrites {
                         query_set,
-                        beginning_of_pass_write_index: Some(1),
-                        end_of_pass_write_index: Some(2),
+                        beginning_of_pass_write_index: Some(2),
+                        end_of_pass_write_index: Some(3),
                     }
                 }),
                 occlusion_query_set: None,

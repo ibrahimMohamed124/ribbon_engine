@@ -1,4 +1,5 @@
 /target/
+/profiles/
 /dist/
 /.github-actions-runner/
 /settings.cfg
