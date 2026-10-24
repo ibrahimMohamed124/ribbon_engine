@@ -31,8 +31,8 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) for the dependency graph, frame order an
 known limits, [docs/SCALABILITY_ROADMAP.md](docs/SCALABILITY_ROADMAP.md),
 [docs/GPU_RESOURCE_LIFETIME_PROFILING.md](docs/GPU_RESOURCE_LIFETIME_PROFILING.md), and
 [docs/PERFORMANCE_BASELINES.md](docs/PERFORMANCE_BASELINES.md) for scalability, GPU profiling, and
-repeatable performance capture, and [docs/ASSET_LIFETIME_LARGE_SCENE_STRESS.md](docs/ASSET_LIFETIME_LARGE_SCENE_STRESS.md)
-for opt-in large-scene and asset-lifecycle stress workflows; use `tools/run_large_scene_stress.ps1` to capture a repeatable scale sweep. Read [CONTRIBUTING.md](CONTRIBUTING.md) before adding code. The cleanup
+repeatable performance capture, and [docs/SURFACE_PRESENT_MODE_COMPARISON.md](docs/SURFACE_PRESENT_MODE_COMPARISON.md)
+for a controlled FIFO-vs-Mailbox multi-asset capture; use `tools/run_present_mode_comparison.ps1` to collect three alternating-order repeats per mode. For opt-in large-scene and asset-lifecycle stress workflows, see [docs/ASSET_LIFETIME_LARGE_SCENE_STRESS.md](docs/ASSET_LIFETIME_LARGE_SCENE_STRESS.md) and `tools/run_large_scene_stress.ps1`. Read [CONTRIBUTING.md](CONTRIBUTING.md) before adding code. The cleanup
 summary and verification
 boundary are in [docs/ARCHITECTURE_REFACTOR_CLOSEOUT.md](docs/ARCHITECTURE_REFACTOR_CLOSEOUT.md).
 

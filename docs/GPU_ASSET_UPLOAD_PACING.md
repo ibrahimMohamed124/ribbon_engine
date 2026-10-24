@@ -38,3 +38,9 @@ After rebuilding on the Windows checkout, rerun the existing 32-active/32-prefet
 4. Confirm lifecycle teardown returns the GPU cache entries to zero and the upload/release cumulative counters remain consistent.
 
 No tests were added or modified, and no Cargo command or runtime was executed while preparing this change.
+
+## Latest user-side confirmation
+
+The user-side focused summary generated after the two-upload limit was added reports a maximum cumulative model-GPU-upload delta of two between adjacent captured samples. The lifecycle capture's frame-wall peak was 15.991 ms, its peak render-graph CPU time was 7.617 ms, and it retained a maximum of 32 GPU model-cache entries. The configured unpinned CPU asset cache remained within its 1 MiB budget. This supports the count-based pacing policy for the tested capture window; it does not prove behavior before the first captured row or for very large single assets.
+
+Surface acquisition still accounted for most of the slowest frame samples in that capture. The user then supplied three repeated captures each for FIFO and Mailbox: Mailbox reduced run-level median surface-acquisition P95 from 13.796 ms to 8.340 ms, frame-wall P95 from 14.666 ms to 8.866 ms, and frame-wall P99 from 16.489 ms to 13.059 ms. The native `engine_render::GpuContext` therefore now prefers Mailbox when supported and falls back to FIFO; FIFO remains explicitly selectable through `RIBBON_GPU_PRESENT_MODE=fifo`. See `docs/SURFACE_PRESENT_MODE_COMPARISON.md` for the full values and the limitation that Mailbox peaks still slightly exceed the 16.667 ms reference budget.

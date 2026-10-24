@@ -22,9 +22,9 @@ profile, scene, warmup and frame count fixed when comparing results.
 
 For a repeatable sweep of recommended sizes plus an asset-lifecycle capture, use
 `tools/run_large_scene_stress.ps1`. It creates a timestamped output folder under `target/profiles/large-scene/`,
-keeps one CSV and Markdown report per scenario, and writes a `large-scene-run-manifest.md` listing the outputs.
+keeps one CSV, Markdown report and console `.log` per scenario, and writes a `large-scene-run-manifest.md` listing the outputs and the resolved GPU adapter/surface configuration.
 The script runs profiling examples only; it does not run tests. It sets and restores the requested surface
-configuration (`-PresentMode fifo` and `-FrameLatency 1` by default) so a previous PowerShell environment
+configuration (`-PresentMode mailbox` and `-FrameLatency 1` by default) so a previous PowerShell environment
 setting cannot silently change the capture. Override the sizes and capture bounds with `-GridSides`,
 `-Frames`, `-Warmup`, `-LifecycleSide`, and `-CycleFrames`; use `-SkipLifecycle` to omit the reload-cycle capture.
 

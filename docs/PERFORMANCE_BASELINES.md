@@ -100,60 +100,83 @@ placements with the bounded GPU-cache entry count and check that releases rise d
 rise on activation. Keep cycle captures separate from steady-state captures because asynchronous reload and upload
 frames deliberately create bursts that are not representative of steady rendering.
 
-## Surface acquisition A/B experiment
+## Surface acquisition and present-mode A/B experiment
 
-The first Windows release capture showed surface-acquire P95 close to whole-frame P95. The primary `engine_render::GpuContext` surface keeps `fifo` as its default present mode. After the first controlled
-Windows captures, its default desired frame latency is `1`: compared with FIFO/2, FIFO/1 reduced frame-wall P95 from 21.359 ms to
-14.069 ms and surface-acquire P95 from 20.272 ms to 13.269 ms in one 1,681-frame capture per setting. The mean
-frame time remained about 6.7 ms, while the median rose from 1.194 ms to 6.131 ms; this indicates less bursty
-frame pacing and a shorter tail, not higher average throughput. Repeat captures across sessions and adapters
-before treating this as universal. The frame-latency setting remains overridable for controlled experiments. This override is read by `engine_render::GpuContext`; the separate `plugin_rendering` GPU voxel surface remains at its existing fixed latency of `2` because it was not part of this capture:
+The native `engine_render::GpuContext` surface now requests `mailbox` by default, with automatic fallback to FIFO
+if Mailbox is unsupported. This is a provisional, target-machine-informed default, not a claim that Mailbox is best
+on all GPUs or displays. `RIBBON_GPU_FRAME_LATENCY` defaults to `1`; `2` and `3` remain explicit options. The
+separate `plugin_rendering` GPU voxel surface was not part of these captures and retains its existing fixed latency.
 
-- `RIBBON_GPU_PRESENT_MODE`: `fifo` (default), `auto-vsync`, `auto-no-vsync`, `fifo-relaxed`, `immediate`, or `mailbox`.
+- `RIBBON_GPU_PRESENT_MODE`: `mailbox` (default), `fifo`, `auto-vsync`, `auto-no-vsync`, `fifo-relaxed`, or `immediate`.
 - `RIBBON_GPU_FRAME_LATENCY`: `1` (default), `2`, or `3`.
 
-Unsupported explicit modes fall back to `fifo`; `auto-vsync` resolves to `fifo-relaxed` when supported, and
+Unsupported explicit modes fall back to FIFO; `auto-vsync` resolves to `fifo-relaxed` when supported, and
 `auto-no-vsync` resolves to `immediate`, then `mailbox`, then `fifo`, using the modes reported by the adapter.
-`immediate` may tear. The application logs both the requested setting and the resolved mode. CSV and Markdown
-reports retain the resolved mode and requested frame-latency hint so comparisons cannot silently mix settings.
+`immediate` may tear. Each GPU context logs a `[GPU ADAPTER]` record (name, vendor/device IDs, device type, driver,
+driver info, backend, surface compatibility and timestamp-query support). Each native surface also logs requested and
+resolved present mode, available modes and selected frame-latency hint.
 
-Run these three captures separately, keeping scene, window size, release profile, warmup and frame count the
-same. Change only one variable between runs:
+Run a repeated comparison that changes only FIFO vs Mailbox, alternates order to reduce order/thermal bias, and
+writes the console logs alongside CSV/report files. Those logs preserve the exact adapter and surface setup used by
+`wgpu` for each capture:
 
 ```powershell
-$env:RIBBON_GPU_PRESENT_MODE = "fifo"
-$env:RIBBON_GPU_FRAME_LATENCY = "2"
-cargo run --release -p graphics_showcase -- --frames 1800 --profile-warmup 120 --profile-csv target/profiles/graphics-fifo-latency2.csv
-
-$env:RIBBON_GPU_PRESENT_MODE = "fifo"
-$env:RIBBON_GPU_FRAME_LATENCY = "1"
-cargo run --release -p graphics_showcase -- --frames 1800 --profile-warmup 120 --profile-csv target/profiles/graphics-fifo-latency1.csv
-
-$env:RIBBON_GPU_PRESENT_MODE = "auto-no-vsync"
-$env:RIBBON_GPU_FRAME_LATENCY = "2"
-cargo run --release -p graphics_showcase -- --frames 1800 --profile-warmup 120 --profile-csv target/profiles/graphics-no-vsync-latency2.csv
-
-python tools/render_profile_report.py target/profiles/graphics-fifo-latency1.csv --compare target/profiles/graphics-fifo-latency2.csv --output target/profiles/graphics-latency1-comparison.md
-python tools/render_profile_report.py target/profiles/graphics-no-vsync-latency2.csv --compare target/profiles/graphics-fifo-latency2.csv --output target/profiles/graphics-no-vsync-comparison.md
-Remove-Item Env:RIBBON_GPU_PRESENT_MODE
-Remove-Item Env:RIBBON_GPU_FRAME_LATENCY
+.\tools\run_present_mode_comparison.ps1 `
+    -Runs 3 `
+    -Frames 1050 `
+    -Warmup 60 `
+    -GridSide 32 `
+    -MultiAssetCount 32 `
+    -CachePrefetchCount 32 `
+    -AssetMemoryBudgetMiB 1 `
+    -CycleFrames 300 `
+    -StressTextureSize 128 `
+    -FrameLatency 1
 ```
 
-The no-vsync run is diagnostic, not the production default. In the submitted capture it resolved to `immediate` and lowered P95 substantially, but it can tear and may increase power use. If `auto-no-vsync` resolves
-to `fifo` on the target adapter, it does not isolate a no-vsync path; the resolved mode shown in the report must
-be inspected. A lower surface-acquire wait must also be weighed against tearing, latency, frame pacing and power
-use. The FIFO/1 default is a measured provisional choice based on the observed tail-latency reduction; use the repeat-capture tool described below to check reproducibility. Keep FIFO/2 available when its more eager queueing is preferred.
+The tool writes `present-mode-comparison-summary.md`, a manifest, per-capture reports and `.log` files under a new
+`target/profiles/present-mode-comparison/<timestamp>/` directory. It checks the *resolved* mode and latency from
+CSV rows; if requested Mailbox fell back to FIFO, the result is invalid as a direct mode comparison. The output
+folder is collision-safe so a quick rerun will not silently overwrite previous captures.
 
-## Repeat the surface-latency experiment
+### Target-machine result (2026-10-24)
 
-Run at least three captures for each FIFO latency setting using the helper below. It writes each run to a
-new timestamped directory, produces a report per CSV, and summarizes median/min/max run-level P95 values.
-An optional switch adds the no-vsync mode as a separate diagnostic group. Do not interpret no-vsync as a fair
-VSync performance comparison, and inspect the resolved present mode recorded in each capture.
+One Windows Release run series compared three captures per mode using a 32x32 scene, 32 distinct active GLB assets,
+32 unleased prefetch assets, a 1 MiB unpinned decoded CPU-cache budget, 300-frame lifecycle cycling, 60 warmup
+frames and 991 retained samples per capture. The CSV confirmed FIFO/1 for all FIFO captures and Mailbox/1 for all
+Mailbox captures. Across the three runs, the median run-level values were:
+
+| Metric | FIFO | Mailbox | Mailbox vs FIFO |
+|---|---:|---:|---:|
+| Frame wall mean | 6.481 ms | 6.734 ms | 3.91% slower |
+| Frame wall P95 | 13.982 ms | 7.092 ms | 49.28% lower |
+| Frame wall P99 | 14.616 ms | 7.653 ms | 47.64% lower |
+| Surface acquisition P95 | 13.314 ms | 6.885 ms | 48.29% lower |
+| Render graph CPU P95 | 1.773 ms | 0.757 ms | 57.30% lower |
+| Surface presentation P95 | 0.114 ms | 0.062 ms | 45.69% lower |
+| GPU shadow + mesh P95 | 0.254 ms | 0.179 ms | 29.32% lower |
+
+Frame-wall P95 was tightly clustered across repeats (FIFO range 13.828–14.139 ms; Mailbox range 7.080–7.180 ms). Mean
+frame-wall time did not improve. These observations support better tail latency/pacing on the measured setup; they do
+not prove that acquisition alone caused the full graph/GPU delta. CPU graph duration measures elapsed time around CPU
+invocation/encoding and can reflect driver/backend backpressure within calls; it is not a CPU-utilization metric or a
+per-pass GPU timing. Keep mode changes reversible and remeasure after driver, display or rendering changes.
+
+The tested machine reported NVIDIA GeForce RTX 2050 (driver `32.0.15.8186`) and Intel UHD Graphics (driver
+`32.0.101.7026`) in the Windows device list. The adapter actually selected by `wgpu` was not captured in those old
+logs, so do not infer from that list which GPU ran the benchmark. New runs capture the selected adapter directly.
+
+The historical FIFO/2 vs FIFO/1 and no-vsync results recorded in `VALIDATION_LOG_FOLLOWUP.md` remain separate
+experiments, not part of the direct FIFO-vs-Mailbox baseline above. No-vsync is diagnostic only because `immediate` may tear and may use more power.
+
+## Repeat the FIFO latency experiment
+
+To compare FIFO queue latency separately from present mode, use the existing helper. It writes reports for each run
+and a summary; do not mix this result with a FIFO-vs-Mailbox A/B:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/run_surface_ab.ps1 -Runs 3
-# Optional diagnostic group (may tear):
+# Optional no-vsync diagnostic group (may tear):
 powershell -ExecutionPolicy Bypass -File tools/run_surface_ab.ps1 -Runs 3 -IncludeNoVSync
 ```
 
@@ -195,8 +218,9 @@ captures, so treat these values as an initial observation, not a portable engine
 - Whole-frame wall duration includes surface acquisition, graph execution and presentation. The CSV separately
   records time spent in `Surface::get_current_texture` and `SurfaceTexture::present`, helping identify waits
   outside the render graph. These phase times are wall-clock elapsed durations and do not equal CPU utilization.
-- Render graph pass values measure CPU-side invocation/encoding per graph node. They do not provide detailed
-  timings for all internal GPU sub-passes.
+- Render graph pass values measure elapsed CPU-side invocation/encoding per graph node. Calls into the graphics
+  backend may experience backpressure; such time can appear inside a pass or graph duration. These values are not
+  CPU-utilization measurements and do not provide detailed GPU timing for every internal sub-pass.
 - GPU timestamps are asynchronous. They currently cover the shadow-through-main-mesh interval and the main
   mesh pass, not the complete frame. The interval includes an optional spot shadow pass. Unsupported adapters
   may produce no GPU samples; delayed results can be assigned to earlier submission sequence numbers.
