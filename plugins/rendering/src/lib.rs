@@ -1,6 +1,7 @@
-//! Voxel rendering types, CPU/GPU backends, and ECS rendering integration.
+//! Legacy CPU voxel-scene rendering and ECS integration.
 //!
-//! This crate owns rendering policy and scene extraction; platform and frame contracts are provided by engine crates.
+//! GPU 3D mesh rendering is owned by `ribbon_plugin_render3d`; this crate retains the CPU
+//! voxel raycaster for supported software rendering and reference use.
 
 #[cfg(feature = "cpu")]
 pub mod cpu;
@@ -13,8 +14,6 @@ pub use cpu::{canvas, render, renderer};
 pub use ribbon_plugin_voxel::VoxelWorldRes;
 pub use types::{entities, material, scene, style, texture};
 
-#[cfg(feature = "gpu")]
-pub mod gpu;
 pub use types::{
     BaseAlbedoRule, Camera, LightingParams, Material, MaterialTable, Palette, PbrTextureSet,
     RenderScene, RenderStyle, RgbaMipChain, RgbaMipLevel, Scene, TextureAtlas, TextureColorSpace,

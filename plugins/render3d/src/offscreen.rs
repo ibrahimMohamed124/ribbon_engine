@@ -254,6 +254,9 @@ impl OffscreenVoxelRenderer {
         self.last_scene_mesh_instances = objects.len();
         self.renderer
             .poll_gpu_timing(self.context.device(), self.context.queue());
+        // The offscreen API exposes the latest snapshot, not a completion stream. Consume the
+        // completed records here so the bounded profiler queue does not report false drops.
+        self.renderer.clear_gpu_timing_samples();
         self.sync_dirty_chunks(world);
         let hdr_view = self
             .transient_targets
@@ -331,6 +334,9 @@ impl OffscreenVoxelRenderer {
 
         if let Some(tonemapper) = self.tonemapper.as_mut() {
             tonemapper.poll_gpu_timing(self.context.device(), self.context.queue());
+            // Offscreen callers cannot consume individual Bloom/tone-mapping completions, so
+            // discard consumed records after updating the latest snapshot.
+            tonemapper.clear_gpu_timing_samples();
             tonemapper.render(
                 self.context.device(),
                 self.context.queue(),
@@ -403,5 +409,195 @@ impl OffscreenVoxelRenderer {
                 self.uploaded_chunks.insert(update.coord, uploaded_chunk);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OffscreenCamera3D, OffscreenDraw3D, OffscreenVoxelRenderer, VoxelBlockColor};
+    use crate::glam::Vec3;
+    use crate::SunLight;
+    use ribbon_plugin_voxel::{ChunkedVoxelWorld, VoxelWorld};
+
+    const AIR: u8 = 0;
+    const STONE: u8 = 1;
+    const WIDTH: usize = 8;
+    const HEIGHT: usize = 4;
+    const DEPTH: usize = 2;
+
+    fn world_with_boundary_block() -> ChunkedVoxelWorld {
+        let blocks = vec![AIR; WIDTH * HEIGHT * DEPTH];
+        let mut world = ChunkedVoxelWorld::new(
+            VoxelWorld::new(WIDTH, HEIGHT, DEPTH, blocks),
+            [4, 4, 2],
+            AIR,
+        );
+        assert_eq!(world.set_block(3, 1, 0, STONE), Some(AIR));
+        world
+    }
+
+    fn render(renderer: &mut OffscreenVoxelRenderer, world: &mut ChunkedVoxelWorld) {
+        let frame = renderer
+            .render(
+                world,
+                Some(OffscreenCamera3D {
+                    position: Vec3::new(3.5, 0.5, 2.5),
+                    forward: Vec3::NEG_Z,
+                    up: Vec3::Y,
+                    fov_y: 60.0_f32.to_radians(),
+                    near: 0.1,
+                    far: 100.0,
+                }),
+                &[VoxelBlockColor {
+                    block: STONE,
+                    color: [0.5, 0.5, 0.5],
+                }],
+                SunLight::default(),
+                &[] as &[OffscreenDraw3D],
+                [0.0, 0.0, 0.0, 1.0],
+            )
+            .expect("offscreen mesh render/readback should succeed");
+        assert_eq!(frame.width, renderer.size().0 as usize);
+        assert_eq!(frame.height, renderer.size().1 as usize);
+        if renderer.uploaded_mesh_count() > 0 {
+            assert!(
+                frame.pixels.iter().any(|pixel| *pixel & 0x00ff_ffff != 0),
+                "a non-empty chunk mesh should contribute visible pixels"
+            );
+        } else {
+            assert!(
+                frame.pixels.iter().all(|pixel| *pixel == frame.pixels[0]),
+                "an empty world should render a uniform clear frame, not stale mesh geometry"
+            );
+        }
+    }
+
+    #[test]
+    fn dynamic_chunk_meshes_upload_replace_and_evict_without_stale_gpu_entries() {
+        let mut renderer = match OffscreenVoxelRenderer::new(32, 32) {
+            Ok(renderer) => renderer,
+            Err(error) => {
+                if std::env::var_os("RIBBON_REQUIRE_GPU_TESTS").is_some() {
+                    panic!(
+                        "required offscreen mesh lifecycle GPU test could not initialize: {error}"
+                    );
+                }
+                eprintln!(
+                    "SKIP: offscreen mesh lifecycle test needs a usable GPU adapter: {error}"
+                );
+                return;
+            }
+        };
+        let mut world = world_with_boundary_block();
+
+        // Initial snapshot uploads the one non-empty chunk; the empty neighbor creates no mesh.
+        render(&mut renderer, &mut world);
+        assert_eq!(
+            renderer.uploaded_chunk_count(),
+            1,
+            "uploaded chunks: {:?}",
+            renderer.uploaded_chunks.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(renderer.uploaded_mesh_count(), 1);
+        let initial = renderer.resource_stats();
+        assert_eq!(initial.gpu_voxel_mesh_cache_entries, 1);
+        // MeshRenderer keeps its built-in cube alive; the second live mesh is the voxel chunk.
+        assert_eq!(initial.live_meshes, 2);
+        assert_eq!(initial.voxel_mesh_gpu_uploads_cumulative, 1);
+        assert_eq!(initial.voxel_mesh_gpu_releases_cumulative, 0);
+
+        // A no-op edit must not dirty chunks or create GPU uploads/releases.
+        let revision = world.revision();
+        assert_eq!(world.set_block(3, 1, 0, STONE), Some(STONE));
+        assert_eq!(world.revision(), revision);
+        assert_eq!(world.dirty_chunk_count(), 0);
+        render(&mut renderer, &mut world);
+        let no_op = renderer.resource_stats();
+        assert_eq!(no_op.voxel_mesh_gpu_uploads_cumulative, 1);
+        assert_eq!(no_op.voxel_mesh_gpu_releases_cumulative, 0);
+        assert_eq!(renderer.uploaded_chunk_count(), 1);
+
+        // Adding the adjacent voxel at the chunk face must invalidate both neighbors before upload.
+        let revision_before_boundary_edit = world.revision();
+        assert_eq!(world.set_block(4, 1, 0, STONE), Some(AIR));
+        assert_eq!(world.revision(), revision_before_boundary_edit + 1);
+        assert_eq!(world.dirty_chunk_count(), 2);
+        render(&mut renderer, &mut world);
+        assert_eq!(world.dirty_chunk_count(), 0);
+        let boundary = renderer.resource_stats();
+        assert_eq!(renderer.uploaded_chunk_count(), 2);
+        assert_eq!(renderer.uploaded_mesh_count(), 2);
+        assert_eq!(boundary.gpu_voxel_mesh_cache_entries, 2);
+        assert_eq!(boundary.live_meshes, 3);
+        assert_eq!(boundary.voxel_mesh_gpu_uploads_cumulative, 3);
+        assert_eq!(boundary.voxel_mesh_gpu_releases_cumulative, 1);
+
+        // Removing the left block evicts that empty chunk and replaces the solid neighbor.
+        assert_eq!(world.set_block(3, 1, 0, AIR), Some(STONE));
+        assert_eq!(world.dirty_chunk_count(), 2);
+        render(&mut renderer, &mut world);
+        assert_eq!(world.dirty_chunk_count(), 0);
+        let left_empty = renderer.resource_stats();
+        assert_eq!(renderer.uploaded_chunk_count(), 1);
+        assert_eq!(renderer.uploaded_mesh_count(), 1);
+        assert_eq!(left_empty.gpu_voxel_mesh_cache_entries, 1);
+        assert_eq!(left_empty.live_meshes, 2);
+        assert_eq!(left_empty.voxel_mesh_gpu_uploads_cumulative, 4);
+        assert_eq!(left_empty.voxel_mesh_gpu_releases_cumulative, 3);
+
+        // Removing the last voxel drops the final GPU mesh. Repeated empty updates stay empty.
+        assert_eq!(world.set_block(4, 1, 0, AIR), Some(STONE));
+        assert_eq!(world.dirty_chunk_count(), 2);
+        render(&mut renderer, &mut world);
+        assert_eq!(world.dirty_chunk_count(), 0);
+        let all_empty = renderer.resource_stats();
+        assert_eq!(renderer.uploaded_chunk_count(), 0);
+        assert_eq!(renderer.uploaded_mesh_count(), 0);
+        assert_eq!(all_empty.gpu_voxel_mesh_cache_entries, 0);
+        assert_eq!(
+            all_empty.live_meshes, 1,
+            "only the built-in cube may remain live"
+        );
+        assert_eq!(all_empty.voxel_mesh_gpu_uploads_cumulative, 4);
+        assert_eq!(all_empty.voxel_mesh_gpu_releases_cumulative, 4);
+        assert_eq!(world.dirty_chunk_count(), 0);
+
+        render(&mut renderer, &mut world);
+        let repeated = renderer.resource_stats();
+        assert_eq!(renderer.uploaded_chunk_count(), 0);
+        assert_eq!(repeated.gpu_voxel_mesh_cache_entries, 0);
+        assert_eq!(
+            repeated.live_meshes, 1,
+            "empty frames must not leak dynamic meshes"
+        );
+        assert_eq!(repeated.voxel_mesh_gpu_uploads_cumulative, 4);
+        assert_eq!(repeated.voxel_mesh_gpu_releases_cumulative, 4);
+
+        // Re-add and remove a boundary voxel to force freed GPU mesh slots to be reused.
+        // Cumulative counters remain monotonic, while the live-resource count returns to baseline.
+        assert_eq!(world.set_block(3, 1, 0, STONE), Some(AIR));
+        assert_eq!(world.dirty_chunk_count(), 2);
+        render(&mut renderer, &mut world);
+        assert_eq!(world.dirty_chunk_count(), 0);
+        assert_eq!(renderer.uploaded_chunk_count(), 1);
+        let readded = renderer.resource_stats();
+        assert_eq!(readded.live_meshes, 2);
+        assert_eq!(readded.voxel_mesh_gpu_uploads_cumulative, 5);
+        assert_eq!(readded.voxel_mesh_gpu_releases_cumulative, 4);
+
+        assert_eq!(world.set_block(3, 1, 0, AIR), Some(STONE));
+        assert_eq!(world.dirty_chunk_count(), 2);
+        render(&mut renderer, &mut world);
+        assert_eq!(world.dirty_chunk_count(), 0);
+        assert_eq!(renderer.uploaded_chunk_count(), 0);
+        let removed_again = renderer.resource_stats();
+        assert_eq!(removed_again.live_meshes, 1);
+        assert_eq!(removed_again.voxel_mesh_gpu_uploads_cumulative, 5);
+        assert_eq!(removed_again.voxel_mesh_gpu_releases_cumulative, 5);
+        render(&mut renderer, &mut world);
+        let stable_empty = renderer.resource_stats();
+        assert_eq!(stable_empty.live_meshes, 1);
+        assert_eq!(stable_empty.voxel_mesh_gpu_uploads_cumulative, 5);
+        assert_eq!(stable_empty.voxel_mesh_gpu_releases_cumulative, 5);
     }
 }

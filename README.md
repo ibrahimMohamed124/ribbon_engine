@@ -2,20 +2,27 @@
 
 Ribbon Engine is a Rust game engine built around a small ECS core, a staged scheduler
 with access-declared parallel execution and a deterministic serial fallback, and
-optional plugins. It includes a voxel raycasting renderer (CPU and GPU) and a wgpu
-mesh renderer. The [`studs`](games/studs/) game demonstrates an application built on it.
+optional plugins. The legacy voxel-scene renderer retains a CPU raycaster for software/reference
+rendering, while the primary 3D GPU path is the engine-owned indexed mesh renderer. The [`studs`](games/studs/)
+game demonstrates an application built on it.
 
 > **Status:** `studs` now starts through the ECS `ribbon_app::App` with
 > `ribbon_platform`, `ribbon_scene`, `ribbon_plugin_rendering`, and `ribbon_plugin_audio`.
 > The old immediate-mode runner and `App`/`Ctx` traits are no longer on the
 > game executable's runtime path. The live maze, run progression, player, enemy,
 > and page pickups are now ECS resources/entities with scheduled simulation systems.
-> STUDS supports `--renderer cpu|gpu|auto`. Its GPU backend now uses the
-> engine-owned `ribbon_plugin_render3d::OffscreenVoxelRenderer`, which consumes dynamically
-> remeshed voxel chunks and draws through the PBR/HDR mesh pipeline; CPU raycasting remains
-> the reference/fallback. Legacy raycaster code is retained until manual Windows GPU gameplay
-> smoke checks pass. See [docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md](docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md)
-> and [docs/PHASE9.md](docs/PHASE9.md).
+> STUDS supports `--renderer cpu|gpu|auto`. Its GPU backend uses the engine-owned
+> `ribbon_plugin_render3d::OffscreenVoxelRenderer`, which consumes dynamically remeshed voxel
+> chunks and draws through the PBR/HDR mesh pipeline. The CPU raycaster remains the reference and
+> fallback. The Windows runtime smoke checks for `graphics_showcase`, `voxel_mesh_showcase`, and
+> STUDS in CPU/GPU modes have been reported passing before this retirement change. Those manual
+> runs do not verify the API-removal diff; rerun the validation matrix after applying it. The legacy
+> GPU voxel raycaster and its `ribbon_plugin_rendering` backend-selection route have now been removed;
+> `RenderingPlugin` is CPU-only, and new GPU applications use `ribbon_plugin_render3d`. STUDS keeps a
+> game-local CPU/GPU selector and its GPU path uses `OffscreenVoxelRenderer`. See
+> [docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md](docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md),
+> [docs/LEGACY_RAYCASTER_RETIREMENT.md](docs/LEGACY_RAYCASTER_RETIREMENT.md), and
+> [docs/PHASE9.md](docs/PHASE9.md).
 
 ## Layout
 

@@ -13,6 +13,18 @@ distinct packages with explicit role documentation; do not rename/split packages
 change proposal and dependency migration plan. STUDS can select CPU or GPU rendering; the GPU path
 uses the offscreen voxel renderer and `WindowFrame` readback bridge.
 
+## Current status after dynamic voxel integration and legacy GPU retirement
+
+The step-by-step sections below are historical notes from earlier migration stages. The current
+STUDS GPU route uses `ribbon_plugin_render3d::OffscreenVoxelRenderer` and `ChunkedVoxelWorld`. The old
+`ribbon_plugin_rendering::gpu::voxel::GpuRenderer`, the `ribbon_plugin_rendering` `gpu` feature, the
+`RenderBackend::{Cpu, Gpu}` selector, the generic ECS GPU rendering system, the old shader files, and
+the CPU/GPU parity integration test have been removed. `RenderingPlugin` is now the CPU-only legacy
+voxel-scene bridge; the separate mesh GPU path remains in `ribbon_plugin_render3d`. The CPU raycaster
+is retained as a supported reference/fallback. The old paragraphs below that describe moving or
+exercising the GPU raycaster are historical snapshots, not current API instructions. See
+`docs/LEGACY_RAYCASTER_RETIREMENT.md` for the breaking API migration and verification status.
+
 ## Why it is not a rename
 
 The ECS engine is built around `ribbon_app::App`, plugins, and a staged schedule.
@@ -22,8 +34,8 @@ traits. The compatibility-tree migration is complete, while gameplay decompositi
 is retained as a domain facade and new-run generator so existing API consumers and rendering fixtures need not change.
 The live runtime does not store `Game`; it installs the generated maze and run state as
 resources and player/enemy/pages as entities, advanced by dedicated systems. Settings,
-menu state, buffered input, and renderer state remain application/plugin resources. The GPU
-route is offscreen voxel raycasting plus readback, not native-surface or mesh rendering.
+menu state, buffered input, and renderer state remain application/plugin resources. The current GPU
+route is offscreen chunk-mesh rendering plus readback; the CPU raycaster remains an intentional fallback.
 
 The following records the **pre-cleanup migration snapshot** and the destination of each former package. None of these `voxelworks-*` packages remains an active workspace member:
 
@@ -40,8 +52,9 @@ The following records the **pre-cleanup migration snapshot** and the destination
 The GPU voxel renderer (about 1,650 lines) used to exist only in
 `voxelworks-render-gpu`, so deleting `engine/` would have removed GPU rendering
 from the game. It has been moved to `ribbon_plugin_rendering::gpu::voxel` (step 1).
-The ECS rendering bridge now supports this moved renderer when `RenderBackend::Gpu`
-is selected. It renders offscreen, reads the result into `Framebuffer`, and submits
+Historical note: at that migration stage, the ECS rendering bridge used the temporary GPU raycaster
+when `RenderBackend::Gpu` was selected. That API and renderer were removed in the later retirement
+change documented at the top of this file and in `docs/LEGACY_RAYCASTER_RETIREMENT.md`. It renders offscreen, reads the result into `Framebuffer`, and submits
 the pixels through `WindowFrame` for the platform runner. This completes the current
 ECS bridge without changing the dependency direction; native wgpu-surface presentation
 and replacement by the mesh rasterizer remain separate renderer roadmap work.
@@ -114,9 +127,10 @@ The migration plan is complete. The checklist below records the final state of e
   `Game` remains as a compatibility/domain façade and new-run generator, not a
   runtime resource. The same plugin accepts CPU or GPU backend selection.
 - [x] **6b. Connect the GPU backend to the ECS runtime.** Both the generic renderer
-  bridge and STUDS renderer can use `ribbon_plugin_rendering::gpu::voxel::GpuRenderer`.
-  GPU frames are still rendered offscreen and copied through `WindowFrame`; this
-  is not native-surface GPU presentation and does not make the old voxel raymarcher
+  bridge and STUDS renderer could use `ribbon_plugin_rendering::gpu::voxel::GpuRenderer` at that
+  historical stage; the implementation has since been retired in favor of `ribbon_plugin_render3d`.
+  GPU frames were rendered offscreen and copied through `WindowFrame`; that was not native-surface
+  GPU presentation and did not make the old voxel raymarcher
   the newer mesh renderer. `ribbon_plugin_render3d` integration remains in the renderer plan.
 - [x] **7. Delete `engine/`.** The old `engine/examples/minimal` immediate-mode sample was retired
   rather than rewritten, avoiding a second long-lived application/window/rendering architecture.

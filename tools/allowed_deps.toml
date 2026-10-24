@@ -63,7 +63,7 @@ external = []
 
 [allowed."ribbon_plugin_rendering"]
 workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_events", "ribbon_assets", "ribbon_platform", "ribbon_render", "ribbon_scene", "ribbon_math", "ribbon_plugin_voxel"]
-external = ["rayon", "wgpu", "pollster", "bytemuck"]
+external = ["rayon"]
 
 [allowed."ribbon_plugin_animation"]
 workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_math"]

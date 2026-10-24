@@ -31,6 +31,16 @@ Only decisions needed to resolve details left unspecified by the staged refactor
 | 3D rendering | Extract camera, built-in mesh, glTF placement and light data into `ExtractedScene3D` in `PostUpdate`, after scene transform propagation. | Query gameplay entities directly inside `FramePass::render`. | A render-facing snapshot separates ECS ownership from GPU command recording and allows future culling, batching and render-graph passes to consume one explicit boundary. |
 
 
+## Superseding decision: legacy GPU voxel raycaster retirement
+
+The earlier Phase 9 rows above describe the temporary migration stage. The final architecture removes
+`ribbon_plugin_rendering::gpu::voxel::GpuRenderer`, its `gpu` feature, the generic ECS GPU route, and the
+old CPU/GPU parity integration test. `RenderingPlugin` is CPU-only; new GPU work uses `ribbon_plugin_render3d`
+and chunk mesh APIs. The CPU raycaster remains supported. Consumers of the removed GPU module or
+`RenderSettings.backend` must migrate deliberately; this is an explicit public API break rather than a
+silent compatibility shim.
+
+
 The horror example uses `ron` and `serde` only to parse its game-owned `room.ron` content schema. `ribbon_plugin_render3d` adds `png` as a test-only dependency to save the optional headless spotlight screenshot under `target/`; none of these dependencies flows into a lower-level engine crate.
 
 

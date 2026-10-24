@@ -1,7 +1,10 @@
 > **Historical archive.** The `voxelworks-*` packages and `engine/crates/` paths described below
 > belonged to the pre-Phase-9 workspace and have been removed. This file preserves old renderer
 > measurements and migration context only; do not copy its package paths, build commands, or dependency
-> descriptions into new code. The supported architecture is documented in [`ARCHITECTURE.md`](../ARCHITECTURE.md).
+> descriptions into new code. The temporary `ribbon_plugin_rendering::gpu::voxel` renderer and its
+> CPU/GPU parity test documented later in this file have since been deleted; those old hashes and
+> commands are historical only and do not describe the current mesh renderer. The supported architecture
+> is documented in [`ARCHITECTURE.md`](../ARCHITECTURE.md).
 
 # Legacy architecture (pre-Phase 9)
 
@@ -31,7 +34,7 @@ graph TD
 
 `voxelworks-core` contains only math, voxel data and queries, physics, time, input, and audio IDs/bank descriptors. Originally dependency-free, it is now a compatibility facade that re-exports `ribbon_math`, `ribbon_plugin_voxel`, `ribbon_plugin_physics`, `ribbon_app::time`, `ribbon_platform::input` and the `ribbon_plugin_audio` bank descriptors (see `SHIMS.md`). `voxelworks-scene` contains plain renderer-neutral world, camera, entity, material, texture, and style data. `voxelworks-api` is the sole owner of the app/frame/renderer contracts, draw lists, and plain framebuffer storage. No engine crate depends on a game.
 
-The platform enables `gpu` and `audio` by default. Both are optional features; `voxelworks-platform --no-default-features` uses the CPU renderer and omits audio playback. `voxelworks-render-gpu` is the primary rendering path (its implementation has since moved to `ribbon_plugin_rendering::gpu::voxel`; the crate is now a re-export shim). `voxelworks-render-cpu` owns software raycasting, rasterization, font drawing, and post-processing and serves as the reference and fallback.
+At this historical snapshot, the platform enabled `gpu` and `audio` by default, and `voxelworks-render-gpu` was described as the primary rendering path. That old backend was temporarily moved to `ribbon_plugin_rendering::gpu::voxel` and has since been deleted. The current GPU mesh path is owned by `ribbon_plugin_render3d`; the retained `ribbon_plugin_rendering::cpu` implementation provides software voxel rendering and its CPU-only shading hooks. Do not use this paragraph as current feature or package guidance.
 
 ## Code placement rules
 
@@ -52,12 +55,12 @@ Only processed runtime assets and their credits/licenses are committed. Raw thir
 
 The neutral fixture (formerly `voxelworks-testkit`, now `plugins/rendering/tests/common/mod.rs`) provides a small engine-owned room with two materials, one box entity, one billboard entity, and a generated sprite atlas. It has no dependency on game assets. CPU goldens cover three styles plus draw layers, a fullscreen effect, brightness, entity rendering, and UI text. Their FNV-1a frame hashes are `c0aa91941785e603`, `6666e2333fc5196c`, and `3260fd9f7e087f2e`.
 
-The CPU/GPU parity integration test renders those same three frame plans through `GpuRenderer` readback. On the local Windows adapter, the measured mean absolute RGB-channel errors were 0.0000, 0.3841, and 0.6895 (8-bit channel units); maximum channel errors were 0, 1, and 2. The assertions allow mean error up to 1.0 and maximum error up to 3 to tolerate small backend floating-point differences. The test prints `SKIP` and its reason when no adapter exists. Linux CI installs Mesa Vulkan software drivers and runs the parity test explicitly (`cargo test -p ribbon_plugin_rendering --test parity`).
+At that historical stage, a CPU/legacy-GPU parity integration test rendered those same three frame plans through the then-active `GpuRenderer` readback. On the local Windows adapter, the measured mean absolute RGB-channel errors were 0.0000, 0.3841, and 0.6895 (8-bit channel units); maximum channel errors were 0, 1, and 2. The old assertions allowed mean error up to 1.0 and maximum error up to 3 to tolerate small backend floating-point differences. The test and renderer have since been removed; these numbers are archival measurements and are not parity measurements for the current mesh renderer.
 
-The minimal example runs CPU or GPU interactively or headlessly, and prints an image checksum in headless mode. CPU and GPU checksums are expected to differ slightly due to backend arithmetic.
+The former minimal example ran CPU or GPU interactively or headlessly and printed a checksum. That example and its legacy GPU rendering route are no longer present in the active workspace; these checksum notes are historical only.
 
 ## Known limitations
 
-- `SurfaceShader::albedo` and `SurfaceShader::entity_surface` are CPU-only extension hooks. GPU appearance must be expressed through `MaterialTable` and shared sprite/PBR data. An ignored test in the GPU crate explicitly names the unsupported CPU-only callback appearance.
-- Parity is measured only on the neutral fixture and the current adapter/software Vulkan CI path. It does not guarantee pixel identity for every game-specific style/material combination or establish 1080p performance.
-- The GPU renderer currently enforces the exported limits for draw quads, render passes, PBR texture sets/maps, entities, and entity boxes; scenes exceeding them return descriptive errors.
+- `SurfaceShader::albedo` and `SurfaceShader::entity_surface` remain CPU-only extension hooks. The new mesh renderer consumes mesh/material/palette data and does not execute those callbacks. Their cross-renderer behavior has not been implemented or verified by this migration.
+- The CPU golden and old CPU/legacy-GPU parity measurements above belong to the archived renderer and do not guarantee pixel parity with the current mesh renderer or establish 1080p performance.
+- Limits and behavior of the current mesh renderer are documented with `ribbon_plugin_render3d`; the historical limits of the removed raycaster must not be treated as current mesh-renderer contracts.

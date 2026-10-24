@@ -4,7 +4,7 @@
 
 This phase routes STUDS' GPU mode through the engine-owned `ribbon_plugin_voxel` chunk API and `ribbon_plugin_render3d` mesh renderer. STUDS remains a game/sample used to exercise the engine. Gameplay policy stays in `games/studs`; reusable voxel storage, remeshing, GPU uploads, GPU resource eviction and rendering stay in engine crates/plugins.
 
-The previous CPU raycaster remains selectable as a reference/fallback. The old GPU raycaster code in `ribbon_plugin_rendering` is intentionally retained for rollback and comparative coverage; this phase changes the STUDS GPU route rather than deleting compatibility code prematurely.
+The CPU raycaster remains selectable as the reference/fallback. The old GPU raycaster implementation has now been removed from `ribbon_plugin_rendering` together with its package `gpu` feature, shader files, ECS route and CPU/GPU parity test. The generic `RenderingPlugin` remains available as a CPU-only legacy-scene renderer. New 3D GPU applications use the mesh renderer in `ribbon_plugin_render3d`.
 
 ## Engine-side implementation
 
@@ -35,19 +35,19 @@ The normal ECS `Render3dPlugin` path also evicts uploaded voxel mesh buffers whe
 - `--renderer gpu` uses `ribbon_plugin_render3d::OffscreenVoxelRenderer`; it no longer routes through the legacy `ribbon_plugin_rendering::gpu::voxel::GpuRenderer` raycaster.
 - The game supplies only its block IDs, linear RGB palette, camera values, flashlight-derived scene lighting, enemy/page visual instances and game UI/overlay draw lists.
 - `ribbon_plugin_rendering` owns the shared world-overlay/brightness/UI compositing used by the CPU renderer and the GPU-backed game route.
-- The game CPU renderer remains the reference/fallback implementation. The legacy renderer source is retained elsewhere in the workspace until the manual GPU runtime checklist below has been completed.
+- The game CPU renderer remains the reference/fallback implementation. No production path in `ribbon_plugin_rendering` uses the retired GPU raycaster. Target-machine manual smoke checks were reported passing before this API retirement; the new source-guard and offscreen mesh lifecycle tests are included in this change but need to be run on the target Rust toolchain.
 
 ## Acceptance criteria
 
 | Requirement | Implementation/evidence | Remaining verification |
 |---|---|---|
-| Load a voxel world | `ChunkedVoxelWorld::new(VoxelWorld, chunk_size, empty_block)`; STUDS wraps its generated maze in this type | Run STUDS on the target Windows machine |
-| Build chunk meshes | `rebuild_dirty_chunks` uses greedy chunk meshing and retains CPU snapshots | `cargo test -p ribbon_plugin_voxel` |
-| Edit one block and update affected chunks | `set_block` tracks revisions/dirty chunks; interior edits dirty one chunk, face edits dirty the owner and adjacent chunk | Full workspace test matrix |
-| Handle chunk boundaries | Mesher reads neighboring world cells; tests cover cross-boundary interface culling and boundary invalidation | Visual check for seams in a live scene |
-| Render through new GPU renderer | STUDS GPU backend uses `ribbon_plugin_render3d::OffscreenVoxelRenderer` and the HDR/PBR mesh pipeline | Manual GPU run, because CI unit tests do not guarantee an adapter/window presentation is available |
-| Retain game stability during migration | CPU fallback and the legacy implementation remain available; the game's controls/simulation modules were not migrated into the engine | Compare `--renderer gpu` and `--renderer cpu` in a full play session |
-| Preserve engine/game separation | `games/studs/README.md` states the boundary and this file maps responsibilities | Review any future feature against that boundary |
+| Load a voxel world | `ChunkedVoxelWorld::new(VoxelWorld, chunk_size, empty_block)`; STUDS wraps its generated maze in this type | Covered by current code and workspace test report; stress streaming is future work |
+| Build chunk meshes | `rebuild_dirty_chunks` uses greedy chunk meshing and retains CPU snapshots | The pre-cleanup workspace suite was reported passing; rerun the matrix after this feature/bootstrap cleanup |
+| Edit one block and update affected chunks | `set_block` tracks revisions/dirty chunks; interior edits dirty one chunk, face edits dirty the owner and adjacent chunk | Continue extending engine-level regression tests with new editing semantics |
+| Handle chunk boundaries | Mesher reads neighboring world cells; tests cover cross-boundary interface culling and edits on all six positive/negative chunk faces | Runtime smoke checks reported passing; randomized chunk dimensions remain useful future coverage |
+| Render through new GPU renderer | STUDS GPU backend uses `ribbon_plugin_render3d::OffscreenVoxelRenderer` and the HDR/PBR mesh pipeline; an offscreen integration test exercises mesh uploads, replacement, eviction, empty frames and repeated slot reuse | Target Windows smoke checks reported passing before this API removal; the new GPU integration test still needs target-side execution |
+| Retain game stability during migration | CPU fallback remains; the old GPU raycaster is not enabled by STUDS; game controls/simulation remain game-owned | Full gameplay regression testing remains useful for future game changes |
+| Preserve engine/game separation | `games/studs/README.md` maps reusable engine vs game responsibilities | Review any future feature against that boundary |
 
 ## Validation script
 
@@ -65,14 +65,16 @@ The GitHub Actions workflow runs the cross-platform build/test and dependency-po
 
 ## Manual runtime smoke checks
 
-After the automated matrix passes, run on the target Windows GPU:
+The following target-machine checks have now been run and reported passing:
 
 ```powershell
+cargo run --release -p graphics_showcase
+cargo run --release -p voxel_mesh_showcase
+cargo run --release -p studs --no-default-features -- --renderer cpu
 cargo run --release -p studs -- --renderer gpu
-cargo run --release -p studs -- --renderer cpu
 ```
 
-Check that the maze floor, walls and ceiling have correct orientation, the camera moves/looks in the expected direction, the creature and uncollected pages appear, collected pages disappear, overlays and menus remain legible, resize/restart work, and a GPU initialization/render error falls back to CPU. Do not remove the legacy raycaster until the GPU path has passed these checks on the intended target hardware.
+The maintainer reports that all four ran correctly, including the STUDS CPU/GPU routes. Those manual checks preceded this final source/API removal and do not replace rerunning the full validation matrix after applying the current overlay. The retirement boundary, removed APIs, replacement tests and remaining limitations are recorded in `docs/LEGACY_RAYCASTER_RETIREMENT.md`.
 
 ## Scope deliberately not claimed
 

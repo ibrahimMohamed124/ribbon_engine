@@ -2210,8 +2210,6 @@ dependencies = [
 name = "ribbon_plugin_rendering"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
- "pollster",
  "rayon",
  "ribbon_app",
  "ribbon_assets",
@@ -2223,7 +2221,6 @@ dependencies = [
  "ribbon_plugins",
  "ribbon_render",
  "ribbon_scene",
- "wgpu",
 ]
 
 [[package]]

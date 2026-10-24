@@ -303,6 +303,69 @@ mod tests {
     }
 
     #[test]
+    fn edits_on_all_six_chunk_faces_invalidate_the_owner_and_face_neighbor() {
+        let cases = [
+            (
+                "positive x",
+                (3, 1, 1),
+                ChunkCoord::new(0, 0, 0),
+                ChunkCoord::new(1, 0, 0),
+            ),
+            (
+                "negative x",
+                (4, 1, 1),
+                ChunkCoord::new(1, 0, 0),
+                ChunkCoord::new(0, 0, 0),
+            ),
+            (
+                "positive y",
+                (1, 3, 1),
+                ChunkCoord::new(0, 0, 0),
+                ChunkCoord::new(0, 1, 0),
+            ),
+            (
+                "negative y",
+                (1, 4, 1),
+                ChunkCoord::new(0, 1, 0),
+                ChunkCoord::new(0, 0, 0),
+            ),
+            (
+                "positive z",
+                (1, 1, 3),
+                ChunkCoord::new(0, 0, 0),
+                ChunkCoord::new(0, 0, 1),
+            ),
+            (
+                "negative z",
+                (1, 1, 4),
+                ChunkCoord::new(0, 0, 1),
+                ChunkCoord::new(0, 0, 0),
+            ),
+        ];
+
+        for (face, (x, y, z), owner, neighbor) in cases {
+            let mut chunked = ChunkedVoxelWorld::new(world((8, 8, 8), &[]), [4, 4, 4], AIR);
+            chunked.rebuild_dirty_chunks();
+            let revision = chunked.revision();
+
+            assert_eq!(chunked.set_block(x, y, z, STONE), Some(AIR), "{face}");
+            assert_eq!(chunked.revision(), revision + 1, "{face}");
+            assert_eq!(chunked.dirty_chunk_count(), 2, "{face}");
+
+            let updates = chunked.rebuild_dirty_chunks();
+            let coords: std::collections::BTreeSet<_> =
+                updates.iter().map(|update| update.coord).collect();
+            let expected: std::collections::BTreeSet<_> = [owner, neighbor].into_iter().collect();
+            assert_eq!(coords, expected, "{face}");
+            assert!(
+                updates.iter().all(|update| update.revision == revision + 1),
+                "{face}"
+            );
+            assert_eq!(chunked.dirty_chunk_count(), 0, "{face}");
+        }
+    }
+
+    #[test]
     fn removing_last_voxel_returns_an_empty_update_for_gpu_eviction() {
         let mut world = ChunkedVoxelWorld::new(world((2, 2, 2), &[(1, 1, 1)]), [2, 2, 2], AIR);
         world.rebuild_dirty_chunks();

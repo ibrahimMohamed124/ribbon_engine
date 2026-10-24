@@ -2,7 +2,7 @@ use ribbon_app::{App, Time};
 use ribbon_editor::{EditorPlugin, EditorShell};
 use ribbon_platform::PlatformPlugin;
 use ribbon_plugin_editor_tools::EditorToolsPlugin;
-use ribbon_plugin_rendering::ecs::{RenderBackend, RenderSettings, RenderingPlugin};
+use ribbon_plugin_rendering::ecs::{RenderSettings, RenderingPlugin};
 use ribbon_plugins::AppPluginExt;
 use ribbon_scene::ScenePlugin;
 use std::error::Error;
@@ -11,7 +11,6 @@ use std::time::Duration;
 fn main() -> Result<(), Box<dyn Error>> {
     let mut app = App::new();
     app.insert_resource(RenderSettings {
-        backend: RenderBackend::Cpu,
         width: 640,
         height: 360,
     });

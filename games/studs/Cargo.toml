@@ -14,7 +14,8 @@ path = "src/main.rs"
 [features]
 default = ["audio", "gpu"]
 audio = ["ribbon_plugin_audio/audio"]
-gpu = ["ribbon_plugin_rendering/gpu", "dep:ribbon_plugin_render3d"]
+# STUDS GPU rendering is the engine's mesh renderer; do not enable the legacy raycaster backend.
+gpu = ["dep:ribbon_plugin_render3d"]
 
 [dependencies]
 ribbon_app = { path = "../../crates/ribbon_app" }

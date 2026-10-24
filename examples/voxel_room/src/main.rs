@@ -49,16 +49,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--renderer" {
-            requested = args.next().ok_or("--renderer expects cpu or gpu")?;
+            requested = args.next().ok_or("--renderer expects cpu")?;
         } else if arg != "--headless" {
             return Err(format!("unknown argument `{arg}`").into());
         }
     }
-    if requested != "cpu" && requested != "gpu" {
-        return Err("renderer must be cpu or gpu".into());
-    }
-    if requested == "gpu" {
-        eprintln!("ECS voxel GPU integration is pending; running the deterministic CPU scene for this example.");
+    if requested != "cpu" {
+        return Err(
+            "voxel_room currently demonstrates the CPU legacy scene renderer; use voxel_mesh_showcase for GPU voxel meshes".into(),
+        );
     }
 
     let source = MemorySource::default();
@@ -79,7 +78,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     blocks[75] = 1;
     let mut app = App::new();
     app.insert_resource(RenderSettings {
-        backend: ribbon_plugin_rendering::ecs::RenderBackend::Cpu,
         width: 160,
         height: 100,
     });
@@ -149,7 +147,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .world
         .resource::<ribbon_plugin_rendering::ecs::CpuBackend<ribbon_plugin_rendering::ecs::DefaultShader>>();
     println!(
-        "voxel_room renderer={requested} checksum={:016x}",
+        "voxel_room renderer=cpu checksum={:016x}",
         checksum(&frame.framebuffer)
     );
     Ok(())

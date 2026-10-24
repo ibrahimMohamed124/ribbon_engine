@@ -90,7 +90,11 @@ pub fn greedy_mesh_chunk(
                     b[v_axis] = v as i32;
                     let a_block = sample(world, origin, a, empty);
                     let b_block = sample(world, origin, b, empty);
-                    let face = if a_block == empty && b_block != empty {
+                    let face = if plane == 0 {
+                        (a_block == empty && b_block != empty).then_some((b_block, -1))
+                    } else if plane == size[axis] {
+                        (a_block != empty && b_block == empty).then_some((a_block, 1))
+                    } else if a_block == empty && b_block != empty {
                         Some((b_block, -1))
                     } else if a_block != empty && b_block == empty {
                         Some((a_block, 1))
@@ -264,6 +268,17 @@ mod tests {
         assert_eq!(right[0].indices.len(), 30);
         assert_eq!(left[0].origin_y_up, [0.0, 0.0, 0.0]);
         assert_eq!(right[0].origin_y_up, [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn empty_chunk_does_not_duplicate_neighbor_boundary_faces() {
+        let world = world((8, 4, 2), &[(3, 1, 0, 1)]);
+        let owner = greedy_mesh_chunk(&world, [0, 0, 0], [4, 4, 2], EMPTY);
+        let empty_neighbor = greedy_mesh_chunk(&world, [4, 0, 0], [4, 4, 2], EMPTY);
+
+        assert_eq!(owner.len(), 1);
+        assert_eq!(owner[0].indices.len(), 36);
+        assert!(empty_neighbor.is_empty());
     }
 
     #[test]

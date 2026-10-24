@@ -56,6 +56,8 @@ GPU-driven culling, skinned meshes, or external glTF resource resolution. The
 spotlight-shadow and bloom implementations still need validation across a range of
 Windows GPU adapters; a headless spot-lit corridor test writes `target/spotlight_corridor.png`
 when an adapter is available. Applications can use `OffscreenVoxelRenderer` for offscreen
-voxel rendering; `ribbon_plugin_rendering` also retains its CPU and GPU voxel raycasters. See
-[`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md) and
+voxel rendering; `ribbon_plugin_rendering` retains only its CPU reference/fallback and CPU-only
+legacy ECS bridge. That crate's prior GPU raycaster and `gpu` feature have been deleted. New GPU rendering
+uses `ribbon_plugin_render3d` directly, either through the native-surface `Render3dPlugin` or
+`OffscreenVoxelRenderer`. See [`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md) and
 [`../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md`](../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md).

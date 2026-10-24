@@ -38,9 +38,12 @@ confusing integrated capabilities with features that remain in the roadmap.
 
 ## Deliberately not claimed complete
 
-- The STUDS GPU code path has moved from the legacy GPU raycaster to the engine mesh renderer,
-  but manual gameplay smoke checks remain pending. Its CPU raycaster and legacy GPU raycaster
-  implementation are deliberately retained as reference/rollback paths.
+- The STUDS GPU code path uses the engine mesh renderer. The Windows runtime smoke checks for the
+  graphics showcase, voxel mesh showcase, and STUDS in CPU/GPU modes were reported passing on the
+  target machine. The CPU raycaster remains the intended reference/fallback. The legacy GPU raycaster,
+  its package `gpu` feature, its generic ECS selector/path and its CPU/GPU parity integration test have
+  been removed. `RenderingPlugin` now exposes only the supported CPU scene renderer; mesh applications
+  use `ribbon_plugin_render3d`.
 - STUDS still presents the mesh-rendered framebuffer through offscreen readback and `WindowFrame`;
   native-surface presentation and the old renderer's game-specific spot-light/noise effects are
   not part of this migration.
@@ -57,7 +60,8 @@ confusing integrated capabilities with features that remain in the roadmap.
   allocator or complete graph of every internal render subpass.
 - Normal/AO/emissive texture sampling, height/distance fog, and a compact bright-pass
   bloom contribution are implemented in `ribbon_plugin_render3d`. GPU culling, LOD, skeletal
-  animation, and legacy renderer deletion remain planned work.
+  animation, GPU-driven culling and world streaming remain planned work. The legacy GPU voxel raycaster
+  deletion is complete; the CPU raycaster remains supported.
 
 ## PBR renderer test expectations
 
@@ -77,5 +81,7 @@ values.
 The GitHub Actions workflow is the authoritative cross-platform build, test, dependency-policy,
 and Clippy matrix. For local Rust checks use `cargo fmt --check`, `cargo clippy --locked
 --workspace --all-targets -- -D warnings`, and `cargo test --locked --workspace`; the optional
-no-default-features matrix is also defined in `.github/workflows/ci.yml`. Interactive GPU
-presentation still needs a manual check on the target hardware.
+no-default-features matrix is also defined in `.github/workflows/ci.yml`. The STUDS GPU/CPU runtime
+smoke checks on the target Windows machine have been reported passing. This retirement overlay must
+still be revalidated with the full build/test matrix on the target Windows toolchain, because the current
+editing environment does not provide `cargo` or `rustc`.

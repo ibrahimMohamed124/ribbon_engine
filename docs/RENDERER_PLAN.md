@@ -1,8 +1,8 @@
 # Renderer plan: GPU-first, mesh-based, realism-oriented
 
 This plan supersedes the "CPU/GPU parity" direction of `REALISM_PLAN.md` for
-new engine rendering work. `REALISM_PLAN.md` remains relevant to STUDS while its
-gameplay and rendering transition away from the legacy voxel raycaster is pending.
+new engine rendering work. `REALISM_PLAN.md` remains relevant to STUDS' game-specific
+visual settings and effects; the STUDS GPU rendering route has been migrated to the mesh renderer.
 
 ## Current implementation snapshot
 
@@ -36,11 +36,14 @@ The engine now has a usable native-surface mesh-rendering vertical slice:
 - `examples/graphics_showcase` and `examples/voxel_mesh_showcase` provide visible samples for
   the mesh/material and native voxel-mesh paths.
 
-This is a foundation, not a claim that every advanced rendering feature is done. The STUDS GPU
-route has been migrated at the code level, but the legacy CPU/GPU raycaster code is deliberately
-retained until manual gameplay smoke checks pass on the intended Windows GPU. STUDS still
-presents through offscreen readback/`WindowFrame`; native-surface presentation, game-specific
-spotlight effects, LOD, and streaming remain separate work.
+This is a foundation, not a claim that every advanced rendering feature is done. The Windows
+runtime smoke checks for `graphics_showcase`, `voxel_mesh_showcase`, and STUDS in CPU/GPU modes
+have been reported passing. The CPU raycaster remains the intentional software/reference fallback.
+The legacy GPU voxel raycaster, its `gpu` Cargo feature, the generic ECS GPU route, and the old
+CPU/GPU parity test have now been removed. `RenderingPlugin` is CPU-only; GPU applications use
+`ribbon_plugin_render3d`. STUDS still presents through offscreen readback/`WindowFrame`; native-surface
+presentation for STUDS, full parity for game-specific flashlight effects, LOD, and streaming remain
+separate work.
 
 ## Rendering decisions
 
@@ -87,7 +90,7 @@ implemented:
 | Lighting | Directional sun, ambient term, single 1024 directional depth map | Cascaded shadows, multi-tap PCF/soft shadows, point/spot lights, physically based image-based lighting |
 | HDR/post | `Rgba16Float` scene color and fullscreen Reinhard tonemapping | Exposure control, bloom, color grading, anti-aliasing, fog, AO/GTAO |
 | Visibility | Conservative CPU frustum sphere culling for main color pass; off-screen objects remain in shadow draws | Better bounds for animated/deformed meshes, occlusion culling, LOD, GPU culling, metrics |
-| Voxels | Mutable `ChunkedVoxelWorld`, edit revisions, dirty-owner/neighbor invalidation, incremental greedy remeshing, boundary culling, Y-up conversion, GPU uploads/eviction/reused slots, STUDS GPU route migrated to `OffscreenVoxelRenderer` | Material atlas/texture IDs, chunk streaming/async remeshing, in-game block-edit mechanic, native-surface STUDS presentation, legacy raycaster deletion after manual runtime verification |
+| Voxels | Mutable `ChunkedVoxelWorld`, edit revisions, dirty-owner/neighbor invalidation, incremental greedy remeshing, boundary culling, Y-up conversion, GPU uploads/eviction/reused slots, STUDS GPU route uses `OffscreenVoxelRenderer`; Windows runtime smoke checks reported passing | Material atlas/texture IDs, chunk streaming/async remeshing, in-game block-edit mechanic, native-surface STUDS presentation |
 | Front end | Scene hierarchy, camera component, single active extracted camera | Multi-camera/render layers, picking, editor text UI |
 | Animation | Transform animation systems and placeholder plugin | glTF skins/clips, morph targets, animation evaluation |
 | Physics | Voxel collision | Mesh/AABB colliders, broadphase, robust 3D character controller |
@@ -106,15 +109,17 @@ implemented:
 | 5b: shadow quality | In progress | Multi-tap PCF, stable shadow bounds, acne/peter-panning regression coverage, cascades and additional light types |
 | 6: advanced post | Planned | Bloom, AO, fog, exposure and quality controls |
 | 7a: voxel-to-mesh vertical slice | Implemented | Greedy mesher and native mesh pipeline render chunk-local meshes at their world origins |
-| 7b: Dynamic voxel integration / STUDS migration | Code migration implemented; runtime smoke test pending | STUDS GPU route uses the engine mesh renderer, dynamic edits refresh only affected chunks (and face neighbors), empty meshes release GPU buffers, overlays/gameplay remain game-owned, CPU reference and legacy raycasters remain until manual comparison passes |
+| 7b: Dynamic voxel integration / STUDS migration | Implemented; target Windows manual smoke checks reported passing | STUDS GPU route uses the engine mesh renderer, dynamic edits refresh only affected chunks (and face neighbors), empty meshes release GPU buffers, overlays/gameplay remain game-owned; CPU reference remains and legacy GPU code is disconnected from STUDS |
 | 8: advanced gameplay support | Planned | Skeletal animation, mesh colliders, 3D audio, state machines and profiling |
 | 9: advanced renderer | Planned | IBL, TAA, LOD, GPU culling tracked individually |
 
 ## Repository hygiene
 
-- Do not claim legacy raycaster deletion complete until the GPU gameplay smoke checks in
-  `docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md` pass on the target hardware and remaining compatibility
-  constraints have been resolved. This phase intentionally keeps rollback/reference code.
+- Do not claim all legacy raycaster code has been deleted: the CPU raycaster remains a deliberate
+  fallback. The legacy GPU renderer is removed from production source and feature wiring; a source-level
+  retirement regression test guards against reintroducing it, and an offscreen GPU integration test
+  covers dynamic chunk mesh upload, replacement, boundary invalidation, and eviction when an adapter
+  is available. The manual STUDS runtime checks have passed per the target-machine report.
 - Split large renderer modules further when that improves API boundaries and
   resource ownership; avoid a cosmetic rewrite that breaks the working samples.
 - Keep dependency rules in `tools/allowed_deps.toml`; run

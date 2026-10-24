@@ -22,7 +22,7 @@ use ribbon_plugin_render3d::{
     OffscreenCamera3D, OffscreenDraw3D, OffscreenVoxelRenderer, SunLight, VoxelBlockColor,
 };
 use ribbon_plugin_rendering::cpu::renderer::CpuRenderer;
-use ribbon_plugin_rendering::ecs::{CpuBackend, DefaultShader, RenderBackend, RenderSettings};
+use ribbon_plugin_rendering::ecs::{CpuBackend, DefaultShader, RenderSettings};
 use ribbon_plugin_rendering::material::MaterialTable;
 use ribbon_plugin_rendering::Scene;
 #[cfg(feature = "gpu")]
@@ -93,32 +93,40 @@ impl StudsState {
     }
 }
 
+/// Game-local renderer selection. This does not configure `ribbon_plugin_rendering`,
+/// whose generic ECS integration is intentionally CPU-only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StudsRendererMode {
+    #[cfg_attr(not(feature = "gpu"), default)]
+    Cpu,
+    #[cfg_attr(feature = "gpu", default)]
+    Gpu,
+}
+
 enum RendererImpl {
     Cpu(CpuRenderer<StudsSurface>),
-    /// STUDS' GPU backend exercises the engine's native mesh renderer. The legacy voxel
-    /// raycaster remains available in `ribbon_plugin_rendering` for compatibility/rollback, but
-    /// this game no longer selects it as its GPU implementation.
+    /// STUDS GPU rendering uses the engine-owned mesh renderer; game mode selection is
+    /// intentionally separate from the legacy CPU ECS renderer API.
     #[cfg(feature = "gpu")]
     MeshGpu(Box<OffscreenVoxelRenderer>),
 }
 
-/// Per-game renderer. Both backends consume the same extracted scene and FramePlan.
+/// Per-game renderer. CPU rendering consumes the game scene; GPU rendering consumes
+/// the engine-owned chunk-mesh scene API.
 struct StudsRenderer {
     renderer: RendererImpl,
     output: Framebuffer,
-    backend: RenderBackend,
+    #[cfg(feature = "gpu")]
+    backend: StudsRendererMode,
 }
 
 impl StudsRenderer {
-    fn new(
-        width: usize,
-        height: usize,
-        requested: RenderBackend,
-    ) -> (Self, RenderBackend, Option<String>) {
+    fn new(width: usize, height: usize, requested: StudsRendererMode) -> (Self, Option<String>) {
         let width_u32 = width.max(1) as u32;
         let height_u32 = height.max(1) as u32;
         let output = Framebuffer::new(width_u32 as usize, height_u32 as usize);
-        if requested == RenderBackend::Gpu {
+
+        if requested == StudsRendererMode::Gpu {
             #[cfg(feature = "gpu")]
             {
                 match OffscreenVoxelRenderer::new(width_u32, height_u32) {
@@ -127,9 +135,8 @@ impl StudsRenderer {
                             Self {
                                 renderer: RendererImpl::MeshGpu(Box::new(renderer)),
                                 output,
-                                backend: RenderBackend::Gpu,
+                                backend: StudsRendererMode::Gpu,
                             },
-                            RenderBackend::Gpu,
                             None,
                         );
                     }
@@ -142,9 +149,8 @@ impl StudsRenderer {
                                     StudsSurface,
                                 )),
                                 output,
-                                backend: RenderBackend::Cpu,
+                                backend: StudsRendererMode::Cpu,
                             },
-                            RenderBackend::Cpu,
                             Some(format!(
                                 "GPU renderer initialization failed; continuing with CPU: {error}"
                             )),
@@ -162,20 +168,22 @@ impl StudsRenderer {
                             StudsSurface,
                         )),
                         output,
-                        backend: RenderBackend::Cpu,
                     },
-                    RenderBackend::Cpu,
-                    Some("GPU renderer requested, but STUDS was compiled without the `gpu` feature; using CPU".to_owned()),
+                    Some(
+                        "GPU renderer requested, but STUDS was compiled without the `gpu` feature; using CPU"
+                            .to_owned(),
+                    ),
                 );
             }
         }
+
         (
             Self {
                 renderer: RendererImpl::Cpu(CpuRenderer::new(width_u32, height_u32, StudsSurface)),
                 output,
-                backend: RenderBackend::Cpu,
+                #[cfg(feature = "gpu")]
+                backend: StudsRendererMode::Cpu,
             },
-            RenderBackend::Cpu,
             None,
         )
     }
@@ -242,13 +250,14 @@ impl StudsRenderer {
         Ok(())
     }
 
+    #[cfg(feature = "gpu")]
     fn fall_back_to_cpu(&mut self) {
         self.renderer = RendererImpl::Cpu(CpuRenderer::new(
             self.output.width.max(1) as u32,
             self.output.height.max(1) as u32,
             StudsSurface,
         ));
-        self.backend = RenderBackend::Cpu;
+        self.backend = StudsRendererMode::Cpu;
     }
 }
 
@@ -256,7 +265,7 @@ impl StudsRenderer {
 pub struct StudsPlugin {
     seed: Option<u32>,
     start_in_game: bool,
-    backend: RenderBackend,
+    backend: StudsRendererMode,
 }
 
 impl Default for StudsPlugin {
@@ -274,7 +283,7 @@ impl StudsPlugin {
         }
     }
 
-    pub fn with_backend(mut self, backend: RenderBackend) -> Self {
+    pub fn with_backend(mut self, backend: StudsRendererMode) -> Self {
         self.backend = backend;
         self
     }
@@ -305,7 +314,7 @@ impl Plugin for StudsPlugin {
         let scale = state.settings.window_scale.max(1);
         let mut initial_game = Game::new(self.seed.unwrap_or_else(seed_now));
         initial_game.flashlight_on = state.settings.flashlight_on_start;
-        let (renderer, backend, warning) = StudsRenderer::new(width, height, self.backend);
+        let (renderer, warning) = StudsRenderer::new(width, height, self.backend);
 
         app.insert_resource(PlatformConfig {
             title: "STUDS".to_owned(),
@@ -313,17 +322,12 @@ impl Plugin for StudsPlugin {
             height: (height as u32).saturating_mul(scale),
         });
         app.insert_resource(RenderSettings {
-            backend,
             width: width as u32,
             height: height as u32,
         });
-        // RenderingPlugin provides the generic ECS renderer; STUDS supplies a specialized
-        // renderer because its CPU and GPU voxel paths share custom materials and overlays.
-        // Remove the unused generic instance so there is exactly one active frame renderer.
+        // RenderingPlugin installs a generic CPU placeholder. STUDS owns its game frame
+        // renderer; its GPU route uses `ribbon_plugin_render3d::OffscreenVoxelRenderer`.
         app.world.remove_resource::<CpuBackend<DefaultShader>>();
-        #[cfg(feature = "gpu")]
-        app.world
-            .remove_resource::<ribbon_plugin_rendering::ecs::GpuBackend>();
         app.insert_resource(renderer);
         app.insert_resource(state);
         game_ecs::install_game(&mut app.world, initial_game);
@@ -370,12 +374,13 @@ pub fn build_app(seed: Option<u32>, preview: bool) -> Result<App, Box<dyn std::e
 pub fn build_app_with_renderer(
     seed: Option<u32>,
     preview: bool,
-    backend: RenderBackend,
+    backend: StudsRendererMode,
 ) -> Result<App, Box<dyn std::error::Error>> {
     let mut app = App::new();
     app.insert_resource(PlatformConfig::default());
+    // Bootstrap the CPU-only legacy ECS renderer with its placeholder. StudsPlugin owns the
+    // game renderer and selects `OffscreenVoxelRenderer` for GPU mode.
     app.insert_resource(RenderSettings {
-        backend,
         width: 320,
         height: 180,
     });
@@ -399,15 +404,8 @@ pub fn build_app_with_renderer(
     Ok(app.build()?)
 }
 
-fn default_backend() -> RenderBackend {
-    #[cfg(feature = "gpu")]
-    {
-        RenderBackend::Gpu
-    }
-    #[cfg(not(feature = "gpu"))]
-    {
-        RenderBackend::Cpu
-    }
+fn default_backend() -> StudsRendererMode {
+    StudsRendererMode::default()
 }
 
 fn load_settings(settings_path: &std::path::Path) -> Settings {
@@ -484,11 +482,7 @@ fn update_ui_and_collect_input(world: &mut World) {
                     width: (width as u32).saturating_mul(scale),
                     height: (height as u32).saturating_mul(scale),
                 });
-                let backend = world
-                    .try_resource::<RenderSettings>()
-                    .map_or(RenderBackend::Cpu, |settings| settings.backend);
                 world.insert_resource(RenderSettings {
-                    backend,
                     width: width as u32,
                     height: height as u32,
                 });
@@ -701,7 +695,7 @@ fn render_game_frame(world: &mut World) {
                     };
 
                     #[cfg(feature = "gpu")]
-                    if renderer.backend == RenderBackend::Gpu {
+                    if renderer.backend == StudsRendererMode::Gpu {
                         // Only copy presentation-neutral camera/light data from the legacy
                         // scene adapter. The voxel world, chunking, greedy meshing and GPU
                         // mesh lifecycle are all owned by engine crates/plugins.
@@ -719,13 +713,7 @@ fn render_game_frame(world: &mut World) {
                         drop(scene);
 
                         let objects = if camera.is_some() {
-                            studs_scene_objects(
-                                &enemy,
-                                &pages,
-                                &got,
-                                run.time,
-                                run.enemy_awake(),
-                            )
+                            studs_scene_objects(&enemy, &pages, &got, run.time, run.enemy_awake())
                         } else {
                             Vec::new()
                         };
@@ -760,14 +748,15 @@ fn render_game_frame(world: &mut World) {
                         if let Err(error) = error {
                             world.resource_mut::<ribbon_app::LogBuffer>().push(
                                 ribbon_app::LogLevel::Warn,
-                                format!("STUDS mesh renderer frame failed: {error}; falling back to CPU"),
+                                format!(
+                                    "STUDS mesh renderer frame failed: {error}; falling back to CPU"
+                                ),
                             );
                             renderer.output.pixels.fill(0);
                             renderer.fall_back_to_cpu();
                             if let Some(settings) = world.try_resource::<RenderSettings>().copied()
                             {
                                 world.insert_resource(RenderSettings {
-                                    backend: RenderBackend::Cpu,
                                     width: settings.width.max(1),
                                     height: settings.height.max(1),
                                 });
@@ -780,13 +769,8 @@ fn render_game_frame(world: &mut World) {
                             &ui_layer,
                         );
                     } else {
-                        let error = render_cpu_frame(
-                            renderer,
-                            scene,
-                            world_layer,
-                            brightness,
-                            ui_layer,
-                        );
+                        let error =
+                            render_cpu_frame(renderer, scene, world_layer, brightness, ui_layer);
                         if let Some(error) = error {
                             world.resource_mut::<ribbon_app::LogBuffer>().push(
                                 ribbon_app::LogLevel::Warn,
@@ -797,13 +781,8 @@ fn render_game_frame(world: &mut World) {
 
                     #[cfg(not(feature = "gpu"))]
                     {
-                        let error = render_cpu_frame(
-                            renderer,
-                            scene,
-                            world_layer,
-                            brightness,
-                            ui_layer,
-                        );
+                        let error =
+                            render_cpu_frame(renderer, scene, world_layer, brightness, ui_layer);
                         if let Some(error) = error {
                             world.resource_mut::<ribbon_app::LogBuffer>().push(
                                 ribbon_app::LogLevel::Warn,
@@ -1066,4 +1045,33 @@ fn seed_now() -> u32 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.subsec_nanos() ^ (duration.as_secs() as u32))
         .unwrap_or(12345)
+}
+
+#[cfg(test)]
+mod renderer_mode_tests {
+    use super::{default_backend, RendererImpl, StudsRenderer, StudsRendererMode};
+
+    #[test]
+    fn default_backend_matches_the_compiled_gpu_feature() {
+        #[cfg(feature = "gpu")]
+        assert_eq!(default_backend(), StudsRendererMode::Gpu);
+        #[cfg(not(feature = "gpu"))]
+        assert_eq!(default_backend(), StudsRendererMode::Cpu);
+    }
+
+    #[test]
+    fn explicit_cpu_mode_uses_the_cpu_renderer_without_a_warning() {
+        let (renderer, warning) = StudsRenderer::new(2, 2, StudsRendererMode::Cpu);
+        assert!(matches!(renderer.renderer, RendererImpl::Cpu(_)));
+        assert!(warning.is_none());
+    }
+
+    #[cfg(not(feature = "gpu"))]
+    #[test]
+    fn gpu_request_without_gpu_feature_falls_back_to_cpu_with_a_warning() {
+        let (renderer, warning) = StudsRenderer::new(2, 2, StudsRendererMode::Gpu);
+        assert!(matches!(renderer.renderer, RendererImpl::Cpu(_)));
+        let warning = warning.expect("unsupported GPU request must explain the fallback");
+        assert!(warning.contains("without the `gpu` feature"));
+    }
 }
