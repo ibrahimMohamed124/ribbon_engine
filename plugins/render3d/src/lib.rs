@@ -2,7 +2,7 @@
 //! pipeline with a depth buffer, and a plugin that draws into the window.
 //!
 //! World space is right-handed and Y-up. Three-dimensional local transforms are
-//! owned by `engine_scene`; this renderer consumes their resolved global transforms.
+//! owned by `ribbon_scene`; this renderer consumes their resolved global transforms.
 
 pub mod components;
 pub mod extract;
@@ -17,7 +17,6 @@ pub use components::{
     BuiltinMesh, Camera3D, FogSettings, MeshInstance, ModelInstance, PointLight, SpotLight,
     SunLight, Transform3D, VoxelMeshInstance3D,
 };
-pub use engine_scene::GlobalTransform3D;
 pub use extract::{
     extract_scene_3d, ExtractedCamera3D, ExtractedMesh3D, ExtractedModel3D, ExtractedScene3D,
     ExtractedVoxelMesh3D, RenderExtraction3DPlugin,
@@ -29,22 +28,23 @@ pub use offscreen::{
     VoxelBlockColor,
 };
 pub use renderer::{Draw, MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, Scene, TextureData};
+pub use ribbon_scene::GlobalTransform3D;
 
 use crate::mesh::Vertex;
 use crate::post::{ToneMapper, HDR_FORMAT};
-use engine_app::{App, World};
-use engine_assets::AssetServer;
-use engine_plugins::Plugin;
-use engine_render::gpu::{
+use glam::Mat4;
+use ribbon_app::{App, World};
+use ribbon_assets::AssetServer;
+use ribbon_plugin_voxel::VoxelChunkMesh;
+use ribbon_plugins::Plugin;
+use ribbon_render::gpu::{
     TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool,
 };
-use engine_render::gpu_window::{clear_view, ClearColor, FramePass, FrameTarget, GpuWindow};
-use engine_render::profiling::{
+use ribbon_render::gpu_window::{clear_view, ClearColor, FramePass, FrameTarget, GpuWindow};
+use ribbon_render::profiling::{
     RenderDiagnostics, RenderGpuTimingSample, RenderPassTiming, RenderProfileRecorder,
     RenderResourceStats,
 };
-use glam::Mat4;
-use plugin_voxel::VoxelChunkMesh;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

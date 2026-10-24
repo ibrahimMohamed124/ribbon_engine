@@ -102,8 +102,8 @@ def main() -> int:
             elif dep_name not in allowed_external:
                 print(f"offending external edge: {name} -> {dep_name}")
                 failed = True
-            if dep_name == "hecs" and name != "engine_ecs":
-                print(f"only engine_ecs may depend on hecs: {name} -> hecs")
+            if dep_name == "hecs" and name != "ribbon_ecs":
+                print(f"only ribbon_ecs may depend on hecs: {name} -> hecs")
                 failed = True
 
     if not failed:

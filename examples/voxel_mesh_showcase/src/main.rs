@@ -4,16 +4,18 @@
 //! `cargo run -p voxel_mesh_showcase -- --frames 240`.
 //! Optional profile capture: `cargo run -p voxel_mesh_showcase --release -- --frames 1800 --profile-csv target/profiles/voxel-mesh-showcase.csv`.
 
-use engine_app::{App, AppExit, Stage, Time, World};
-use engine_events::WorldEventsExt;
-use engine_platform::{PlatformConfig, PlatformPlugin};
-use engine_plugins::AppPluginExt;
-use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
-use engine_render::profiling::RenderProfilePlugin;
-use engine_scene::ScenePlugin;
-use plugin_render3d::glam::Vec3;
-use plugin_render3d::{Camera3D, Render3dPlugin, SunLight, Transform3D, VoxelMeshInstance3D};
-use plugin_voxel::{ChunkCoord, ChunkMeshUpdate, ChunkedVoxelWorld, VoxelWorld};
+use ribbon_app::{App, AppExit, Stage, Time, World};
+use ribbon_events::WorldEventsExt;
+use ribbon_platform::{PlatformConfig, PlatformPlugin};
+use ribbon_plugin_render3d::glam::Vec3;
+use ribbon_plugin_render3d::{
+    Camera3D, Render3dPlugin, SunLight, Transform3D, VoxelMeshInstance3D,
+};
+use ribbon_plugin_voxel::{ChunkCoord, ChunkMeshUpdate, ChunkedVoxelWorld, VoxelWorld};
+use ribbon_plugins::AppPluginExt;
+use ribbon_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use ribbon_render::profiling::RenderProfilePlugin;
+use ribbon_scene::ScenePlugin;
 use std::error::Error;
 
 const EMPTY: u8 = 0;
@@ -184,7 +186,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut app = App::new();
     app.insert_resource(PlatformConfig {
-        title: "Voxelworks | Greedy Voxel Meshes".to_owned(),
+        title: "Ribbon | Greedy Voxel Meshes".to_owned(),
         width: 1100,
         height: 720,
     });
@@ -222,7 +224,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_system(Stage::Update, update_dynamic_voxels);
     app.add_system(Stage::Last, limit_frames);
 
-    println!("Voxelworks Greedy Voxel Mesh Showcase");
+    println!("Ribbon Greedy Voxel Mesh Showcase");
     println!(
         "Showing dynamic chunk meshing, boundary invalidation, GPU mesh replacement, HDR/PBR lighting, shadows, and tone mapping."
     );

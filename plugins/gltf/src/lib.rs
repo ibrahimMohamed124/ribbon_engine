@@ -5,8 +5,8 @@
 //! the renderer's job. External buffer/image files are not resolved: use `.glb`
 //! or embed the data.
 
-use engine_assets::{AssetLoader, LoadContext, LoadError, LoadErrorKind};
 use glam::{Mat4, Vec3};
+use ribbon_assets::{AssetLoader, LoadContext, LoadError, LoadErrorKind};
 use std::collections::HashMap;
 
 /// Indexed triangle geometry with per-vertex normals and first UV set.
@@ -335,8 +335,8 @@ fn to_rgba8(image: &gltf::image::Data) -> Result<ImageData, String> {
 #[cfg(test)]
 mod tests {
     use super::{parse, GltfLoader, ModelAsset};
-    use engine_assets::{AssetServer, LoadErrorKind, MemorySource};
     use glam::{Mat4, Vec3};
+    use ribbon_assets::{AssetServer, LoadErrorKind, MemorySource};
 
     const CUBE: &[u8] = include_bytes!("../../../assets/models/checker_cube.glb");
     const TRIANGLE: &[u8] = include_bytes!("../../../assets/models/bare_triangle.glb");

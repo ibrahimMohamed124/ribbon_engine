@@ -1,7 +1,7 @@
 # Scene Hierarchy 3D
 
-A runnable visual example for the shared 3D transforms in `engine_scene` and
-`plugin_render3d`.
+A runnable visual example for the shared 3D transforms in `ribbon_scene` and
+`ribbon_plugin_render3d`.
 
 Run it from the workspace root:
 

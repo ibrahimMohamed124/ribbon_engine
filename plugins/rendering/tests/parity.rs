@@ -3,8 +3,8 @@
 mod common;
 
 use common::{render_cpu, styles, Fixture, HEIGHT, WIDTH};
-use engine_render::{Framebuffer, Renderer};
-use plugin_rendering::gpu::voxel::GpuRenderer;
+use ribbon_plugin_rendering::gpu::voxel::GpuRenderer;
+use ribbon_render::{Framebuffer, Renderer};
 
 fn error(cpu: &Framebuffer, gpu: &Framebuffer) -> (f64, u8) {
     let mut sum = 0u64;

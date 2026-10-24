@@ -14,7 +14,7 @@ use crate::game::{Difficulty, Game, GameReadView, GameUiState, State};
 use crate::input::{key_name, Action, Key};
 use crate::settings::Settings;
 use crate::ui::hud::fill_rect;
-use plugin_rendering::cpu::canvas::Canvas;
+use ribbon_plugin_rendering::cpu::canvas::Canvas;
 
 use self::theme::{ACCENT, MUTED, PANEL_EDGE, SELECTED, TEXT};
 

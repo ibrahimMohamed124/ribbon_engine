@@ -1,22 +1,22 @@
 //! Small renderer fixtures that use no game assets.
 //!
-//! Dev-only: lives in the test tree of `plugin_rendering`, so no production
+//! Dev-only: lives in the test tree of `ribbon_plugin_rendering`, so no production
 //! crate can depend on it. Every test that includes this module is gated on
 //! the `cpu` feature.
 
-use engine_math::{Angles, Vect};
-use engine_render::{DrawCommand, DrawList, Effect, FramePlan, Framebuffer, Renderer};
-use plugin_rendering::cpu::render::lighting::{EntitySurface, SurfaceShader};
-use plugin_rendering::cpu::renderer::CpuRenderer;
-use plugin_rendering::entities::{
+use ribbon_math::{Angles, Vect};
+use ribbon_plugin_rendering::cpu::render::lighting::{EntitySurface, SurfaceShader};
+use ribbon_plugin_rendering::cpu::renderer::CpuRenderer;
+use ribbon_plugin_rendering::entities::{
     EntityAnimation, EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
     EntityRenderMode, EntityShadow,
 };
-use plugin_rendering::material::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
-use plugin_rendering::scene::{Camera, LightingParams, RenderScene};
-use plugin_rendering::style::{Palette, RenderStyle, Tonemap};
-use plugin_rendering::texture::SpriteAtlas;
-use plugin_voxel::{Hit, VoxelWorld};
+use ribbon_plugin_rendering::material::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
+use ribbon_plugin_rendering::scene::{Camera, LightingParams, RenderScene};
+use ribbon_plugin_rendering::style::{Palette, RenderStyle, Tonemap};
+use ribbon_plugin_rendering::texture::SpriteAtlas;
+use ribbon_plugin_voxel::{Hit, VoxelWorld};
+use ribbon_render::{DrawCommand, DrawList, Effect, FramePlan, Framebuffer, Renderer};
 use std::sync::OnceLock;
 
 pub const WIDTH: usize = 64;

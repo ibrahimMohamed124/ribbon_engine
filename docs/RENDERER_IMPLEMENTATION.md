@@ -9,10 +9,10 @@ confusing integrated capabilities with features that remain in the roadmap.
    `FramePass`, and final presentation as nodes with named color-version
    dependencies. `RenderGraph` validates reads/writes and computes stable order.
    The presenter still owns the wgpu surface and calls `SurfaceTexture::present()`.
-2. **PBR material inputs.** `plugin_gltf` retains metallic/roughness factors and
+2. **PBR material inputs.** `ribbon_plugin_gltf` retains metallic/roughness factors and
    the packed metallic-roughness image index. When a glTF material omits
    `metallicFactor`, the loader preserves glTF 2.0’s default value of `1.0`.
-   `plugin_render3d` uploads base color
+   `ribbon_plugin_render3d` uploads base color
    as sRGB and the G=roughness/B=metallic map as linear data with generated mip
    levels. The shader evaluates a Cook-Torrance GGX forward BRDF. The public
    `PbrMaterialDesc` groups factors and optional texture maps into one descriptor,
@@ -26,11 +26,11 @@ confusing integrated capabilities with features that remain in the roadmap.
 5. **Main-pass visibility.** Conservative bounding-sphere/frustum tests reduce
    the color-pass instance list. The shadow list retains valid off-screen draws
    so objects outside the camera view can still cast shadows.
-6. **Dynamic voxel-world integration.** `plugin_voxel::ChunkedVoxelWorld` wraps
+6. **Dynamic voxel-world integration.** `ribbon_plugin_voxel::ChunkedVoxelWorld` wraps
    mutable voxel storage, revisions and a retained CPU mesh cache. `set_block` invalidates
    only its owning chunk plus face-neighbors when touching chunk boundaries. Dirty chunks
    are greedily remeshed against the complete world; empty results are explicit eviction
-   updates. `plugin_render3d::OffscreenVoxelRenderer` consumes those updates, replaces GPU
+   updates. `ribbon_plugin_render3d::OffscreenVoxelRenderer` consumes those updates, replaces GPU
    buffers and reuses freed mesh slots while rendering through the common HDR/PBR/depth/shadow
    pipeline. The native ECS mesh path evicts GPU meshes no longer present in the extracted
    scene. STUDS' GPU backend uses the offscreen mesh renderer, with its game palette and visual
@@ -56,7 +56,7 @@ confusing integrated capabilities with features that remain in the roadmap.
 - The render graph is a scheduling/dependency graph, not a transient GPU resource
   allocator or complete graph of every internal render subpass.
 - Normal/AO/emissive texture sampling, height/distance fog, and a compact bright-pass
-  bloom contribution are implemented in `plugin_render3d`. GPU culling, LOD, skeletal
+  bloom contribution are implemented in `ribbon_plugin_render3d`. GPU culling, LOD, skeletal
   animation, and legacy renderer deletion remain planned work.
 
 ## PBR renderer test expectations

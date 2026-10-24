@@ -1,7 +1,0 @@
-[package]
-name = "engine_events"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-engine_ecs = { path = "../engine_ecs" }

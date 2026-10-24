@@ -1,0 +1,10 @@
+[package]
+name = "ribbon_app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_ecs = { path = "../ribbon_ecs" }
+ribbon_events = { path = "../ribbon_events" }
+ribbon_schedule = { path = "../ribbon_schedule" }
+ribbon_math = { path = "../ribbon_math" }

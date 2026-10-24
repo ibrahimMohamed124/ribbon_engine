@@ -1,22 +1,22 @@
-use engine_app::{App, Time};
-use engine_assets::{
+use ribbon_app::{App, Time};
+use ribbon_assets::{
     AssetLoader, AssetServer, LoadContext, LoadError, LoadErrorKind, MemorySource,
 };
-use engine_ecs::Entity;
-use engine_math::{Angles, Vect};
-use engine_platform::PlatformPlugin;
-use engine_plugins::AppPluginExt;
-use engine_render::Framebuffer;
-use engine_scene::{instantiate, Name, SceneDoc, ScenePlugin, Transform};
-use plugin_rendering::ecs::{
+use ribbon_ecs::Entity;
+use ribbon_math::{Angles, Vect};
+use ribbon_platform::PlatformPlugin;
+use ribbon_plugin_rendering::ecs::{
     ActiveCamera, Camera, EntityRegistryRes, LightingRes, MaterialTableRes, RenderEntity,
     RenderSettings, RenderStyleRes, RenderingPlugin,
 };
-use plugin_rendering::entities::{
+use ribbon_plugin_rendering::entities::{
     EntityAnimation, EntityDefinition, EntityKind, EntityRegistry, EntityRenderMode, EntityShadow,
 };
-use plugin_rendering::{LightingParams, RenderStyle, EMPTY_MATERIAL_TABLE};
-use plugin_voxel::{VoxelWorld, VoxelWorldRes};
+use ribbon_plugin_rendering::{LightingParams, RenderStyle, EMPTY_MATERIAL_TABLE};
+use ribbon_plugin_voxel::{VoxelWorld, VoxelWorldRes};
+use ribbon_plugins::AppPluginExt;
+use ribbon_render::Framebuffer;
+use ribbon_scene::{instantiate, Name, SceneDoc, ScenePlugin, Transform};
 use std::error::Error;
 use std::time::Duration;
 
@@ -33,7 +33,7 @@ impl AssetLoader for SceneLoader {
     }
 }
 
-static NO_BOXES: [plugin_rendering::entities::EntityBox; 0] = [];
+static NO_BOXES: [ribbon_plugin_rendering::entities::EntityBox; 0] = [];
 static DEFINITIONS: [EntityDefinition; 1] = [EntityDefinition {
     kind: EntityKind(1),
     bounds: None,
@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     blocks[75] = 1;
     let mut app = App::new();
     app.insert_resource(RenderSettings {
-        backend: plugin_rendering::ecs::RenderBackend::Cpu,
+        backend: ribbon_plugin_rendering::ecs::RenderBackend::Cpu,
         width: 160,
         height: 100,
     });
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let entities = app
         .world
-        .resource_scope::<engine_reflect::TypeRegistry, _>(|world, registry| {
+        .resource_scope::<ribbon_reflect::TypeRegistry, _>(|world, registry| {
             instantiate(world, registry, &document.prefab, None)
         })?;
     let mut camera_entity: Option<Entity> = None;
@@ -147,7 +147,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.update();
     let frame = app
         .world
-        .resource::<plugin_rendering::ecs::CpuBackend<plugin_rendering::ecs::DefaultShader>>();
+        .resource::<ribbon_plugin_rendering::ecs::CpuBackend<ribbon_plugin_rendering::ecs::DefaultShader>>();
     println!(
         "voxel_room renderer={requested} checksum={:016x}",
         checksum(&frame.framebuffer)

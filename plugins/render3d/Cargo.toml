@@ -1,18 +1,18 @@
 [package]
-name = "plugin_render3d"
+name = "ribbon_plugin_render3d"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-engine_app = { path = "../../crates/engine_app" }
-engine_assets = { path = "../../crates/engine_assets" }
-engine_plugins = { path = "../../crates/engine_plugins" }
-engine_render = { path = "../../crates/engine_render", default-features = false, features = ["gpu"] }
-engine_scene = { path = "../../crates/engine_scene" }
+ribbon_app = { path = "../../crates/ribbon_app" }
+ribbon_assets = { path = "../../crates/ribbon_assets" }
+ribbon_plugins = { path = "../../crates/ribbon_plugins" }
+ribbon_render = { path = "../../crates/ribbon_render", default-features = false, features = ["gpu"] }
+ribbon_scene = { path = "../../crates/ribbon_scene" }
 bytemuck = { version = "1", features = ["derive"] }
 glam = "0.30"
-plugin_gltf = { path = "../gltf" }
-plugin_voxel = { path = "../voxel" }
+ribbon_plugin_gltf = { path = "../gltf" }
+ribbon_plugin_voxel = { path = "../voxel" }
 pollster = "0.4"
 wgpu = "25.0.2"
 

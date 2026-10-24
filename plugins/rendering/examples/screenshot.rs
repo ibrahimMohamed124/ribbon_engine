@@ -4,8 +4,8 @@ mod shared;
 use std::fs;
 use std::path::PathBuf;
 
-use engine_render::Framebuffer;
-use plugin_rendering::cpu::render::{render, RenderStyle};
+use ribbon_plugin_rendering::cpu::render::{render, RenderStyle};
+use ribbon_render::Framebuffer;
 use shared::{graded_style, Scene, SceneShader, HEIGHT, WIDTH};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

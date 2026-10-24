@@ -83,6 +83,7 @@ def main() -> int:
         "- **Conclusion:** asset-cache reconciliation has a measurable phase improvement: median run-level P95 is about 68–73% lower for 576 and 1,600 placements in both modes. End-to-end frame time does not show a meaningful improvement: FIFO P95 shifts about +1–2%, while Mailbox frame and acquisition P95 are noisy and higher in B. No pixel-equivalence check was performed.",
         "", "### Exact commands", "",
         "Commands are from the repository root. Build A from the pre-optimization profiler source, copy its executable, then build B from the optimized source and copy it separately. Each capture script invocation uses the named prebuilt executable:", "",
+        "The A/B captures predate this package-namespace rename; the historical package IDs in the recorded commands below are preserved as-run.", "",
         "```powershell",
         "cargo fmt --all -- --check",
         "cargo check -p plugin_render3d -p engine_render",

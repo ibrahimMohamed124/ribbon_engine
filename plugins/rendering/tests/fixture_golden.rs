@@ -3,7 +3,7 @@
 mod common;
 
 use common::{render_cpu, Fixture};
-use engine_render::Framebuffer;
+use ribbon_render::Framebuffer;
 
 fn render(variant: usize) -> Framebuffer {
     render_cpu(&Fixture::new(), variant)

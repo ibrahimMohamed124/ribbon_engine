@@ -4,15 +4,15 @@ This note records the follow-up for the Windows validation output supplied after
 
 ## Findings from the supplied log
 
-- `cargo fmt --check` reported formatting-only differences in `crates/engine_assets/src/lib.rs`, `crates/engine_schedule/src/lib.rs`, `examples/horror_slice/src/main.rs`, `games/studs/examples/realistic_bench.rs`, `games/studs/tests/golden.rs`, and `games/studs/tests/renderer.rs`. Those reported formatting differences are corrected in this archive; no test cases were added or changed semantically.
+- `cargo fmt --check` reported formatting-only differences in `crates/ribbon_assets/src/lib.rs`, `crates/ribbon_schedule/src/lib.rs`, `examples/horror_slice/src/main.rs`, `games/studs/examples/realistic_bench.rs`, `games/studs/tests/golden.rs`, and `games/studs/tests/renderer.rs`. Those reported formatting differences are corrected in this archive; no test cases were added or changed semantically.
 - `cargo clippy --workspace --all-targets -- -D warnings` completed successfully in the supplied log.
 - The unit/integration test groups displayed before doctests reported success, including the existing ignored GPU `SurfaceShader` limitation.
-- Both `cargo test --workspace -j 1` and `cargo test --workspace --no-default-features -j 1` stopped at the `engine_app` doctest with `unresolved import engine_ecs::SyncResource`.
+- Both `cargo test --workspace -j 1` and `cargo test --workspace --no-default-features -j 1` stopped at the `ribbon_app` doctest with `unresolved import ribbon_ecs::SyncResource`.
 - `python tools/check_deps.py` completed successfully in the supplied log.
 
 ## `SyncResource` doctest diagnosis
 
-The current source has `pub use world::{Resources, SyncResource, World};` in `crates/engine_ecs/src/lib.rs`, and `crates/engine_app/src/lib.rs` intentionally re-exports `SyncResource`. Therefore the observed rustdoc error is consistent with a stale compiled `engine_ecs` artifact, especially if this archive was extracted over an earlier checkout while retaining its existing `target` directory and build timestamps. The log alone cannot prove the exact cause, so a clean rebuild is required to confirm it.
+The current source has `pub use world::{Resources, SyncResource, World};` in `crates/ribbon_ecs/src/lib.rs`, and `crates/ribbon_app/src/lib.rs` intentionally re-exports `SyncResource`. Therefore the observed rustdoc error is consistent with a stale compiled `ribbon_ecs` artifact, especially if this archive was extracted over an earlier checkout while retaining its existing `target` directory and build timestamps. The log alone cannot prove the exact cause, so a clean rebuild is required to confirm it.
 
 From the project root on Windows, run once:
 
@@ -29,7 +29,7 @@ No Rust compilation, test suite, or runtime was executed to prepare this follow-
 ## Follow-up: clippy `redundant_locals` finding
 
 A subsequent run of `cargo clippy --workspace --all-targets -- -D warnings` reported
-`clippy::redundant_locals` in `crates/engine_schedule/src/lib.rs`: the scoped worker closure
+`clippy::redundant_locals` in `crates/ribbon_schedule/src/lib.rs`: the scoped worker closure
 rebound `world_ref` to itself before spawning. The redundant local binding has been removed;
 the `&World` shared reference is captured directly by the `move` closure. This is a source-only
 fix and adds no tests. Clippy has not been rerun on this archive, so this finding remains pending
@@ -42,7 +42,7 @@ be inferred from that excerpt.
 
 ## Follow-up: asset clippy findings
 
-A later Windows clippy run reported three denied warnings in `crates/engine_assets/src/lib.rs`:
+A later Windows clippy run reported three denied warnings in `crates/ribbon_assets/src/lib.rs`:
 
 - `clippy::type_complexity` for the erased-asset removal callback map. The callback signature is now expressed through the private `AssetRemover` type alias.
 - `clippy::question_mark` in `AssetServer::get_mut`. The stale-handle early return now uses `self.get(handle)?` while preserving the same `None` behavior.
@@ -53,18 +53,18 @@ These are source-only cleanup changes; no tests were added or run. Re-run format
 
 ## Follow-up: render3d doctest cannot resolve GPU/profiling exports
 
-A later Windows doctest reported unresolved imports for `engine_render::gpu::{TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool}` and `engine_render::profiling`. The source in this archive declares `pub mod profiling` unconditionally, declares `pub mod gpu` behind the `gpu` feature, and defines the transient-pool public types in `crates/engine_render/src/gpu.rs`. The workspace-wide `--no-default-features` validation command can disable default features for workspace packages, so `plugin_render3d` now explicitly enables `engine_render`'s `gpu` feature rather than relying on that dependency's default feature.
+A later Windows doctest reported unresolved imports for `ribbon_render::gpu::{TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool}` and `ribbon_render::profiling`. The source in this archive declares `pub mod profiling` unconditionally, declares `pub mod gpu` behind the `gpu` feature, and defines the transient-pool public types in `crates/ribbon_render/src/gpu.rs`. The workspace-wide `--no-default-features` validation command can disable default features for workspace packages, so `ribbon_plugin_render3d` now explicitly enables `ribbon_render`'s `gpu` feature rather than relying on that dependency's default feature.
 
-The imports from `engine_render::profiling` are not feature-gated in source. If rustdoc still reports that module as absent, use a fresh extraction directory and run `cargo clean` before retrying; that symptom is consistent with an old `engine_render` artifact or a mixed/partially overwritten checkout. The source tree and this archive were not built or tested while preparing this fix, so the user-side commands must confirm the diagnosis.
+The imports from `ribbon_render::profiling` are not feature-gated in source. If rustdoc still reports that module as absent, use a fresh extraction directory and run `cargo clean` before retrying; that symptom is consistent with an old `ribbon_render` artifact or a mixed/partially overwritten checkout. The source tree and this archive were not built or tested while preparing this fix, so the user-side commands must confirm the diagnosis.
 
-## Follow-up: repeated `plugin_render3d` doctest import errors
+## Follow-up: repeated `ribbon_plugin_render3d` doctest import errors
 
 The supplied source archive contains all of the following public API declarations:
 
-- `crates/engine_render/src/lib.rs`: unconditional `pub mod profiling;` and `pub use profiling::{...}`.
-- `crates/engine_render/src/lib.rs`: `#[cfg(feature = "gpu")] pub mod gpu;`.
-- `crates/engine_render/src/gpu.rs`: public `TransientTextureDescriptor`, `TransientTextureHandle`, and `TransientTexturePool` definitions.
-- `plugins/render3d/Cargo.toml`: an explicit `engine_render` dependency with `default-features = false, features = ["gpu"]`.
+- `crates/ribbon_render/src/lib.rs`: unconditional `pub mod profiling;` and `pub use profiling::{...}`.
+- `crates/ribbon_render/src/lib.rs`: `#[cfg(feature = "gpu")] pub mod gpu;`.
+- `crates/ribbon_render/src/gpu.rs`: public `TransientTextureDescriptor`, `TransientTextureHandle`, and `TransientTexturePool` definitions.
+- `plugins/render3d/Cargo.toml`: an explicit `ribbon_render` dependency with `default-features = false, features = ["gpu"]`.
 
 Thus the reported combination (including missing the unconditional `profiling` module) is not explained by a missing declaration in these sources. It points to a stale or mismatched compiled dependency, or to an extraction that did not replace the source files expected by Cargo. This repack refreshes source/archive timestamps to make Cargo notice the source package when it is extracted over an existing checkout.
 
@@ -72,13 +72,13 @@ Recommended Windows recovery, from the exact project root (`D:\exp\ribbon_engine
 
 ```powershell
 # Verify the source being compiled has the expected declarations.
-Select-String .\crates\engine_render\src\lib.rs -Pattern 'pub mod profiling','pub mod gpu','pub use profiling'
-Select-String .\crates\engine_render\src\gpu.rs -Pattern 'pub struct TransientTextureDescriptor','pub struct TransientTextureHandle','pub struct TransientTexturePool'
-Select-String .\plugins\render3d\Cargo.toml -Pattern 'engine_render.*features.*gpu'
+Select-String .\crates\ribbon_render\src\lib.rs -Pattern 'pub mod profiling','pub mod gpu','pub use profiling'
+Select-String .\crates\ribbon_render\src\gpu.rs -Pattern 'pub struct TransientTextureDescriptor','pub struct TransientTextureHandle','pub struct TransientTexturePool'
+Select-String .\plugins\render3d\Cargo.toml -Pattern 'ribbon_render.*features.*gpu'
 
 # Remove all generated Rust build artifacts, then rebuild the doctest first.
 cargo clean
-cargo test -p plugin_render3d --doc -v
+cargo test -p ribbon_plugin_render3d --doc -v
 ```
 
 If these exact source declarations are present and a clean targeted doctest still reports them missing, capture the `-v` rustdoc command and the new artifact names; investigate Cargo feature/unit selection or a mixed checkout next. No Rust commands or tests were run while preparing this archive.
@@ -87,7 +87,7 @@ If these exact source declarations are present and a clean targeted doctest stil
 
 ## Follow-up: GPU profiling integration compile errors
 
-The latest Windows validation output identified three source errors in `crates/engine_render/src/gpu_window.rs`: the completed-frame tuple was declared with three elements while four values were recorded, and `World` has no `try_resource_mut` method. The tuple now explicitly contains frame time, graph timing, target-byte estimate, and readback-buffer-byte estimate. After initializing `RenderDiagnostics` when absent, the presenter mutably borrows it through the existing `World::resource_mut` API.
+The latest Windows validation output identified three source errors in `crates/ribbon_render/src/gpu_window.rs`: the completed-frame tuple was declared with three elements while four values were recorded, and `World` has no `try_resource_mut` method. The tuple now explicitly contains frame time, graph timing, target-byte estimate, and readback-buffer-byte estimate. After initializing `RenderDiagnostics` when absent, the presenter mutably borrows it through the existing `World::resource_mut` API.
 
 The same unsupported `try_resource_mut` call in `plugins/render3d/src/lib.rs` was replaced with an existence check followed by `resource_mut`; `Render3dPlugin` depends on `GpuWindowPlugin`, which installs the diagnostics resource. Formatting differences reported for the GPU lifetime/profiling files were also corrected manually to match the supplied rustfmt output. No tests were added or executed, and Cargo/clippy have not been rerun; verify this archive with `cargo fmt --check`, clippy, and both workspace test configurations.
 
@@ -125,8 +125,8 @@ P95 was 20.272 ms, and about 25% of retained frame-wall samples exceeded 16.667 
 13.269 ms, with no samples above 16.667 ms in that capture. Thus FIFO/1 reduced frame-wall P95 by 34.1% and
 surface-acquire P95 by 34.5%, while average frame time remained effectively unchanged and median wall time
 increased. This supports smoother tail pacing on the tested machine, not higher mean throughput or a universal
-claim for all adapters. The `engine_render::GpuContext` desired maximum frame latency default is now `1`; FIFO remains the default present
-mode and environment overrides remain available. The independently configured `plugin_rendering` GPU voxel surface
+claim for all adapters. The `ribbon_render::GpuContext` desired maximum frame latency default is now `1`; FIFO remains the default present
+mode and environment overrides remain available. The independently configured `ribbon_plugin_rendering` GPU voxel surface
 was not profiled by this capture and retains its previous fixed latency `2`. The separate `AutoNoVsync` run resolved to `immediate` and
 reported frame-wall P95 1.210 ms, but is explicitly not a default because it can tear and may use more power.
 
@@ -139,7 +139,7 @@ run-level P95/P99 distributions before treating the result as general. No tests 
 The latest user-provided Windows output exposed two source issues in the large-scene stress archive:
 
 - `clippy::type_complexity` flagged the positional `Option<(...)>` used to carry the completed window-frame measurements. It is now represented by the private named-field `CompletedGpuWindowFrame` struct, making the measured values and resource snapshots explicit.
-- `plugin_render3d::offscreen::OffscreenVoxelRenderer::resource_stats` initialized `RenderResourceStats` without the fields introduced for scene/cache/instance diagnostics. The initializer now uses a default for fields that do not apply to this renderer, copies the renderer instance-buffer counters, and reports the currently uploaded chunk meshes and their cumulative upload/release counts. The offscreen path now increments release counts only when a mesh handle was actually released and counts each successful non-empty mesh upload.
+- `ribbon_plugin_render3d::offscreen::OffscreenVoxelRenderer::resource_stats` initialized `RenderResourceStats` without the fields introduced for scene/cache/instance diagnostics. The initializer now uses a default for fields that do not apply to this renderer, copies the renderer instance-buffer counters, and reports the currently uploaded chunk meshes and their cumulative upload/release counts. The offscreen path now increments release counts only when a mesh handle was actually released and counts each successful non-empty mesh upload.
 
 No tests were added or changed. In accordance with the user's request, Cargo, compilation, tests, and runtime were not executed while preparing this correction. Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, both workspace test configurations, and `python tools/check_deps.py` on this archive before considering it fully validated.
 
@@ -187,14 +187,14 @@ No tests were added or modified. Cargo, compilation, tests and runtime were not 
 
 The user-provided CSV for `multi-asset-lifecycle-32x32-active32-prefetch32` isolated frame 602 as the long frame: frame wall 43.8668 ms, render-graph CPU 43.7298 ms, and `mesh pass [0]` CPU 43.5411 ms. Surface acquisition/presentation for that frame were 0.0637/0.0650 ms. On the same frame, GPU model cache entries increased from 0 to 32, and the cumulative model upload counter increased by 32 (32 to 64), with 32 additional live meshes/materials. This is strong correlation between the spike and synchronous model GPU resource creation, not evidence that GPU execution itself was slow. Per-row GPU samples are asynchronous and are not treated as perfectly aligned with the same frame.
 
-`plugin_render3d` now caps first-use model cache population at two distinct model asset keys per render frame. Missing placements beyond that limit are deferred to subsequent render frames; cached models continue to draw. Added `docs/GPU_ASSET_UPLOAD_PACING.md` with the evidence and target-side verification requirements. This limit is count-based, not a strict per-frame time budget, and voxel uploads are not changed by this targeted fix.
+`ribbon_plugin_render3d` now caps first-use model cache population at two distinct model asset keys per render frame. Missing placements beyond that limit are deferred to subsequent render frames; cached models continue to draw. Added `docs/GPU_ASSET_UPLOAD_PACING.md` with the evidence and target-side verification requirements. This limit is count-based, not a strict per-frame time budget, and voxel uploads are not changed by this targeted fix.
 
 No tests were added or modified. Rust/Cargo commands, the engine runtime and stress captures were not executed in this environment. Run `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings`, then rerun the same multi-asset lifecycle capture on Windows and verify the per-frame upload delta and the absence of a comparable mesh-pass stall.
 
 
 ## Adapter observability and FIFO/Mailbox repeat comparison (2026-10-24)
 
-The primary `engine_render::GpuContext` now emits a `[GPU ADAPTER]` line from the actual `wgpu::AdapterInfo`, including name, vendor/device IDs, device type, driver strings, backend, surface compatibility and timestamp-query support. The repeated present-mode helper saves each native process' console output to a per-capture `.log`, then copies adapter and surface lines into its manifest. This distinguishes the adapter selected by `wgpu` from the list of devices exposed by Windows.
+The primary `ribbon_render::GpuContext` now emits a `[GPU ADAPTER]` line from the actual `wgpu::AdapterInfo`, including name, vendor/device IDs, device type, driver strings, backend, surface compatibility and timestamp-query support. The repeated present-mode helper saves each native process' console output to a per-capture `.log`, then copies adapter and surface lines into its manifest. This distinguishes the adapter selected by `wgpu` from the list of devices exposed by Windows.
 
 User-provided, target-side Release results for three runs each at FIFO/1 and Mailbox/1 resolved to their requested modes. Median run-level frame-wall P95 was 13.982 ms for FIFO and 7.092 ms for Mailbox; surface-acquisition P95 was 13.314 and 6.885 ms. Frame-wall mean was 6.481 and 6.734 ms respectively, so the result indicates lower tail latency rather than higher average throughput. Graph CPU P95 also differed (1.773 vs 0.757 ms), so the evidence does not establish that surface acquisition alone caused the entire difference. Results are specific to the tested machine, display, driver, build and stress workload. The previous logs showed that Windows exposes an NVIDIA GeForce RTX 2050 and an Intel UHD adapter, but did not identify which adapter `wgpu` selected.
 

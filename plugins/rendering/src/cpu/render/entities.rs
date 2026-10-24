@@ -6,7 +6,7 @@ use crate::entities::{
     EntityAnimation, EntityDefinition, EntityInstance, EntityKind, EntityRegistry, EntityShadow,
 };
 use crate::texture::SpriteAtlas;
-use engine_math::Vect;
+use ribbon_math::Vect;
 
 pub fn ray_box(o: [f32; 3], d: [f32; 3], mn: [f32; 3], mx: [f32; 3]) -> Option<(f32, usize, f32)> {
     let mut tmin = f32::NEG_INFINITY;
@@ -266,8 +266,8 @@ mod sprite_tests {
         },
         texture::SpriteAtlas,
     };
-    use engine_math::Vect;
-    use plugin_voxel::VoxelWorld;
+    use ribbon_math::Vect;
+    use ribbon_plugin_voxel::VoxelWorld;
 
     const KIND: EntityKind = EntityKind(1);
     const BOXES: [EntityBox; 0] = [];

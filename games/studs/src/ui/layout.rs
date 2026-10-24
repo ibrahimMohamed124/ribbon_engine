@@ -1,4 +1,4 @@
-use plugin_rendering::cpu::canvas::Canvas;
+use ribbon_plugin_rendering::cpu::canvas::Canvas;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Rect {

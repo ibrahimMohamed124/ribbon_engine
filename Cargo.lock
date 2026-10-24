@@ -465,13 +465,13 @@ dependencies = [
 name = "cube_spin"
 version = "0.1.0"
 dependencies = [
- "engine_app",
- "engine_events",
- "engine_platform",
- "engine_plugins",
- "engine_render",
- "engine_scene",
- "plugin_render3d",
+ "ribbon_app",
+ "ribbon_events",
+ "ribbon_platform",
+ "ribbon_plugin_render3d",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
 ]
 
 [[package]]
@@ -582,15 +582,15 @@ checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
 name = "editor_demo"
 version = "0.1.0"
 dependencies = [
- "engine_app",
- "engine_ecs",
- "engine_editor",
- "engine_platform",
- "engine_plugins",
- "engine_render",
- "engine_scene",
- "plugin_editor_tools",
- "plugin_rendering",
+ "ribbon_app",
+ "ribbon_ecs",
+ "ribbon_editor",
+ "ribbon_platform",
+ "ribbon_plugin_editor_tools",
+ "ribbon_plugin_rendering",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
 ]
 
 [[package]]
@@ -611,128 +611,6 @@ dependencies = [
  "rustversion",
  "scopeguard",
  "simdutf8",
-]
-
-[[package]]
-name = "engine_app"
-version = "0.1.0"
-dependencies = [
- "engine_ecs",
- "engine_events",
- "engine_math",
- "engine_schedule",
-]
-
-[[package]]
-name = "engine_assets"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_events",
- "engine_plugins",
-]
-
-[[package]]
-name = "engine_commands"
-version = "0.1.0"
-dependencies = [
- "engine_ecs",
- "engine_reflect",
- "engine_scene",
-]
-
-[[package]]
-name = "engine_ecs"
-version = "0.1.0"
-dependencies = [
- "hecs",
-]
-
-[[package]]
-name = "engine_editor"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_commands",
- "engine_ecs",
- "engine_math",
- "engine_platform",
- "engine_plugins",
- "engine_reflect",
- "engine_render",
- "engine_scene",
-]
-
-[[package]]
-name = "engine_events"
-version = "0.1.0"
-dependencies = [
- "engine_ecs",
-]
-
-[[package]]
-name = "engine_math"
-version = "0.1.0"
-
-[[package]]
-name = "engine_platform"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_events",
- "engine_math",
- "engine_plugins",
- "softbuffer",
- "winit",
-]
-
-[[package]]
-name = "engine_plugins"
-version = "0.1.0"
-dependencies = [
- "engine_app",
-]
-
-[[package]]
-name = "engine_reflect"
-version = "0.1.0"
-dependencies = [
- "engine_ecs",
- "serde",
-]
-
-[[package]]
-name = "engine_render"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_assets",
- "engine_math",
- "engine_platform",
- "engine_plugins",
- "pollster",
- "wgpu",
-]
-
-[[package]]
-name = "engine_scene"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_ecs",
- "engine_math",
- "engine_plugins",
- "engine_reflect",
- "glam",
- "ron",
- "serde",
-]
-
-[[package]]
-name = "engine_schedule"
-version = "0.1.0"
-dependencies = [
- "engine_ecs",
 ]
 
 [[package]]
@@ -1011,26 +889,26 @@ dependencies = [
 name = "gpu_window"
 version = "0.1.0"
 dependencies = [
- "engine_app",
- "engine_events",
- "engine_platform",
- "engine_plugins",
- "engine_render",
+ "ribbon_app",
+ "ribbon_events",
+ "ribbon_platform",
+ "ribbon_plugins",
+ "ribbon_render",
 ]
 
 [[package]]
 name = "graphics_showcase"
 version = "0.1.0"
 dependencies = [
- "engine_app",
- "engine_assets",
- "engine_events",
- "engine_platform",
- "engine_plugins",
- "engine_render",
- "engine_scene",
- "plugin_gltf",
- "plugin_render3d",
+ "ribbon_app",
+ "ribbon_assets",
+ "ribbon_events",
+ "ribbon_platform",
+ "ribbon_plugin_gltf",
+ "ribbon_plugin_render3d",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
 ]
 
 [[package]]
@@ -1089,9 +967,9 @@ dependencies = [
 name = "hello_ecs"
 version = "0.1.0"
 dependencies = [
- "engine_app",
- "engine_ecs",
- "engine_schedule",
+ "ribbon_app",
+ "ribbon_ecs",
+ "ribbon_schedule",
 ]
 
 [[package]]
@@ -1110,16 +988,16 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 name = "horror_slice"
 version = "0.1.0"
 dependencies = [
- "engine_app",
- "engine_assets",
- "engine_events",
- "engine_platform",
- "engine_plugins",
- "engine_render",
- "engine_scene",
- "plugin_gltf",
- "plugin_physics",
- "plugin_render3d",
+ "ribbon_app",
+ "ribbon_assets",
+ "ribbon_events",
+ "ribbon_platform",
+ "ribbon_plugin_gltf",
+ "ribbon_plugin_physics",
+ "ribbon_plugin_render3d",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
  "ron",
  "serde",
 ]
@@ -1405,15 +1283,15 @@ dependencies = [
 name = "model_viewer"
 version = "0.1.0"
 dependencies = [
- "engine_app",
- "engine_assets",
- "engine_events",
- "engine_platform",
- "engine_plugins",
- "engine_render",
- "engine_scene",
- "plugin_gltf",
- "plugin_render3d",
+ "ribbon_app",
+ "ribbon_assets",
+ "ribbon_events",
+ "ribbon_platform",
+ "ribbon_plugin_gltf",
+ "ribbon_plugin_render3d",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
 ]
 
 [[package]]
@@ -2009,110 +1887,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
-name = "plugin_animation"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_ecs",
- "engine_math",
- "engine_plugins",
-]
-
-[[package]]
-name = "plugin_audio"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_ecs",
- "engine_events",
- "engine_math",
- "engine_plugins",
- "rodio",
-]
-
-[[package]]
-name = "plugin_editor_tools"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_commands",
- "engine_ecs",
- "engine_editor",
- "engine_math",
- "engine_plugins",
- "engine_reflect",
- "engine_render",
- "engine_scene",
-]
-
-[[package]]
-name = "plugin_gltf"
-version = "0.1.0"
-dependencies = [
- "engine_assets",
- "glam",
- "gltf",
-]
-
-[[package]]
-name = "plugin_physics"
-version = "0.1.0"
-dependencies = [
- "engine_app",
- "engine_ecs",
- "engine_math",
- "engine_plugins",
- "engine_scene",
- "plugin_voxel",
-]
-
-[[package]]
-name = "plugin_render3d"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "engine_app",
- "engine_assets",
- "engine_plugins",
- "engine_render",
- "engine_scene",
- "glam",
- "naga",
- "plugin_gltf",
- "plugin_voxel",
- "png",
- "pollster",
- "wgpu",
-]
-
-[[package]]
-name = "plugin_rendering"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "engine_app",
- "engine_assets",
- "engine_ecs",
- "engine_events",
- "engine_math",
- "engine_platform",
- "engine_plugins",
- "engine_render",
- "engine_scene",
- "plugin_voxel",
- "pollster",
- "rayon",
- "wgpu",
-]
-
-[[package]]
-name = "plugin_voxel"
-version = "0.1.0"
-dependencies = [
- "engine_math",
-]
-
-[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2283,6 +2057,232 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
+name = "ribbon_app"
+version = "0.1.0"
+dependencies = [
+ "ribbon_ecs",
+ "ribbon_events",
+ "ribbon_math",
+ "ribbon_schedule",
+]
+
+[[package]]
+name = "ribbon_assets"
+version = "0.1.0"
+dependencies = [
+ "ribbon_app",
+ "ribbon_events",
+ "ribbon_plugins",
+]
+
+[[package]]
+name = "ribbon_commands"
+version = "0.1.0"
+dependencies = [
+ "ribbon_ecs",
+ "ribbon_reflect",
+ "ribbon_scene",
+]
+
+[[package]]
+name = "ribbon_ecs"
+version = "0.1.0"
+dependencies = [
+ "hecs",
+]
+
+[[package]]
+name = "ribbon_editor"
+version = "0.1.0"
+dependencies = [
+ "ribbon_app",
+ "ribbon_commands",
+ "ribbon_ecs",
+ "ribbon_math",
+ "ribbon_platform",
+ "ribbon_plugins",
+ "ribbon_reflect",
+ "ribbon_render",
+ "ribbon_scene",
+]
+
+[[package]]
+name = "ribbon_events"
+version = "0.1.0"
+dependencies = [
+ "ribbon_ecs",
+]
+
+[[package]]
+name = "ribbon_math"
+version = "0.1.0"
+
+[[package]]
+name = "ribbon_platform"
+version = "0.1.0"
+dependencies = [
+ "ribbon_app",
+ "ribbon_events",
+ "ribbon_math",
+ "ribbon_plugins",
+ "softbuffer",
+ "winit",
+]
+
+[[package]]
+name = "ribbon_plugin_animation"
+version = "0.1.0"
+dependencies = [
+ "ribbon_app",
+ "ribbon_ecs",
+ "ribbon_math",
+ "ribbon_plugins",
+]
+
+[[package]]
+name = "ribbon_plugin_audio"
+version = "0.1.0"
+dependencies = [
+ "ribbon_app",
+ "ribbon_ecs",
+ "ribbon_events",
+ "ribbon_math",
+ "ribbon_plugins",
+ "rodio",
+]
+
+[[package]]
+name = "ribbon_plugin_editor_tools"
+version = "0.1.0"
+dependencies = [
+ "ribbon_app",
+ "ribbon_commands",
+ "ribbon_ecs",
+ "ribbon_editor",
+ "ribbon_math",
+ "ribbon_plugins",
+ "ribbon_reflect",
+ "ribbon_render",
+ "ribbon_scene",
+]
+
+[[package]]
+name = "ribbon_plugin_gltf"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "gltf",
+ "ribbon_assets",
+]
+
+[[package]]
+name = "ribbon_plugin_physics"
+version = "0.1.0"
+dependencies = [
+ "ribbon_app",
+ "ribbon_ecs",
+ "ribbon_math",
+ "ribbon_plugin_voxel",
+ "ribbon_plugins",
+ "ribbon_scene",
+]
+
+[[package]]
+name = "ribbon_plugin_render3d"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "naga",
+ "png",
+ "pollster",
+ "ribbon_app",
+ "ribbon_assets",
+ "ribbon_plugin_gltf",
+ "ribbon_plugin_voxel",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
+ "wgpu",
+]
+
+[[package]]
+name = "ribbon_plugin_rendering"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "pollster",
+ "rayon",
+ "ribbon_app",
+ "ribbon_assets",
+ "ribbon_ecs",
+ "ribbon_events",
+ "ribbon_math",
+ "ribbon_platform",
+ "ribbon_plugin_voxel",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
+ "wgpu",
+]
+
+[[package]]
+name = "ribbon_plugin_voxel"
+version = "0.1.0"
+dependencies = [
+ "ribbon_math",
+]
+
+[[package]]
+name = "ribbon_plugins"
+version = "0.1.0"
+dependencies = [
+ "ribbon_app",
+]
+
+[[package]]
+name = "ribbon_reflect"
+version = "0.1.0"
+dependencies = [
+ "ribbon_ecs",
+ "serde",
+]
+
+[[package]]
+name = "ribbon_render"
+version = "0.1.0"
+dependencies = [
+ "pollster",
+ "ribbon_app",
+ "ribbon_assets",
+ "ribbon_math",
+ "ribbon_platform",
+ "ribbon_plugins",
+ "wgpu",
+]
+
+[[package]]
+name = "ribbon_scene"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "ribbon_app",
+ "ribbon_ecs",
+ "ribbon_math",
+ "ribbon_plugins",
+ "ribbon_reflect",
+ "ron",
+ "serde",
+]
+
+[[package]]
+name = "ribbon_schedule"
+version = "0.1.0"
+dependencies = [
+ "ribbon_ecs",
+]
+
+[[package]]
 name = "rodio"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2368,14 +2368,14 @@ dependencies = [
 name = "scene_hierarchy_3d"
 version = "0.1.0"
 dependencies = [
- "engine_app",
- "engine_ecs",
- "engine_events",
- "engine_platform",
- "engine_plugins",
- "engine_render",
- "engine_scene",
- "plugin_render3d",
+ "ribbon_app",
+ "ribbon_ecs",
+ "ribbon_events",
+ "ribbon_platform",
+ "ribbon_plugin_render3d",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
 ]
 
 [[package]]
@@ -2620,19 +2620,19 @@ dependencies = [
 name = "studs"
 version = "0.3.0"
 dependencies = [
- "engine_app",
- "engine_events",
- "engine_math",
- "engine_platform",
- "engine_plugins",
- "engine_render",
- "engine_scene",
  "image",
- "plugin_audio",
- "plugin_physics",
- "plugin_render3d",
- "plugin_rendering",
- "plugin_voxel",
+ "ribbon_app",
+ "ribbon_events",
+ "ribbon_math",
+ "ribbon_platform",
+ "ribbon_plugin_audio",
+ "ribbon_plugin_physics",
+ "ribbon_plugin_render3d",
+ "ribbon_plugin_rendering",
+ "ribbon_plugin_voxel",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
 ]
 
 [[package]]
@@ -2916,31 +2916,31 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voxel_mesh_showcase"
 version = "0.1.0"
 dependencies = [
- "engine_app",
- "engine_events",
- "engine_platform",
- "engine_plugins",
- "engine_render",
- "engine_scene",
- "plugin_render3d",
- "plugin_voxel",
+ "ribbon_app",
+ "ribbon_events",
+ "ribbon_platform",
+ "ribbon_plugin_render3d",
+ "ribbon_plugin_voxel",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
 ]
 
 [[package]]
 name = "voxel_room"
 version = "0.1.0"
 dependencies = [
- "engine_app",
- "engine_assets",
- "engine_ecs",
- "engine_math",
- "engine_platform",
- "engine_plugins",
- "engine_reflect",
- "engine_render",
- "engine_scene",
- "plugin_rendering",
- "plugin_voxel",
+ "ribbon_app",
+ "ribbon_assets",
+ "ribbon_ecs",
+ "ribbon_math",
+ "ribbon_platform",
+ "ribbon_plugin_rendering",
+ "ribbon_plugin_voxel",
+ "ribbon_plugins",
+ "ribbon_reflect",
+ "ribbon_render",
+ "ribbon_scene",
  "ron",
 ]
 

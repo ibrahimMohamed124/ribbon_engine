@@ -6,14 +6,14 @@ use crate::types::entities::{EntityInstance, EntityKind, EntityRegistry};
 use crate::types::{
     Camera as SceneCamera, LightingParams, MaterialTable, RenderScene, RenderStyle,
 };
-use engine_app::{App, LogLevel};
-use engine_ecs::World;
-use engine_math::{Angles, Vect};
-use engine_platform::{PlatformPlugin, WindowFrame};
-use engine_plugins::{Plugin, PluginError};
-use engine_render::{DrawList, FramePlan, Framebuffer, Renderer};
-use engine_scene::{GlobalTransform, ScenePlugin};
-use plugin_voxel::VoxelWorldRes;
+use ribbon_app::{App, LogLevel};
+use ribbon_ecs::World;
+use ribbon_math::{Angles, Vect};
+use ribbon_platform::{PlatformPlugin, WindowFrame};
+use ribbon_plugin_voxel::VoxelWorldRes;
+use ribbon_plugins::{Plugin, PluginError};
+use ribbon_render::{DrawList, FramePlan, Framebuffer, Renderer};
+use ribbon_scene::{GlobalTransform, ScenePlugin};
 
 /// ECS camera settings. Its pose comes from the entity's `GlobalTransform`.
 #[derive(Clone, Copy, Debug)]
@@ -126,7 +126,7 @@ impl SurfaceShader for DefaultShader {
     fn albedo(
         &self,
         block: u8,
-        _hit: &plugin_voxel::Hit,
+        _hit: &ribbon_plugin_voxel::Hit,
         _direction: Vect,
         _style: &RenderStyle,
     ) -> f32 {
@@ -169,7 +169,7 @@ impl Plugin for RenderingPlugin {
                     ));
                 }
                 app.add_system(
-                    engine_app::Stage::Render,
+                    ribbon_app::Stage::Render,
                     render_frame_system::<DefaultShader>,
                 );
             }
@@ -182,13 +182,13 @@ impl Plugin for RenderingPlugin {
                             settings.height.max(1),
                         ));
                     }
-                    app.add_system(engine_app::Stage::Render, render_gpu_frame_system);
+                    app.add_system(ribbon_app::Stage::Render, render_gpu_frame_system);
                 }
                 #[cfg(not(feature = "gpu"))]
                 {
-                    app.world.resource_mut::<engine_app::LogBuffer>().push(
+                    app.world.resource_mut::<ribbon_app::LogBuffer>().push(
                         LogLevel::Warn,
-                        "GPU rendering was requested but plugin_rendering was built without its `gpu` feature; using CPU",
+                        "GPU rendering was requested but ribbon_plugin_rendering was built without its `gpu` feature; using CPU",
                     );
                     app.insert_resource(RenderSettings {
                         backend: RenderBackend::Cpu,
@@ -201,7 +201,7 @@ impl Plugin for RenderingPlugin {
                         DefaultShader,
                     ));
                     app.add_system(
-                        engine_app::Stage::Render,
+                        ribbon_app::Stage::Render,
                         render_frame_system::<DefaultShader>,
                     );
                 }
@@ -281,7 +281,7 @@ pub fn render_frame_system<S: SurfaceShader + Send + Sync + 'static>(world: &mut
         if let Err(error) = scene.validate_entity_limits() {
             world.insert_resource(ui_layer);
             world
-                .resource_mut::<engine_app::LogBuffer>()
+                .resource_mut::<ribbon_app::LogBuffer>()
                 .push(LogLevel::Warn, error);
             return;
         }
@@ -399,7 +399,7 @@ pub fn render_gpu_frame_system(world: &mut World) {
         if let Err(error) = scene.validate_entity_limits() {
             world.insert_resource(ui_layer);
             world
-                .resource_mut::<engine_app::LogBuffer>()
+                .resource_mut::<ribbon_app::LogBuffer>()
                 .push(LogLevel::Warn, error);
             return;
         }
@@ -449,13 +449,13 @@ pub fn render_gpu_frame_system(world: &mut World) {
         }
         if let Some(error) = frame_error {
             world
-                .resource_mut::<engine_app::LogBuffer>()
+                .resource_mut::<ribbon_app::LogBuffer>()
                 .push(LogLevel::Warn, format!("GPU voxel frame failed: {error}"));
         }
     });
 
     if let Some(error) = initialization_error {
-        world.resource_mut::<engine_app::LogBuffer>().push(
+        world.resource_mut::<ribbon_app::LogBuffer>().push(
             LogLevel::Warn,
             format!("GPU voxel renderer initialization failed; falling back to CPU: {error}"),
         );
@@ -480,7 +480,7 @@ pub fn render_gpu_frame_system(world: &mut World) {
 
 /// Register `RenderingPlugin`, returning dependency errors without panicking.
 pub fn add_rendering_plugin(app: &mut App) -> Result<(), PluginError> {
-    use engine_plugins::AppPluginExt;
+    use ribbon_plugins::AppPluginExt;
     app.add_plugin(PlatformPlugin)?;
     app.add_plugin(ScenePlugin)?;
     app.add_plugin(RenderingPlugin)?;

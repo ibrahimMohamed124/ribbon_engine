@@ -223,7 +223,7 @@ fn legacy_file_keeps_new_movement_defaults() {
 
 #[test]
 fn parser_never_panics_on_deterministic_garbage_lines() {
-    use engine_math::Rng;
+    use ribbon_math::Rng;
 
     let mut rng = Rng::new(0x51a7_1e55);
     let alphabet = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_=.#,+- infNaN";

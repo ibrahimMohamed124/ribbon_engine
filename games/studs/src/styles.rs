@@ -1,4 +1,4 @@
-use plugin_rendering::{Palette, RenderStyle, Tonemap, RENDER_DIST};
+use ribbon_plugin_rendering::{Palette, RenderStyle, Tonemap, RENDER_DIST};
 
 pub fn classic() -> RenderStyle {
     RenderStyle::default()

@@ -1,6 +1,6 @@
 //! Palette and tone mapping data.
 
-use engine_math::pack_gray;
+use ribbon_math::pack_gray;
 
 pub const LEVEL_COUNT: usize = 14;
 #[derive(Clone, Copy, Debug, PartialEq)]

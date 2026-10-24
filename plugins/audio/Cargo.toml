@@ -1,5 +1,5 @@
 [package]
-name = "plugin_audio"
+name = "ribbon_plugin_audio"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,9 +8,9 @@ default = ["audio"]
 audio = ["dep:rodio"]
 
 [dependencies]
-engine_app = { path = "../../crates/engine_app" }
-engine_plugins = { path = "../../crates/engine_plugins" }
-engine_ecs = { path = "../../crates/engine_ecs" }
-engine_events = { path = "../../crates/engine_events" }
-engine_math = { path = "../../crates/engine_math" }
+ribbon_app = { path = "../../crates/ribbon_app" }
+ribbon_plugins = { path = "../../crates/ribbon_plugins" }
+ribbon_ecs = { path = "../../crates/ribbon_ecs" }
+ribbon_events = { path = "../../crates/ribbon_events" }
+ribbon_math = { path = "../../crates/ribbon_math" }
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"], optional = true }

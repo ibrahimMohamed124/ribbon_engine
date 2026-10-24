@@ -54,8 +54,8 @@ jobs:
       - name: GPU fixture parity and renderer regressions
         if: runner.os == 'Linux'
         run: |
-          WGPU_BACKEND=vulkan cargo test --locked -p plugin_rendering --test parity -- --nocapture
-          WGPU_BACKEND=vulkan cargo test --locked -p plugin_rendering --lib gpu -- --nocapture
+          WGPU_BACKEND=vulkan cargo test --locked -p ribbon_plugin_rendering --test parity -- --nocapture
+          WGPU_BACKEND=vulkan cargo test --locked -p ribbon_plugin_rendering --lib gpu -- --nocapture
 
   test-no-default-features:
     name: Build & test without optional platform features
@@ -83,16 +83,16 @@ jobs:
       - name: Verify platform optional dependencies are absent
         shell: bash
         run: |
-          if cargo tree --locked -p engine_render --no-default-features -e normal | grep -E 'wgpu v[0-9]'; then
-            echo "engine_render must not pull wgpu when its gpu feature is disabled"
+          if cargo tree --locked -p ribbon_render --no-default-features -e normal | grep -E 'wgpu v[0-9]'; then
+            echo "ribbon_render must not pull wgpu when its gpu feature is disabled"
             exit 1
           fi
-          if cargo tree --locked -p plugin_audio --no-default-features -e normal | grep -E 'rodio v[0-9]'; then
-            echo "plugin_audio must not pull rodio when its audio feature is disabled"
+          if cargo tree --locked -p ribbon_plugin_audio --no-default-features -e normal | grep -E 'rodio v[0-9]'; then
+            echo "ribbon_plugin_audio must not pull rodio when its audio feature is disabled"
             exit 1
           fi
-          if cargo tree --locked -p plugin_rendering --no-default-features -e normal | grep -E '(wgpu|rayon) v[0-9]'; then
-            echo "plugin_rendering must not pull optional GPU/CPU backends when all features are disabled"
+          if cargo tree --locked -p ribbon_plugin_rendering --no-default-features -e normal | grep -E '(wgpu|rayon) v[0-9]'; then
+            echo "ribbon_plugin_rendering must not pull optional GPU/CPU backends when all features are disabled"
             exit 1
           fi
 
@@ -123,12 +123,12 @@ jobs:
       - name: Engine dependency and game-content boundary
         shell: bash
         run: |
-          if cargo tree --locked -p engine_ecs -e normal --depth 1 --prefix none | grep -vE '^(engine_ecs|hecs) v'; then
-            echo "engine_ecs may depend only on hecs"
+          if cargo tree --locked -p ribbon_ecs -e normal --depth 1 --prefix none | grep -vE '^(ribbon_ecs|hecs) v'; then
+            echo "ribbon_ecs may depend only on hecs"
             exit 1
           fi
-          if cargo tree --locked -p engine_math -e normal --depth 1 --prefix none | grep -v '^engine_math v'; then
-            echo "engine_math must have no dependencies"
+          if cargo tree --locked -p ribbon_math -e normal --depth 1 --prefix none | grep -v '^ribbon_math v'; then
+            echo "ribbon_math must have no dependencies"
             exit 1
           fi
           if rg -n -i 'studs|warden|crawlmaster|vividcharacters' crates plugins; then
@@ -158,7 +158,7 @@ jobs:
         run: cargo build --locked --workspace --examples
       - name: Level probe
         if: runner.os == 'Linux'
-        run: cargo run --release --locked -p plugin_rendering --example level_probe
+        run: cargo run --release --locked -p ribbon_plugin_rendering --example level_probe
 
   release-build:
     name: Release binary (${{ matrix.os }})

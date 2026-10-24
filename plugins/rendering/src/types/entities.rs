@@ -1,4 +1,4 @@
-use engine_math::Vect;
+use ribbon_math::Vect;
 
 pub type Box3 = ([f32; 3], [f32; 3], u8);
 pub type Bounds3 = ([f32; 3], [f32; 3]);

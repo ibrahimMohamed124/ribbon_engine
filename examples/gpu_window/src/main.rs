@@ -3,11 +3,11 @@
 //! Usage: `cargo run -p gpu_window [-- --frames N]`. Without `--frames` the
 //! window stays open until it is closed.
 
-use engine_app::{App, AppExit, Stage, World};
-use engine_events::WorldEventsExt;
-use engine_platform::{PlatformConfig, PlatformPlugin};
-use engine_plugins::AppPluginExt;
-use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use ribbon_app::{App, AppExit, Stage, World};
+use ribbon_events::WorldEventsExt;
+use ribbon_platform::{PlatformConfig, PlatformPlugin};
+use ribbon_plugins::AppPluginExt;
+use ribbon_render::gpu_window::{ClearColor, GpuWindowPlugin};
 use std::error::Error;
 
 struct FrameCounter {
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let mut app = App::new();
     app.insert_resource(PlatformConfig {
-        title: "Voxelworks GPU window".to_owned(),
+        title: "Ribbon GPU window".to_owned(),
         width: 960,
         height: 540,
     });

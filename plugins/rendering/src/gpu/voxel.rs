@@ -1,6 +1,6 @@
 //! Voxel raymarching GPU backend: offscreen renderer and window presenter.
 //!
-//! GPU voxel rendering backend, owned by `plugin_rendering` and shared by the ECS bridge.
+//! GPU voxel rendering backend, owned by `ribbon_plugin_rendering` and shared by the ECS bridge.
 //! Per `docs/RENDERER_PLAN.md` this raymarcher is frozen and is replaced by the
 //! mesh renderer in phase 7; do not extend it.
 
@@ -19,9 +19,9 @@ use crate::texture::{
 };
 use crate::{MATERIAL_ID_SPACE, RENDER_DIST};
 use bytemuck::{Pod, Zeroable};
-use engine_math::{forward_vec, Vect};
-use engine_platform::Window;
-use engine_render::frame::{
+use ribbon_math::{forward_vec, Vect};
+use ribbon_platform::Window;
+use ribbon_render::frame::{
     glyph, DrawCommand, DrawList, Effect, FramePlan, Framebuffer, Renderer,
     MAX_DRAW_QUADS_PER_FRAME, MAX_RENDER_PASSES_PER_FRAME,
 };
@@ -1574,7 +1574,7 @@ mod world_tests {
     use crate::material::MaterialTable;
     use crate::scene::Scene;
     use crate::texture::{PbrTextureSet, RgbaMipChain, RgbaMipLevel, TextureColorSpace, TextureId};
-    use engine_render::frame::{DrawCommand, DrawList, FramePlan, Framebuffer, Renderer};
+    use ribbon_render::frame::{DrawCommand, DrawList, FramePlan, Framebuffer, Renderer};
 
     #[test]
     fn gpu_renderer_implements_the_shared_renderer_contract() {

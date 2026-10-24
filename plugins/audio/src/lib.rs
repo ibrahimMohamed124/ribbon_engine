@@ -2,11 +2,11 @@
 //!
 //! Device output is supplied through `AudioSink`; games own IDs and embedded sound assets.
 
-use engine_app::{App, LogBuffer, LogLevel, Stage};
-use engine_ecs::World;
-use engine_events::{EventCursor, WorldEventsExt};
-use engine_math::Vect;
-use engine_plugins::Plugin;
+use ribbon_app::{App, LogBuffer, LogLevel, Stage};
+use ribbon_ecs::World;
+use ribbon_events::{EventCursor, WorldEventsExt};
+use ribbon_math::Vect;
+use ribbon_plugins::Plugin;
 
 pub mod bank;
 pub mod mixer;

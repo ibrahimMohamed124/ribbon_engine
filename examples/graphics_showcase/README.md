@@ -1,7 +1,7 @@
 # Graphics Showcase
 
 A live windowed scene demonstrating the features integrated into the current
-`plugin_render3d` pipeline.
+`ribbon_plugin_render3d` pipeline.
 
 Run from the repository root:
 
@@ -28,7 +28,7 @@ cargo run -p graphics_showcase -- --frames 600
 - CPU frustum culling for the main color pass while retaining off-screen objects for shadows.
 - Per-frame transforms, camera orbit, and frame-limit shutdown for capture workflows.
 
-`plugin_render3d` also accepts greedy-meshed voxel chunks; run
+`ribbon_plugin_render3d` also accepts greedy-meshed voxel chunks; run
 `cargo run -p voxel_mesh_showcase` to see that path.
 
 This is a first PBR/rendering vertical slice, not a complete modern renderer. Normal,

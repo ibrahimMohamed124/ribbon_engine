@@ -4,23 +4,23 @@
 //! the pointer, and left-click to capture it again. Run `cargo run -p horror_slice`.
 //! Optional profile capture: `cargo run -p horror_slice --release -- --frames 1800 --profile-csv target/profiles/horror-slice.csv`.
 
-use engine_app::{App, AppExit, Stage, Time, World};
-use engine_assets::{AssetEvent, AssetPlugin, AssetRef, AssetServer, FsSource};
-use engine_events::{EventCursor, WorldEventsExt};
-use engine_platform::input::Key;
-use engine_platform::runtime::CursorGrabState;
-use engine_platform::{Input, PlatformConfig, PlatformPlugin};
-use engine_plugins::AppPluginExt;
-use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
-use engine_render::profiling::RenderProfilePlugin;
-use engine_scene::ScenePlugin;
-use plugin_gltf::{GltfLoader, ModelAsset};
-use plugin_physics::{slide_capsule_xz, Aabb3};
-use plugin_render3d::glam::{Quat, Vec3};
-use plugin_render3d::{
+use ribbon_app::{App, AppExit, Stage, Time, World};
+use ribbon_assets::{AssetEvent, AssetPlugin, AssetRef, AssetServer, FsSource};
+use ribbon_events::{EventCursor, WorldEventsExt};
+use ribbon_platform::input::Key;
+use ribbon_platform::runtime::CursorGrabState;
+use ribbon_platform::{Input, PlatformConfig, PlatformPlugin};
+use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
+use ribbon_plugin_physics::{slide_capsule_xz, Aabb3};
+use ribbon_plugin_render3d::glam::{Quat, Vec3};
+use ribbon_plugin_render3d::{
     Camera3D, FogSettings, ModelInstance, PointLight, Render3dPlugin, SpotLight, SunLight,
     Transform3D,
 };
+use ribbon_plugins::AppPluginExt;
+use ribbon_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use ribbon_render::profiling::RenderProfilePlugin;
+use ribbon_scene::ScenePlugin;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
@@ -98,7 +98,7 @@ struct StaticCollider {
 }
 
 /// Game-specific state for first-person input and camera-following flashlight.
-/// Static collision math itself lives in `plugin_physics` for reuse by other games.
+/// Static collision math itself lives in `ribbon_plugin_physics` for reuse by other games.
 struct FirstPersonController {
     yaw: f32,
     pitch: f32,
@@ -303,7 +303,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             "--help" | "-h" => {
                 println!(concat!(
-                    "Voxelworks Horror Slice\n\n",
+                    "Ribbon Horror Slice\n\n",
                     "Controls:\n",
                     "  WASD       Walk\n",
                     "  Mouse      Look around\n",
@@ -326,7 +326,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let asset_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/models");
     let mut app = App::new();
     app.insert_resource(PlatformConfig {
-        title: "Voxelworks | Horror Slice".to_owned(),
+        title: "Ribbon | Horror Slice".to_owned(),
         width: 1280,
         height: 720,
     });

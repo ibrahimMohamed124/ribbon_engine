@@ -28,7 +28,7 @@ run:
 ```powershell
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p plugin_render3d spotlight_only_corridor_writes_a_headless_png -- --nocapture
+cargo test -p ribbon_plugin_render3d spotlight_only_corridor_writes_a_headless_png -- --nocapture
 ```
 
 The test is expected to save `target/spotlight_corridor.png` before checking the shadow difference. If

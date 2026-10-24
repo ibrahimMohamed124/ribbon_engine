@@ -1,7 +1,0 @@
-[package]
-name = "engine_plugins"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-engine_app = { path = "../engine_app" }

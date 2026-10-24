@@ -1,6 +1,6 @@
-use engine_app::{App, Time};
-use engine_ecs::World;
-use engine_schedule::Stage;
+use ribbon_app::{App, Time};
+use ribbon_ecs::World;
+use ribbon_schedule::Stage;
 use std::time::Duration;
 
 #[derive(Clone, Copy)]

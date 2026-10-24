@@ -8,11 +8,11 @@ gameplay and rendering transition away from the legacy voxel raycaster is pendin
 
 The engine now has a usable native-surface mesh-rendering vertical slice:
 
-- `engine_render::RenderGraph` validates named-resource dependencies and runs
+- `ribbon_render::RenderGraph` validates named-resource dependencies and runs
   `FramePass` nodes in resource order. `GpuWindow` models clear, mesh passes,
   and final presentation as a graph chain; surface acquisition and
   `SurfaceTexture::present()` remain presenter responsibilities.
-- `plugin_render3d` extracts ECS camera, transforms, built-in meshes, glTF model
+- `ribbon_plugin_render3d` extracts ECS camera, transforms, built-in meshes, glTF model
   placements, voxel-mesh placements, and sunlight into `ExtractedScene3D`.
 - The forward mesh shader uses a Cook-Torrance / GGX metallic-roughness BRDF,
   glTF base-color texture and factor, packed metallic-roughness map (G=roughness,
@@ -23,10 +23,10 @@ The engine now has a usable native-surface mesh-rendering vertical slice:
 - Camera-frustum sphere culling filters color-pass instances. Off-screen models
   are still retained in the shadow draw list so they can cast shadows into the
   visible scene.
-- `plugin_voxel` has `ChunkedVoxelWorld`: edits carry a revision, invalidate the owner chunk
+- `ribbon_plugin_voxel` has `ChunkedVoxelWorld`: edits carry a revision, invalidate the owner chunk
   and any face-adjacent chunks affected by a boundary change, and remesh only dirty chunks.
   The greedy mesher reads the complete world so faces spanning adjacent chunks are hidden.
-- `plugin_render3d::OffscreenVoxelRenderer` drains chunk updates, incrementally uploads meshes,
+- `ribbon_plugin_render3d::OffscreenVoxelRenderer` drains chunk updates, incrementally uploads meshes,
   releases replaced/empty GPU buffers and reuses mesh slots. It renders using the shared
   HDR/PBR/depth/shadow pipeline and returns an engine framebuffer for `WindowFrame` users.
 - The native ECS `Render3dPlugin` path also releases stale uploaded voxel meshes when their
@@ -47,7 +47,7 @@ spotlight effects, LOD, and streaming remain separate work.
 1. New render features use wgpu rasterization and WGSL; the legacy voxel
    raymarcher is not the place for new engine rendering work.
 2. Voxel worlds are converted to greedy-meshed chunks and drawn through
-   `plugin_render3d`.
+   `ribbon_plugin_render3d`.
 3. The CPU renderer is a frozen reference for legacy goldens. Avoid adding new
    engine capabilities there unless explicitly needed for compatibility.
 4. `RenderGraph` orders passes by named resource dependencies. It is not yet a

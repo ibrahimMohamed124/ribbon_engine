@@ -25,7 +25,7 @@ tests were not run while preparing this patch. From the workspace root on Window
 ```powershell
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p plugin_render3d spotlight_only_corridor_writes_a_headless_png -- --nocapture
+cargo test -p ribbon_plugin_render3d spotlight_only_corridor_writes_a_headless_png -- --nocapture
 ```
 
 If the focused GPU test passes, then run both workspace test configurations and

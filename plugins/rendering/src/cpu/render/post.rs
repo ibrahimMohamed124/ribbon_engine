@@ -1,8 +1,8 @@
 //! Screen-space vignette, grain, and ordered dithering.
 
 use crate::style::{LevelLut, RenderStyle, LEVEL_COUNT};
-use engine_math::hash4;
-use engine_render::Framebuffer;
+use ribbon_math::hash4;
+use ribbon_render::Framebuffer;
 
 pub fn adjust_brightness(fb: &mut Framebuffer, brightness: f32) {
     let brightness = if brightness.is_finite() {

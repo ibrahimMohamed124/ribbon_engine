@@ -1,6 +1,6 @@
 //! Procedural grayscale textures for game surface materials.
 
-use engine_math::hash4;
+use ribbon_math::hash4;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Texture {

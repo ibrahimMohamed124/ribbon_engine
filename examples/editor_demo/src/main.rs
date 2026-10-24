@@ -1,10 +1,10 @@
-use engine_app::{App, Time};
-use engine_editor::{EditorPlugin, EditorShell};
-use engine_platform::PlatformPlugin;
-use engine_plugins::AppPluginExt;
-use engine_scene::ScenePlugin;
-use plugin_editor_tools::EditorToolsPlugin;
-use plugin_rendering::ecs::{RenderBackend, RenderSettings, RenderingPlugin};
+use ribbon_app::{App, Time};
+use ribbon_editor::{EditorPlugin, EditorShell};
+use ribbon_platform::PlatformPlugin;
+use ribbon_plugin_editor_tools::EditorToolsPlugin;
+use ribbon_plugin_rendering::ecs::{RenderBackend, RenderSettings, RenderingPlugin};
+use ribbon_plugins::AppPluginExt;
+use ribbon_scene::ScenePlugin;
 use std::error::Error;
 use std::time::Duration;
 
@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.update();
     let draw_commands = app
         .world
-        .try_resource::<engine_render::DrawList>()
+        .try_resource::<ribbon_render::DrawList>()
         .map_or(0, |list| list.commands.len());
     println!("editor_demo UI commands: {draw_commands}");
     Ok(())

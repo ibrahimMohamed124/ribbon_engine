@@ -13,21 +13,21 @@ path = "src/main.rs"
 
 [features]
 default = ["audio", "gpu"]
-audio = ["plugin_audio/audio"]
-gpu = ["plugin_rendering/gpu", "dep:plugin_render3d"]
+audio = ["ribbon_plugin_audio/audio"]
+gpu = ["ribbon_plugin_rendering/gpu", "dep:ribbon_plugin_render3d"]
 
 [dependencies]
-engine_app = { path = "../../crates/engine_app" }
-engine_events = { path = "../../crates/engine_events" }
-engine_plugins = { path = "../../crates/engine_plugins" }
-engine_scene = { path = "../../crates/engine_scene" }
-engine_math = { path = "../../crates/engine_math" }
-engine_platform = { path = "../../crates/engine_platform" }
-engine_render = { path = "../../crates/engine_render", default-features = false }
-plugin_audio = { path = "../../plugins/audio", default-features = false }
-plugin_physics = { path = "../../plugins/physics" }
-plugin_voxel = { path = "../../plugins/voxel" }
-plugin_rendering = { path = "../../plugins/rendering", default-features = false, features = ["cpu"] }
-plugin_render3d = { path = "../../plugins/render3d", optional = true }
+ribbon_app = { path = "../../crates/ribbon_app" }
+ribbon_events = { path = "../../crates/ribbon_events" }
+ribbon_plugins = { path = "../../crates/ribbon_plugins" }
+ribbon_scene = { path = "../../crates/ribbon_scene" }
+ribbon_math = { path = "../../crates/ribbon_math" }
+ribbon_platform = { path = "../../crates/ribbon_platform" }
+ribbon_render = { path = "../../crates/ribbon_render", default-features = false }
+ribbon_plugin_audio = { path = "../../plugins/audio", default-features = false }
+ribbon_plugin_physics = { path = "../../plugins/physics" }
+ribbon_plugin_voxel = { path = "../../plugins/voxel" }
+ribbon_plugin_rendering = { path = "../../plugins/rendering", default-features = false, features = ["cpu"] }
+ribbon_plugin_render3d = { path = "../../plugins/render3d", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
 

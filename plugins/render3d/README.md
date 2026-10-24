@@ -1,7 +1,7 @@
-# plugin_render3d
+# Ribbon 3D Rendering Plugin (`ribbon_plugin_render3d`)
 
 Native-surface 3D mesh rendering for the ECS engine. It consumes resolved
-`GlobalTransform3D` values from `engine_scene` and draws through the `GpuWindow`
+`GlobalTransform3D` values from `ribbon_scene` and draws through the `GpuWindow`
 frame-pass / `RenderGraph` path.
 
 ## Current path
@@ -26,12 +26,12 @@ frame-pass / `RenderGraph` path.
 ## Dynamic voxel use
 
 Use `OffscreenVoxelRenderer::new(width, height)` with a mutable
-`plugin_voxel::ChunkedVoxelWorld`. Each `render` drains that world's dirty chunk updates,
+`ribbon_plugin_voxel::ChunkedVoxelWorld`. Each `render` drains that world's dirty chunk updates,
 updates GPU mesh storage by chunk coordinate, applies a caller-provided linear-color block
 palette and draws optional unit-cube instances. Empty chunk updates release old GPU geometry;
 mesh slots are reused after edits rather than accumulating a new buffer for every revision.
 The offscreen output is tone-mapped and converted to sRGB before readback into
-`engine_render::Framebuffer`. `GpuContext`/adapter initialization can fail on a target without
+`ribbon_render::Framebuffer`. `GpuContext`/adapter initialization can fail on a target without
 a usable GPU adapter, so callers should retain a fallback renderer.
 
 This adapter exists for applications that still present through
@@ -56,6 +56,6 @@ GPU-driven culling, skinned meshes, or external glTF resource resolution. The
 spotlight-shadow and bloom implementations still need validation across a range of
 Windows GPU adapters; a headless spot-lit corridor test writes `target/spotlight_corridor.png`
 when an adapter is available. Applications can use `OffscreenVoxelRenderer` for offscreen
-voxel rendering; `plugin_rendering` also retains its CPU and GPU voxel raycasters. See
+voxel rendering; `ribbon_plugin_rendering` also retains its CPU and GPU voxel raycasters. See
 [`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md) and
 [`../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md`](../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md).

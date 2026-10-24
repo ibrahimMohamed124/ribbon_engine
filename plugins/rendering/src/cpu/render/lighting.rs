@@ -3,8 +3,8 @@
 use crate::entities::EntityKind;
 use crate::material::MaterialTable;
 use crate::style::RenderStyle;
-use engine_math::Vect;
-use plugin_voxel::{face_ao, face_uv, Hit, VoxelWorld};
+use ribbon_math::Vect;
+use ribbon_plugin_voxel::{face_ao, face_uv, Hit, VoxelWorld};
 
 pub const CONE_INNER: f32 = 0.985;
 pub const CONE_OUTER: f32 = 0.86;
@@ -238,8 +238,8 @@ pub fn shade_surface<S: SurfaceShader + ?Sized>(
 #[cfg(test)]
 mod shadow_tests {
     use super::{light_with_style, spot_light_visibility};
-    use engine_math::Vect;
-    use plugin_voxel::VoxelWorld;
+    use ribbon_math::Vect;
+    use ribbon_plugin_voxel::VoxelWorld;
 
     #[test]
     fn voxel_between_source_and_surface_blocks_the_beam() {

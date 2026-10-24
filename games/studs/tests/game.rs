@@ -1,4 +1,4 @@
-use engine_math::Vect;
+use ribbon_math::Vect;
 use studs::audio::AudioEvent;
 use studs::enemy::ENEMY_AWAKE_AFTER;
 use studs::game::{Difficulty, Game, State, PAGES_TOTAL};

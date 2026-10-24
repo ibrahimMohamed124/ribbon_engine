@@ -1,7 +1,7 @@
-# plugin_voxel
+# Ribbon Voxel Plugin (`ribbon_plugin_voxel`)
 
 Voxel-grid storage, DDA ray casting, face queries, mutable chunk tracking and greedy
-surface meshing. The crate depends on `engine_math` only and does not depend on the
+surface meshing. The crate depends on `ribbon_math` only and does not depend on the
 app runtime or a rendering backend. Chunk scheduling and meshing remain reusable engine
 capabilities; consumers decide what block ids mean.
 
@@ -30,10 +30,10 @@ visible faces on the outside of the world. Boundary clipping also supports dimen
 are not multiples of the chunk size.
 
 A renderer can either consume the `ChunkMeshUpdate` stream itself, or use
-`plugin_render3d::OffscreenVoxelRenderer`, which consumes dirty updates, uploads new meshes,
+`ribbon_plugin_render3d::OffscreenVoxelRenderer`, which consumes dirty updates, uploads new meshes,
 releases superseded/empty GPU meshes and reuses mesh slots. For the native-surface ECS path,
 wrap a generated mesh in `Arc<VoxelChunkMesh>` and attach it with
-`plugin_render3d::VoxelMeshInstance3D`. See `examples/voxel_mesh_showcase` and
+`ribbon_plugin_render3d::VoxelMeshInstance3D`. See `examples/voxel_mesh_showcase` and
 `docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md` for the current integration boundaries. Block ids
 remain application-defined; palettes/material-atlas policy is deliberately not owned by
 this crate.

@@ -45,7 +45,7 @@ The user subsequently ran the original Phase 0 checkout from PowerShell. After r
 
 The initial proposal was to use `rapier3d` for a kinematic controller and collision/ray
 queries. That proposal was superseded: the current room only needs static AABB collision,
-so `plugin_physics` provides an axis-separated capsule slide helper without adding Rapier.
+so `ribbon_plugin_physics` provides an axis-separated capsule slide helper without adding Rapier.
 See the current decision in `docs/DECISIONS.md`.
 
 ## Changed files
@@ -54,7 +54,7 @@ See the current decision in `docs/DECISIONS.md`.
 - `examples/horror_slice/Cargo.toml`: declares only the engine and native renderer dependencies required by the starter.
 - `examples/horror_slice/src/main.rs`: creates a native GPU window, camera, and temporary floor mesh; supports `--frames N` for a bounded smoke run.
 - `examples/horror_slice/README.md`: records intended scope and run commands.
-- `tools/allowed_deps.toml`: added the example's direct dependency policy and initially proposed allowing `rapier3d` for `plugin_physics`; that proposal was later superseded as described above.
+- `tools/allowed_deps.toml`: added the example's direct dependency policy and initially proposed allowing `rapier3d` for `ribbon_plugin_physics`; that proposal was later superseded as described above.
 - `docs/DECISIONS.md`: records the collision-backend choice and rationale.
 
 ## Verification status

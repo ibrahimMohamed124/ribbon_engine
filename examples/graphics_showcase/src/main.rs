@@ -4,21 +4,21 @@
 //! Optional: `cargo run -p graphics_showcase -- --frames 600` exits after N frames.
 //! Optional: `cargo run -p graphics_showcase --release -- --frames 1800 --profile-csv target/profiles/graphics-showcase.csv`.
 
-use engine_app::{App, AppExit, Stage, Time, World};
-use engine_assets::{AssetPlugin, AssetRef, AssetServer, FsSource, LoadState};
-use engine_events::WorldEventsExt;
-use engine_platform::input::Key;
-use engine_platform::{Input, PlatformConfig, PlatformPlugin};
-use engine_plugins::AppPluginExt;
-use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
-use engine_render::profiling::RenderProfilePlugin;
-use engine_scene::ScenePlugin;
-use plugin_gltf::{GltfLoader, ModelAsset};
-use plugin_render3d::glam::{Quat, Vec3};
-use plugin_render3d::{
+use ribbon_app::{App, AppExit, Stage, Time, World};
+use ribbon_assets::{AssetPlugin, AssetRef, AssetServer, FsSource, LoadState};
+use ribbon_events::WorldEventsExt;
+use ribbon_platform::input::Key;
+use ribbon_platform::{Input, PlatformConfig, PlatformPlugin};
+use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
+use ribbon_plugin_render3d::glam::{Quat, Vec3};
+use ribbon_plugin_render3d::{
     BuiltinMesh, Camera3D, ExtractedScene3D, MeshInstance, ModelInstance, Render3dPlugin, SunLight,
     Transform3D,
 };
+use ribbon_plugins::AppPluginExt;
+use ribbon_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use ribbon_render::profiling::RenderProfilePlugin;
+use ribbon_scene::ScenePlugin;
 use std::error::Error;
 use std::path::Path;
 
@@ -88,7 +88,7 @@ fn stress_asset_path(index: usize) -> String {
 
 fn spawn_large_scene_grid(
     world: &mut World,
-    models: &[(engine_assets::Handle<ModelAsset>, Vec3)],
+    models: &[(ribbon_assets::Handle<ModelAsset>, Vec3)],
     side: usize,
     generation: u64,
 ) -> usize {
@@ -197,7 +197,7 @@ fn update_large_scene_stress(world: &mut World) {
         enum ActivationState {
             Pending,
             Failed(String),
-            Ready(Vec<(engine_assets::Handle<ModelAsset>, Vec3)>),
+            Ready(Vec<(ribbon_assets::Handle<ModelAsset>, Vec3)>),
         }
         let activation = {
             let server = world.resource::<AssetServer>();
@@ -397,7 +397,7 @@ fn spawn_cube(
 #[allow(clippy::too_many_arguments)]
 fn spawn_model(
     world: &mut World,
-    model: engine_assets::Handle<ModelAsset>,
+    model: ribbon_assets::Handle<ModelAsset>,
     local_center: Vec3,
     world_center: Vec3,
     scale: f32,
@@ -590,9 +590,9 @@ fn report_render_extraction(world: &mut World) {
 
 fn add_scene(
     world: &mut World,
-    checker: engine_assets::Handle<ModelAsset>,
+    checker: ribbon_assets::Handle<ModelAsset>,
     checker_center: Vec3,
-    triangle: engine_assets::Handle<ModelAsset>,
+    triangle: ribbon_assets::Handle<ModelAsset>,
     triangle_center: Vec3,
 ) {
     // Ground slab and a subtle grid make perspective, scale, and camera movement easy to read.
@@ -910,7 +910,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut stress_model_paths = Vec::<String>::new();
     let mut stress_leases = Vec::<AssetRef<ModelAsset>>::new();
-    let mut initial_stress_models: Option<Vec<(engine_assets::Handle<ModelAsset>, Vec3)>> = None;
+    let mut initial_stress_models: Option<Vec<(ribbon_assets::Handle<ModelAsset>, Vec3)>> = None;
     let mut stress_active = false;
     let mut stress_pending_activation = false;
     if stress_grid_side > 0 {
@@ -964,7 +964,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     app.insert_resource(PlatformConfig {
-        title: "Voxelworks | Graphics Showcase".to_owned(),
+        title: "Ribbon | Graphics Showcase".to_owned(),
         width: 1280,
         height: 800,
     });
@@ -1064,7 +1064,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     app.add_system(Stage::Last, report_render_extraction);
 
-    println!("Voxelworks Graphics Showcase");
+    println!("Ribbon Graphics Showcase");
     println!("Live features: native wgpu surface, ECS extraction, indexed meshes, depth buffer,");
     println!("Cook-Torrance metallic-roughness PBR, HDR tone mapping, directional shadows, and frustum culling.");
     println!(

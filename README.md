@@ -1,17 +1,17 @@
-# Voxelworks Engine
+# Ribbon Engine
 
-Voxelworks is a Rust game engine built around a small ECS core, a staged scheduler
+Ribbon Engine is a Rust game engine built around a small ECS core, a staged scheduler
 with access-declared parallel execution and a deterministic serial fallback, and
 optional plugins. It includes a voxel raycasting renderer (CPU and GPU) and a wgpu
 mesh renderer. The [`studs`](games/studs/) game demonstrates an application built on it.
 
-> **Status:** `studs` now starts through the ECS `engine_app::App` with
-> `engine_platform`, `engine_scene`, `plugin_rendering`, and `plugin_audio`.
+> **Status:** `studs` now starts through the ECS `ribbon_app::App` with
+> `ribbon_platform`, `ribbon_scene`, `ribbon_plugin_rendering`, and `ribbon_plugin_audio`.
 > The old immediate-mode runner and `App`/`Ctx` traits are no longer on the
 > game executable's runtime path. The live maze, run progression, player, enemy,
 > and page pickups are now ECS resources/entities with scheduled simulation systems.
 > STUDS supports `--renderer cpu|gpu|auto`. Its GPU backend now uses the
-> engine-owned `plugin_render3d::OffscreenVoxelRenderer`, which consumes dynamically
+> engine-owned `ribbon_plugin_render3d::OffscreenVoxelRenderer`, which consumes dynamically
 > remeshed voxel chunks and draws through the PBR/HDR mesh pipeline; CPU raycasting remains
 > the reference/fallback. Legacy raycaster code is retained until manual Windows GPU gameplay
 > smoke checks pass. See [docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md](docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md)
@@ -21,11 +21,17 @@ mesh renderer. The [`studs`](games/studs/) game demonstrates an application buil
 
 | Path | Contents |
 | --- | --- |
-| `crates/` | Engine core (`engine_*`): math, ECS, events, schedule, app, plugins, platform, assets, scene, render, reflection, commands, editor |
-| `plugins/` | Optional features (`plugin_*`): voxel, physics, rendering, render3d, gltf, animation, audio, editor tools |
+| `crates/` | Ribbon Engine core (`ribbon_*`): math, ECS, events, schedule, app, plugins, platform, assets, scene, render, reflection, commands, editor |
+| `plugins/` | Optional features (`ribbon_plugin_*`): voxel, physics, rendering, render3d, gltf, animation, audio, editor tools |
 | `examples/` | Engine-only sample apps: `hello_ecs`, `voxel_room`, `cube_spin`, `model_viewer`, `gpu_window`, `editor_demo`, `graphics_showcase`, `scene_hierarchy_3d`, `voxel_mesh_showcase`, `horror_slice` |
 | `games/studs/` | A game composed from the ECS app, engine runtime, and plugins |
 | `docs/`, `tools/` | Architecture decisions, migration records, dependency policy, and tooling |
+
+Rust packages in `crates/` use the `ribbon_*` namespace, while optional plugin packages use
+`ribbon_plugin_*`. Their source directories follow the same core names; plugin directories remain
+feature-named under `plugins/`. Runnable examples retain concise names such as `hello_ecs` and
+`graphics_showcase`. The namespace change is an API/package rename: downstream Cargo dependencies and
+Rust imports must use the Ribbon names.
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for the dependency graph, frame order and
 known limits, [docs/SCALABILITY_ROADMAP.md](docs/SCALABILITY_ROADMAP.md),
@@ -56,14 +62,14 @@ Audio and GPU rendering are optional Cargo features for STUDS. The defaults enab
 both; `--no-default-features` selects the CPU renderer and disables Rodio output.
 Choose a backend with `cargo run -p studs -- --renderer gpu` or `--renderer cpu`;
 `auto` currently prefers GPU when that feature is compiled in and falls back to CPU
-if GPU initialization fails. The STUDS GPU path uses `plugin_render3d::OffscreenVoxelRenderer`
+if GPU initialization fails. The STUDS GPU path uses `ribbon_plugin_render3d::OffscreenVoxelRenderer`
 for GPU mesh rasterization and copies the tone-mapped framebuffer through `WindowFrame`.
 The CPU path remains the deterministic reference/fallback; native-surface voxel rendering
 is a separate future milestone.
 
 ## Horror Slice visual acceptance example
 
-`cargo run -p horror_slice` opens the native-surface single-room horror scene. The room is RON-authored and uses a flashlight spotlight with a perspective shadow map, concrete/floor/rusted-metal PBR maps, a locked-door prop, a key, a small lantern/save-point prop and a monster silhouette. The bundled GLBs contain the nine downloaded Poly Haven CC0 maps; deterministic procedural maps remain separately marked `PLACEHOLDER` fallbacks. Provenance and regeneration steps are documented in [`examples/horror_slice/README.md`](examples/horror_slice/README.md). The example supports first-person WASD movement, mouse look and static AABB wall/prop collision via `plugin_physics`; Shift sprints, Escape releases the cursor and left-click recaptures it. It remains a rendering/movement slice: door/key interaction, skeletal animation, positional audio and save/load are not implemented yet. Interactive visual acceptance still requires review on the target Windows GPU.
+`cargo run -p horror_slice` opens the native-surface single-room horror scene. The room is RON-authored and uses a flashlight spotlight with a perspective shadow map, concrete/floor/rusted-metal PBR maps, a locked-door prop, a key, a small lantern/save-point prop and a monster silhouette. The bundled GLBs contain the nine downloaded Poly Haven CC0 maps; deterministic procedural maps remain separately marked `PLACEHOLDER` fallbacks. Provenance and regeneration steps are documented in [`examples/horror_slice/README.md`](examples/horror_slice/README.md). The example supports first-person WASD movement, mouse look and static AABB wall/prop collision via `ribbon_plugin_physics`; Shift sprints, Escape releases the cursor and left-click recaptures it. It remains a rendering/movement slice: door/key interaction, skeletal animation, positional audio and save/load are not implemented yet. Interactive visual acceptance still requires review on the target Windows GPU.
 
 ## Dependency rules
 

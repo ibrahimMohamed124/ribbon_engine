@@ -1,4 +1,4 @@
-use engine_math::{Angles, Rng, Vect};
+use ribbon_math::{Angles, Rng, Vect};
 use studs::enemy::{
     bfs_next, Enemy, CATCH_DIST, ENEMY_AWAKE_AFTER, ENEMY_BASE_SPEED, SEEN_SPEED_FACTOR,
 };

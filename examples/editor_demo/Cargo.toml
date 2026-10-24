@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-engine_app = { path = "../../crates/engine_app" }
-engine_ecs = { path = "../../crates/engine_ecs" }
-engine_editor = { path = "../../crates/engine_editor", features = ["editor"] }
-engine_platform = { path = "../../crates/engine_platform" }
-engine_plugins = { path = "../../crates/engine_plugins" }
-engine_render = { path = "../../crates/engine_render" }
-engine_scene = { path = "../../crates/engine_scene" }
-plugin_rendering = { path = "../../plugins/rendering" }
-plugin_editor_tools = { path = "../../plugins/editor_tools" }
+ribbon_app = { path = "../../crates/ribbon_app" }
+ribbon_ecs = { path = "../../crates/ribbon_ecs" }
+ribbon_editor = { path = "../../crates/ribbon_editor", features = ["editor"] }
+ribbon_platform = { path = "../../crates/ribbon_platform" }
+ribbon_plugins = { path = "../../crates/ribbon_plugins" }
+ribbon_render = { path = "../../crates/ribbon_render" }
+ribbon_scene = { path = "../../crates/ribbon_scene" }
+ribbon_plugin_rendering = { path = "../../plugins/rendering" }
+ribbon_plugin_editor_tools = { path = "../../plugins/editor_tools" }

@@ -1,8 +1,8 @@
 //! HUD and full-screen overlays. All coordinates are in framebuffer pixels.
 
-use engine_render::Effect;
-pub use plugin_rendering::cpu::canvas::fill_rect;
-use plugin_rendering::cpu::canvas::Canvas;
+pub use ribbon_plugin_rendering::cpu::canvas::fill_rect;
+use ribbon_plugin_rendering::cpu::canvas::Canvas;
+use ribbon_render::Effect;
 
 pub fn draw_hud(
     fb: &mut impl Canvas,

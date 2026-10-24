@@ -4,7 +4,7 @@ Date: 2026-10-23
 
 ## Implementation status
 
-The first streaming API is implemented in `engine_assets`; it is source-complete but has not been compiled or exercised on the target Windows checkout in this delivery. Treat target-side verification as required before merging.
+The first streaming API is implemented in `ribbon_assets`; it is source-complete but has not been compiled or exercised on the target Windows checkout in this delivery. Treat target-side verification as required before merging.
 
 ## Ownership contract
 
@@ -22,7 +22,7 @@ The first streaming API is implemented in `engine_assets`; it is source-complete
 4. The decoded-completion queue is bounded at 64 values. Workers backpressure when the application stops polling rather than retaining an unbounded number of decoded assets.
 5. `AssetPlugin` polls completions in `Stage::First`; direct server users can call `poll_pending_loads`. Completion events are emitted on the server-owning thread, and the value is visible through `get` only after commit.
 6. With `AssetPlugin` installed, hot-reload reads and CPU decoding are also worker-backed. Each path admits only one reload at a time; generation/token checks reject stale completions. A source whose timestamp changes during a read is rejected rather than installed with a newer timestamp. Servers that use only synchronous `load` retain immediate legacy hot reload unless `set_async_hot_reload(true)` is requested; calling `request` opts into asynchronous hot reload.
-7. `plugin_render3d` performs GPU upload from its render pass, where it owns the renderer/device. CPU loader threads never create GPU resources.
+7. `ribbon_plugin_render3d` performs GPU upload from its render pass, where it owns the renderer/device. CPU loader threads never create GPU resources.
 
 `set_worker_count` can change the worker count before the first request (range 1–32). The server starts up to four workers by default, based on available parallelism. `load` and `load_ref` remain available for startup paths where synchronous loading is intentional.
 
@@ -66,7 +66,7 @@ Do not enable automatic eviction for a subsystem that stores only weak handles u
 
 ## GPU model upload pacing (added 2026-10-23)
 
-The user-provided multi-asset capture identified a 43.541 ms CPU `mesh pass` while 32 new model-cache entries appeared in one frame. `plugin_render3d` now limits missing model GPU-cache entries to two distinct asset keys per frame. Cache hits remain drawable, while placements that need additional missing models are deferred and retried on later frames. See `docs/GPU_ASSET_UPLOAD_PACING.md` for the frame-level evidence, validation procedure, and limitations. This is a count-based pacing policy, not a hard time/byte budget; voxel mesh uploads remain on their existing path.
+The user-provided multi-asset capture identified a 43.541 ms CPU `mesh pass` while 32 new model-cache entries appeared in one frame. `ribbon_plugin_render3d` now limits missing model GPU-cache entries to two distinct asset keys per frame. Cache hits remain drawable, while placements that need additional missing models are deferred and retried on later frames. See `docs/GPU_ASSET_UPLOAD_PACING.md` for the frame-level evidence, validation procedure, and limitations. This is a count-based pacing policy, not a hard time/byte budget; voxel mesh uploads remain on their existing path.
 
 ## Boundaries still not implemented
 

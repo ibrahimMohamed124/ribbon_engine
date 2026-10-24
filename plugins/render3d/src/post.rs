@@ -1,14 +1,14 @@
 //! HDR scene target and fullscreen tone-mapping pass.
 
 use crate::profiling::{GpuCompletedSample, GpuTimestampProfiler, GpuTimingSnapshot};
-use engine_render::profiling::RenderPassTiming;
+use ribbon_render::profiling::RenderPassTiming;
 use std::time::Instant;
 
 /// Linear HDR color format used between the mesh renderer and presentation.
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// Standalone HDR color target for callers that manage their own GPU resource lifetime.
-/// Internal window and offscreen renderer paths use [`engine_render::gpu::TransientTexturePool`]
+/// Internal window and offscreen renderer paths use [`ribbon_render::gpu::TransientTexturePool`]
 /// so similarly sized targets can be reused across frames and resizes.
 pub struct HdrTarget {
     _texture: wgpu::Texture,

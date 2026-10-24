@@ -33,7 +33,7 @@ If a single system reads and writes the same component/resource type, declare th
 
 ### Resources
 
-Parallel callbacks receive `&World`, so mutable resource state must use interior mutability. `engine_ecs::SyncResource<T>` wraps a standard-library `RwLock<T>`:
+Parallel callbacks receive `&World`, so mutable resource state must use interior mutability. `ribbon_ecs::SyncResource<T>` wraps a standard-library `RwLock<T>`:
 
 ```rust
 world.insert_resource(SyncResource::new(0_u64));
@@ -70,7 +70,7 @@ Structural operations—spawn/despawn, component insertion/removal, and resource
 
 ## Verification and acceptance
 
-No Rust build/test/lint command or runtime was executed while making this change. No new tests were added, and the existing scheduler test module was copied over unchanged. If replacing an earlier archive in an existing checkout and rustdoc reports that `engine_ecs::SyncResource` is missing, remove stale build artifacts once before retesting; the current source exports `SyncResource` from `engine_ecs` and `engine_app` re-exports it intentionally:
+No Rust build/test/lint command or runtime was executed while making this change. No new tests were added, and the existing scheduler test module was copied over unchanged. If replacing an earlier archive in an existing checkout and rustdoc reports that `ribbon_ecs::SyncResource` is missing, remove stale build artifacts once before retesting; the current source exports `SyncResource` from `ribbon_ecs` and `ribbon_app` re-exports it intentionally:
 
 ```powershell
 cargo clean

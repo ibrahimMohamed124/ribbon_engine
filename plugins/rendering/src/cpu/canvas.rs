@@ -1,6 +1,6 @@
 //! Software canvas operations and immediate-mode rasterization.
 
-use engine_render::{DrawCommand, DrawList, Effect, Framebuffer};
+use ribbon_render::{DrawCommand, DrawList, Effect, Framebuffer};
 /// Small drawing interface used by game UI and renderer command recording.
 pub trait Canvas {
     fn width(&self) -> usize;
@@ -78,7 +78,7 @@ impl Canvas for Framebuffer {
 fn text(canvas: &mut impl Canvas, value: &str, mut x: i32, y: i32, scale: i32, color: u32) {
     let scale = scale.max(1);
     for ch in value.chars() {
-        for (row, bits) in engine_render::frame::glyph(ch.to_ascii_uppercase())
+        for (row, bits) in ribbon_render::frame::glyph(ch.to_ascii_uppercase())
             .iter()
             .enumerate()
         {
@@ -196,7 +196,7 @@ pub fn fill_rect<C: Canvas + ?Sized>(fb: &mut C, x0: i32, y0: i32, w: i32, h: i3
 #[cfg(test)]
 mod canvas_tests {
     use super::Canvas;
-    use engine_render::{DrawCommand, DrawList, Effect, Framebuffer};
+    use ribbon_render::{DrawCommand, DrawList, Effect, Framebuffer};
 
     #[test]
     fn draw_list_keeps_order_and_text_as_a_single_command() {
@@ -227,7 +227,7 @@ mod canvas_tests {
         for point in [(-1, 0, 0, 0), (0, 1, 13, 71), (1280, -720, 8, 6)] {
             assert_eq!(
                 super::hash4(point.0, point.1, point.2, point.3),
-                engine_math::hash4(point.0, point.1, point.2, point.3)
+                ribbon_math::hash4(point.0, point.1, point.2, point.3)
             );
         }
     }

@@ -102,10 +102,10 @@ frames deliberately create bursts that are not representative of steady renderin
 
 ## Surface acquisition and present-mode A/B experiment
 
-The native `engine_render::GpuContext` surface now requests `mailbox` by default, with automatic fallback to FIFO
+The native `ribbon_render::GpuContext` surface now requests `mailbox` by default, with automatic fallback to FIFO
 if Mailbox is unsupported. This is a provisional, target-machine-informed default, not a claim that Mailbox is best
 on all GPUs or displays. `RIBBON_GPU_FRAME_LATENCY` defaults to `1`; `2` and `3` remain explicit options. The
-separate `plugin_rendering` GPU voxel surface was not part of these captures and retains its existing fixed latency.
+separate `ribbon_plugin_rendering` GPU voxel surface was not part of these captures and retains its existing fixed latency.
 
 - `RIBBON_GPU_PRESENT_MODE`: `mailbox` (default), `fifo`, `auto-vsync`, `auto-no-vsync`, `fifo-relaxed`, or `immediate`.
 - `RIBBON_GPU_FRAME_LATENCY`: `1` (default), `2`, or `3`.

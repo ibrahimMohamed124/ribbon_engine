@@ -1,6 +1,6 @@
 # Horror Slice (single-room visual slice)
 
-This is the native-surface horror acceptance example for Voxelworks. It uses
+This is the native-surface horror acceptance example for Ribbon. It uses
 `GpuWindowPlugin` + `Render3dPlugin`; it does not invoke STUDS or the offscreen/readback
 bridge.
 
@@ -17,7 +17,7 @@ This generated concept image is bundled as a layout/lighting target only; it is 
 - Native first-person camera with WASD movement, mouse look, Shift sprint, mouse capture,
   Escape to release the pointer, and left-click to recapture it. The camera moves at a fixed
   eye height and collides against the room's authored AABB colliders, including wall sliding;
-  collision math is a reusable `plugin_physics::slide_capsule_xz` helper.
+  collision math is a reusable `ribbon_plugin_physics::slide_capsule_xz` helper.
 - Flashlight spotlight and perspective shadow map follow the camera's position and orientation
   every frame. Point lighting/emissive lantern keeps the save point readable, while distance/
   height fog and low fill light preserve a dark horror mood.
@@ -27,7 +27,7 @@ This generated concept image is bundled as a layout/lighting target only; it is 
   and OpenGL-normal maps. Deterministic procedural PBR maps remain available as fallbacks and are
   marked `PLACEHOLDER` in `assets/asset_manifest.json`.
 
-The generated glTF material indices map diffuse, ARM (AO/roughness/metallic), normal, and emissive slots to their intended embedded images. `plugin_render3d` shares GPU textures across material/model assets when decoded pixels, dimensions, and color-space format match; the profile report separates unique texture mip-chain estimates from material uniform estimates. See [`../../docs/TEXTURE_MATERIAL_MEMORY_AUDIT.md`](../../docs/TEXTURE_MATERIAL_MEMORY_AUDIT.md).
+The generated glTF material indices map diffuse, ARM (AO/roughness/metallic), normal, and emissive slots to their intended embedded images. `ribbon_plugin_render3d` shares GPU textures across material/model assets when decoded pixels, dimensions, and color-space format match; the profile report separates unique texture mip-chain estimates from material uniform estimates. See [`../../docs/TEXTURE_MATERIAL_MEMORY_AUDIT.md`](../../docs/TEXTURE_MATERIAL_MEMORY_AUDIT.md).
 
 The camera now moves and is constrained by the static room/prop colliders. The door/key are not
 interactive yet; the monster is not skeletal-animated or AI-controlled; positional audio and save
@@ -35,7 +35,7 @@ serialization remain future phases and are not claimed as implemented.
 
 ## Asset streaming
 
-The room queues its distinct glTF models with `AssetServer::request_ref` rather than blocking the startup thread on each decode. The example retains one strong `AssetRef` per distinct room model for the gameplay lifetime, so the weak handles on model instances stay resident even if automatic eviction is enabled by a host application. CPU IO/decode runs on asset workers; `plugin_render3d` remains responsible for GPU uploads on the render thread. Initial-load and hot-reload failures are reported in the console.
+The room queues its distinct glTF models with `AssetServer::request_ref` rather than blocking the startup thread on each decode. The example retains one strong `AssetRef` per distinct room model for the gameplay lifetime, so the weak handles on model instances stay resident even if automatic eviction is enabled by a host application. CPU IO/decode runs on asset workers; `ribbon_plugin_render3d` remains responsible for GPU uploads on the render thread. Initial-load and hot-reload failures are reported in the console.
 
 ## Run
 
@@ -73,7 +73,7 @@ cargo test --workspace --no-default-features -j 1
 cargo run -p horror_slice
 ```
 
-`plugin_render3d` also includes a headless GPU test that saves
+`ribbon_plugin_render3d` also includes a headless GPU test that saves
 `target/spotlight_corridor.png` and prints the path when a suitable adapter exists;
 if no adapter is available, it prints a clear skip message. That screenshot is a test
 fixture, not proof that the interactive Windows composition matches the concept art.

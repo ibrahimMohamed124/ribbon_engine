@@ -2,9 +2,9 @@
 //!
 //! This plugin advances normalized sprite frames only; game-specific animation states remain game-owned.
 
-use engine_app::{App, Stage, Time};
-use engine_ecs::World;
-use engine_plugins::Plugin;
+use ribbon_app::{App, Stage, Time};
+use ribbon_ecs::World;
+use ribbon_plugins::Plugin;
 
 /// Sprite animation selection and fractional frame position.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -38,7 +38,7 @@ impl Plugin for AnimationPlugin {
 #[cfg(test)]
 mod tests {
     use super::{advance_sprite_animators, SpriteAnimator};
-    use engine_app::{Time, World};
+    use ribbon_app::{Time, World};
     use std::time::Duration;
 
     #[test]

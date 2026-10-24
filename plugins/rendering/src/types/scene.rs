@@ -2,8 +2,8 @@ use crate::entities::{
     EntityInstance, EntityRegistry, MAX_BOXES_PER_ENTITY, MAX_ENTITIES, MAX_ENTITY_BOXES,
 };
 use crate::style::RenderStyle;
-use engine_math::{Angles, Vect};
-use plugin_voxel::VoxelWorld;
+use ribbon_math::{Angles, Vect};
+use ribbon_plugin_voxel::VoxelWorld;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Camera {

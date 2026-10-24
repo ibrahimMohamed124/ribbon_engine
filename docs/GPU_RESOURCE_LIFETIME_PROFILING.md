@@ -6,11 +6,11 @@ This milestone adds explicit reuse/lifetime management for transient 2D render t
 
 ## Feature integration
 
-`plugin_render3d` explicitly requests `engine_render` with `features = ["gpu"]` and `default-features = false`. This matters when validating the full workspace with `--no-default-features`: the render3d plugin uses GPU context and transient pool APIs and must not rely on `engine_render` default features being implicitly enabled. The `engine_render::profiling` module is backend-neutral and remains public regardless of the `gpu` feature.
+`ribbon_plugin_render3d` explicitly requests `ribbon_render` with `features = ["gpu"]` and `default-features = false`. This matters when validating the full workspace with `--no-default-features`: the render3d plugin uses GPU context and transient pool APIs and must not rely on `ribbon_render` default features being implicitly enabled. The `ribbon_render::profiling` module is backend-neutral and remains public regardless of the `gpu` feature.
 
 ## Transient texture pool
 
-`engine_render::gpu::TransientTexturePool` keys reusable allocations by the exact descriptor (width, height, format and usage). The current allocator creates one 2D, single-layer, single-mip, single-sample texture per slot. A `TransientTextureHandle` includes a slot and generation. Only an active lease can return a view or descriptor; releasing twice, releasing a stale handle, or accessing a cached handle fails cleanly. `MeshId` and `MaterialId` also include generations, so releasing and reusing renderer slots does not make stale handles alias the replacement mesh/material. The native renderer drops cached model parts and releases their uploaded mesh/material slots when the last placement of that model disappears from the extracted scene; unused glTF file materials are not uploaded. Dynamic voxel mesh caches follow the same live-scene rule.
+`ribbon_render::gpu::TransientTexturePool` keys reusable allocations by the exact descriptor (width, height, format and usage). The current allocator creates one 2D, single-layer, single-mip, single-sample texture per slot. A `TransientTextureHandle` includes a slot and generation. Only an active lease can return a view or descriptor; releasing twice, releasing a stale handle, or accessing a cached handle fails cleanly. `MeshId` and `MaterialId` also include generations, so releasing and reusing renderer slots does not make stale handles alias the replacement mesh/material. The native renderer drops cached model parts and releases their uploaded mesh/material slots when the last placement of that model disappears from the extracted scene; unused glTF file materials are not uploaded. Dynamic voxel mesh caches follow the same live-scene rule.
 
 Release a target only after encoding/submitting commands that use it and after dropping bind groups/views owned by the caller where required. wgpu retains resources referenced by submitted work, and ordered operations on the same queue preserve use-before-reuse. Cache trimming evicts only unleased textures; it keeps slot indices stable and reuses empty slots with a new generation. The built-in renderers use a 64 MiB estimated cache budget on target release/resize. Active leases are never evicted to satisfy that budget.
 
@@ -18,7 +18,7 @@ The built-in window MeshPass and `OffscreenVoxelRenderer` pool the HDR scene tar
 
 ## Profiling surface
 
-For native-window applications, `GpuWindowPlugin` installs an `engine_render::profiling::RenderDiagnostics` world resource. It provides:
+For native-window applications, `GpuWindowPlugin` installs an `ribbon_render::profiling::RenderDiagnostics` world resource. It provides:
 
 - full CPU duration for the frame path through surface acquisition, graph execution and presentation; running average and peak, in nanoseconds
 - total render-graph CPU duration and a name/time pair for each graph node

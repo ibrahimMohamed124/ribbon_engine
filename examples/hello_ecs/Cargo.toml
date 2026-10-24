@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-engine_app = { path = "../../crates/engine_app" }
-engine_ecs = { path = "../../crates/engine_ecs" }
-engine_schedule = { path = "../../crates/engine_schedule" }
+ribbon_app = { path = "../../crates/ribbon_app" }
+ribbon_ecs = { path = "../../crates/ribbon_ecs" }
+ribbon_schedule = { path = "../../crates/ribbon_schedule" }

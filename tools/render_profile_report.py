@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Summarize Ribbon Engine render-profile CSV captures into a Markdown report.
 
-The CSV is emitted by engine_render::profiling::RenderProfilePlugin. This utility uses only
+The CSV is emitted by ribbon_render::profiling::RenderProfilePlugin. This utility uses only
 Python's standard library so it does not add any engine/runtime dependency.
 """
 

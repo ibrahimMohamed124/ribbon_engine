@@ -5,12 +5,12 @@ pub mod physics;
 
 pub use physics::*;
 
-use engine_app::{App, Stage};
-use engine_ecs::World;
-use engine_math::Vect;
-use engine_plugins::Plugin;
-use engine_scene::Transform;
-use plugin_voxel::VoxelWorldRes;
+use ribbon_app::{App, Stage};
+use ribbon_ecs::World;
+use ribbon_math::Vect;
+use ribbon_plugin_voxel::VoxelWorldRes;
+use ribbon_plugins::Plugin;
+use ribbon_scene::Transform;
 
 /// Collision footprint used by the horizontal move system.
 pub struct Collider(pub BodyShape);
@@ -58,16 +58,16 @@ impl Plugin for PhysicsPlugin {
 #[cfg(test)]
 mod system_tests {
     use super::{apply_move_intents, BodyShape, Collider, MoveIntent};
-    use engine_ecs::World;
-    use engine_math::Vect;
-    use engine_scene::Transform;
-    use plugin_voxel::VoxelWorldRes;
+    use ribbon_ecs::World;
+    use ribbon_math::Vect;
+    use ribbon_plugin_voxel::VoxelWorldRes;
+    use ribbon_scene::Transform;
 
     #[test]
     fn fixed_step_consumes_horizontal_intent_and_preserves_height() {
         let mut world = World::new();
         world.insert_resource(VoxelWorldRes(
-            plugin_voxel::VoxelWorld::new(4, 4, 4, vec![0; 64]),
+            ribbon_plugin_voxel::VoxelWorld::new(4, 4, 4, vec![0; 64]),
             0,
         ));
         let entity = world.spawn((

@@ -1,7 +1,7 @@
 //! Platform-independent voxel body collision and horizontal wall sliding.
 
-use engine_math::Vect;
-use plugin_voxel::VoxelWorld;
+use ribbon_math::Vect;
+use ribbon_plugin_voxel::VoxelWorld;
 
 /// Axis-aligned box collider in world-space XYZ coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -139,8 +139,8 @@ pub fn slide_xy(
 #[cfg(test)]
 mod tests {
     use super::{collides, slide_xy, BodyShape};
-    use engine_math::Vect;
-    use plugin_voxel::VoxelWorld;
+    use ribbon_math::Vect;
+    use ribbon_plugin_voxel::VoxelWorld;
 
     const EMPTY: u8 = 0;
     const SOLID: u8 = 1;

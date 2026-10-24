@@ -1,6 +1,6 @@
 # STUDS
 
-STUDS is a first-person voxel horror game built on Voxelworks Engine. Explore a block maze, collect six pages, and keep the creature in sight: it moves when you look away.
+STUDS is a first-person voxel horror game built on Ribbon Engine. Explore a block maze, collect six pages, and keep the creature in sight: it moves when you look away.
 
 ## Features
 
@@ -42,11 +42,11 @@ Settings and bindings are stored in `settings.cfg` under the operating system's 
 
 Processed assets and the on-demand source manifest live in `games/studs/assets/`. Run `python games/studs/tools/fetch_assets.py --check` to verify tracked files and hashes. Raw source downloads are cached under the ignored `games/studs/assets/source/` directory.
 
-`ecs_preview` starts directly in-game with a deterministic seed and uses the same ECS app and platform runner as the game binary. Use `--renderer cpu` or `--renderer gpu` to choose the game backend; `--renderer auto` prefers the mesh GPU backend when the feature is enabled and falls back to CPU if GPU initialization or rendering fails. The GPU backend now uses `plugin_render3d::OffscreenVoxelRenderer`: the engine consumes dirty chunk updates, greedy-meshes the changed chunks, uploads/releases GPU mesh buffers and renders the maze through the shared PBR/HDR mesh pipeline. The result is read back into the neutral `WindowFrame` contract, so this migration does not yet change STUDS to native-surface presentation. The CPU raycaster remains as a reference/fallback path while the new renderer receives visual runtime coverage.
+`ecs_preview` starts directly in-game with a deterministic seed and uses the same ECS app and platform runner as the game binary. Use `--renderer cpu` or `--renderer gpu` to choose the game backend; `--renderer auto` prefers the mesh GPU backend when the feature is enabled and falls back to CPU if GPU initialization or rendering fails. The GPU backend now uses `ribbon_plugin_render3d::OffscreenVoxelRenderer`: the engine consumes dirty chunk updates, greedy-meshes the changed chunks, uploads/releases GPU mesh buffers and renders the maze through the shared PBR/HDR mesh pipeline. The result is read back into the neutral `WindowFrame` contract, so this migration does not yet change STUDS to native-surface presentation. The CPU raycaster remains as a reference/fallback path while the new renderer receives visual runtime coverage.
 
 ## Engine boundary (important)
 
-STUDS is a **consumer and stress-test of Voxelworks Engine**, not part of the engine implementation. The only logic in `games/studs` is game/domain logic: maze generation and block meanings (`AIR`, `FLOOR`, `WALL`, `CEIL`), player movement and collision policy, creature behavior, page pickups, difficulty, lighting/palette choices for the game's art direction, controls, menus, audio and progression.
+STUDS is a **consumer and stress-test of Ribbon Engine**, not part of the engine implementation. The only logic in `games/studs` is game/domain logic: maze generation and block meanings (`AIR`, `FLOOR`, `WALL`, `CEIL`), player movement and collision policy, creature behavior, page pickups, difficulty, lighting/palette choices for the game's art direction, controls, menus, audio and progression.
 
 Reusable engine functionality must stay in engine crates/plugins. In particular:
 

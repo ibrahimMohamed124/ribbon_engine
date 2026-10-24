@@ -4,16 +4,16 @@ use std::sync::OnceLock;
 
 pub use crate::entities::ENEMY_BOUNDS;
 use crate::entities::{PAGE, WARDEN};
-use engine_math::{hash4, Vect};
-use plugin_rendering::cpu::render::entities::EntitySurface;
-use plugin_rendering::cpu::render::lighting::SurfaceShader;
-use plugin_rendering::entities::{EntityInstance, EntityKind};
-use plugin_rendering::texture::{
+use ribbon_math::{hash4, Vect};
+use ribbon_plugin_rendering::cpu::render::entities::EntitySurface;
+use ribbon_plugin_rendering::cpu::render::lighting::SurfaceShader;
+use ribbon_plugin_rendering::entities::{EntityInstance, EntityKind};
+use ribbon_plugin_rendering::texture::{
     PbrTextureSet, RgbaMipChain, RgbaMipLevel, SpriteAtlas, Texture, TextureColorSpace, TextureId,
 };
-use plugin_rendering::RenderStyle;
-use plugin_rendering::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
-use plugin_voxel::{face_uv, Hit};
+use ribbon_plugin_rendering::RenderStyle;
+use ribbon_plugin_rendering::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
+use ribbon_plugin_voxel::{face_uv, Hit};
 
 use crate::level::{CEIL, FLOOR, WALL};
 
@@ -241,7 +241,7 @@ impl SurfaceShader for StudsSurface {
         if style.pbr_enabled {
             if let Some(set_id) = material.pbr_texture {
                 let (_, _, tint, alternate) =
-                    plugin_rendering::material::cell_uv(hit.cell, (0.0, 0.0));
+                    ribbon_plugin_rendering::material::cell_uv(hit.cell, (0.0, 0.0));
                 let selected_id = if material.cell_variation && alternate && set_id.0 == 1 {
                     TextureId(2)
                 } else {
@@ -250,7 +250,8 @@ impl SurfaceShader for StudsSurface {
                 if let Some(set) = materials.get_pbr_texture(selected_id) {
                     let (mut u, mut v) = face_uv(hit);
                     if material.cell_variation {
-                        let transformed = plugin_rendering::material::cell_uv(hit.cell, (u, v));
+                        let transformed =
+                            ribbon_plugin_rendering::material::cell_uv(hit.cell, (u, v));
                         u = transformed.0;
                         v = transformed.1;
                     }
@@ -449,9 +450,9 @@ pub fn page_view(pos: Vect, time: f32, index: f32) -> EntityInstance {
 #[cfg(test)]
 mod tests {
     use super::{apply_texture_modulation, wall_texture_modulation};
-    use engine_math::Vect;
-    use plugin_rendering::texture::Texture;
-    use plugin_voxel::Hit;
+    use ribbon_math::Vect;
+    use ribbon_plugin_rendering::texture::Texture;
+    use ribbon_plugin_voxel::Hit;
 
     #[test]
     fn texture_modulation_preserves_classic_at_zero_and_stays_moderate() {

@@ -1,4 +1,4 @@
-use plugin_rendering::style::RenderStyle;
+use ribbon_plugin_rendering::style::RenderStyle;
 use studs::{
     game::Game,
     settings::{QualityPreset, VisualStyle},

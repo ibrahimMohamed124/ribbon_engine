@@ -1,9 +1,9 @@
 [package]
-name = "plugin_gltf"
+name = "ribbon_plugin_gltf"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-engine_assets = { path = "../../crates/engine_assets" }
+ribbon_assets = { path = "../../crates/ribbon_assets" }
 glam = "0.30"
 gltf = { version = "1", default-features = false, features = ["import", "utils", "names"] }

@@ -2,7 +2,7 @@ use crate::texture::{PbrTextureSet, SpriteAtlas, Texture, TextureId};
 
 /// Number of distinct block ids representable by the core voxel format.
 pub const MATERIAL_ID_SPACE: usize = u8::MAX as usize + 1;
-use engine_math::hash4;
+use ribbon_math::hash4;
 
 /// Stable per-voxel UV transform and tint shared by both render backends.
 pub fn cell_uv(cell: (i32, i32, i32), uv: (f32, f32)) -> (f32, f32, f32, bool) {

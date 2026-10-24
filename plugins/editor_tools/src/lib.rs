@@ -1,14 +1,14 @@
 //! Built-in hierarchy, reflected inspector, and runtime status panels.
 //!
-//! Inspector edits use `engine_commands` so they remain undoable.
+//! Inspector edits use `ribbon_commands` so they remain undoable.
 
-use engine_app::{App, LogBuffer, ScheduleStats, Time};
-use engine_commands::{CommandStack, SetField};
-use engine_ecs::{Entity, World};
-use engine_editor::{EditorShell, Panel, Selection, Ui};
-use engine_plugins::Plugin;
-use engine_reflect::{TypeRegistry, Value};
-use engine_scene::{Name, Parent};
+use ribbon_app::{App, LogBuffer, ScheduleStats, Time};
+use ribbon_commands::{CommandStack, SetField};
+use ribbon_ecs::{Entity, World};
+use ribbon_editor::{EditorShell, Panel, Selection, Ui};
+use ribbon_plugins::Plugin;
+use ribbon_reflect::{TypeRegistry, Value};
+use ribbon_scene::{Name, Parent};
 use std::collections::HashSet;
 
 /// Tree view of named scene entities.
@@ -176,11 +176,11 @@ pub fn selection_with(entity: Entity) -> Selection {
 #[cfg(test)]
 mod tests {
     use super::InspectorPanel;
-    use engine_commands::CommandStack;
-    use engine_ecs::World;
-    use engine_editor::{Panel, Selection, Ui, UiInput};
-    use engine_reflect::TypeRegistry;
-    use engine_scene::Transform;
+    use ribbon_commands::CommandStack;
+    use ribbon_ecs::World;
+    use ribbon_editor::{Panel, Selection, Ui, UiInput};
+    use ribbon_reflect::TypeRegistry;
+    use ribbon_scene::Transform;
     use std::collections::HashSet;
 
     #[test]

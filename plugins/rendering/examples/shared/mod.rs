@@ -1,15 +1,15 @@
-use engine_math::{forward_vec, hash4, Angles, Rng, Vect};
-use plugin_rendering::cpu::render::entities::EntitySurface;
-use plugin_rendering::cpu::render::lighting::SurfaceShader;
-use plugin_rendering::cpu::render::RenderStyle;
-use plugin_rendering::cpu::render::Scene as RenderScene;
-use plugin_rendering::entities::{
+use ribbon_math::{forward_vec, hash4, Angles, Rng, Vect};
+use ribbon_plugin_rendering::cpu::render::entities::EntitySurface;
+use ribbon_plugin_rendering::cpu::render::lighting::SurfaceShader;
+use ribbon_plugin_rendering::cpu::render::RenderStyle;
+use ribbon_plugin_rendering::cpu::render::Scene as RenderScene;
+use ribbon_plugin_rendering::entities::{
     EntityAnimation, EntityBox, EntityDefinition, EntityInstance, EntityKind, EntityRegistry,
     EntityRenderMode, EntityShadow,
 };
-use plugin_rendering::texture::Texture;
-use plugin_rendering::{Palette, Tonemap};
-use plugin_voxel::{face_uv, Hit, VoxelWorld};
+use ribbon_plugin_rendering::texture::Texture;
+use ribbon_plugin_rendering::{Palette, Tonemap};
+use ribbon_plugin_voxel::{face_uv, Hit, VoxelWorld};
 
 pub fn graded_style() -> RenderStyle {
     RenderStyle {
@@ -235,12 +235,12 @@ impl Scene {
         RenderScene {
             world: &self.world,
             empty_voxel: EMPTY,
-            camera: plugin_rendering::Camera {
+            camera: ribbon_plugin_rendering::Camera {
                 eye: view.eye,
                 view: view.angles,
                 hfov: 1.35,
             },
-            lighting: plugin_rendering::LightingParams {
+            lighting: ribbon_plugin_rendering::LightingParams {
                 light_level: view.light_level,
                 intensity: 0.0,
                 frame,
@@ -304,7 +304,7 @@ impl SurfaceShader for SceneShader {
 
     fn entity_surface(
         &self,
-        _kind: plugin_rendering::entities::EntityKind,
+        _kind: ribbon_plugin_rendering::entities::EntityKind,
         _point: [f32; 3],
         _axis: usize,
         _sign: f32,

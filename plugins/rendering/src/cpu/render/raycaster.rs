@@ -11,8 +11,8 @@ use crate::entities::EntityRenderMode;
 use crate::material::MaterialTable;
 use crate::scene::Scene;
 use crate::RENDER_DIST;
-use engine_math::{forward_vec, Vect};
-use engine_render::Framebuffer;
+use ribbon_math::{forward_vec, Vect};
+use ribbon_render::Framebuffer;
 
 const EMPTY_MATERIALS: MaterialTable = MaterialTable::new(&[]);
 
@@ -255,9 +255,9 @@ mod data_driven_entity_tests {
     use crate::scene::{Camera, LightingParams, Scene};
     use crate::style::RenderStyle;
     use crate::texture::SpriteAtlas;
-    use engine_math::{Angles, Vect};
-    use engine_render::Framebuffer;
-    use plugin_voxel::{Hit, VoxelWorld};
+    use ribbon_math::{Angles, Vect};
+    use ribbon_plugin_voxel::{Hit, VoxelWorld};
+    use ribbon_render::Framebuffer;
     use std::sync::OnceLock;
 
     const BOX_KIND: EntityKind = EntityKind(71);

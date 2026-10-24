@@ -4,8 +4,8 @@ use crate::components::{FogSettings, PointLight, SpotLight, SunLight};
 use crate::mesh::{self, Vertex};
 use crate::profiling::{GpuCompletedSample, GpuTimestampProfiler, GpuTimingSnapshot};
 use bytemuck::{Pod, Zeroable};
-use engine_render::profiling::RenderPassTiming;
 use glam::{Mat4, Vec3, Vec4};
+use ribbon_render::profiling::RenderPassTiming;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -1965,9 +1965,9 @@ mod tests {
         build_mips, pack_point_lights, select_spot_lights, Draw, MeshRenderer, Scene, TextureData,
     };
     use crate::components::{Camera3D, FogSettings, PointLight, SpotLight, SunLight, Transform3D};
-    use engine_render::gpu::GpuContext;
-    use engine_render::gpu_window::clear_view;
     use glam::{Mat4, Vec3};
+    use ribbon_render::gpu::GpuContext;
+    use ribbon_render::gpu_window::clear_view;
     use std::fs::File;
     use std::path::PathBuf;
 

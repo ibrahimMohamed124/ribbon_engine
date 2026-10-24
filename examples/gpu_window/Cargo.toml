@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-engine_app = { path = "../../crates/engine_app" }
-engine_events = { path = "../../crates/engine_events" }
-engine_platform = { path = "../../crates/engine_platform" }
-engine_plugins = { path = "../../crates/engine_plugins" }
-engine_render = { path = "../../crates/engine_render" }
+ribbon_app = { path = "../../crates/ribbon_app" }
+ribbon_events = { path = "../../crates/ribbon_events" }
+ribbon_platform = { path = "../../crates/ribbon_platform" }
+ribbon_plugins = { path = "../../crates/ribbon_plugins" }
+ribbon_render = { path = "../../crates/ribbon_render" }

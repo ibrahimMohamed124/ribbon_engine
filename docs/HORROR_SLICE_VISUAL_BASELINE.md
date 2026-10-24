@@ -109,7 +109,7 @@ the room is enclosed during backtracking.
 Interactive controls are now implemented in `horror_slice`: WASD walking, mouse look, Shift sprint,
 Escape to release the cursor, and left-click to recapture it. Player movement uses the authored
 static wall/floor/ceiling boxes plus the key, lantern, door and monster prop boxes. Reusable capsule
-versus AABB collision and axis-separated wall sliding live in `plugin_physics`; input mapping and the
+versus AABB collision and axis-separated wall sliding live in `ribbon_plugin_physics`; input mapping and the
 camera/light-follow system remain example-owned. The camera eye stays at authored height; jumping,
 gravity, dynamic rigid bodies, door interaction and AI are not implemented yet.
 
@@ -118,7 +118,7 @@ gravity, dynamic rigid bodies, door interaction and AI are not implemented yet.
 - `python tools/make_test_models.py` — passed during asset regeneration; placeholder maps,
   embedded GLBs, manifest hashes, and credits were regenerated from deterministic local code.
 - TOML allowlist and dependency declaration were updated to permit `horror_slice` to depend on
-  `plugin_physics`.
+  `ribbon_plugin_physics`.
 - The Rust toolchain (`cargo`, `rustc`, `rustfmt`) is not installed in this generation environment,
   so `cargo fmt`, Clippy, Rust tests, and an interactive GPU run after this pass have not been run.
 - Needs manual Windows GPU review: room readability, flashlight shadows, mouse capture/release,
@@ -129,7 +129,7 @@ gravity, dynamic rigid bodies, door interaction and AI are not implemented yet.
 
 The last user screenshot showed the room was readable at a glance, but flashlight reflections on the floor and ceiling still looked like high-frequency white chips, and the lamp was close to the left edge while the locked exit door was nearly black. The fallback map generator now uses lower-contrast, lower-frequency albedo variation and near-flat normal maps; the floor, concrete and metal materials use higher roughness to keep the flashlight diffuse instead of glittering. The initial yaw was adjusted to place the door to the right, the key nearer the forward beam, and the save-point lantern further inside the left side of the frame. The spot stays camera-mounted and retains a strong cone; a slight ambient increase is only a fill and does not remove the dark corners.
 
-Player controls in `horror_slice`: WASD walk, mouse look, Shift sprint, Escape release the cursor, left-click capture it again. The view is fixed at standing eye height and cannot jump, climb, open the door, pick up the key, or animate/chase the monster. The reusable movement helper in `plugin_physics` resolves a vertical capsule against static axis-aligned boxes on XZ, stopping and sliding at walls; it is intentionally not a general rigid-body or ray-query system. The prior Rapier decision is revised in `docs/DECISIONS.md` to state why this smallest controller is the current fit and when to reconsider Rapier.
+Player controls in `horror_slice`: WASD walk, mouse look, Shift sprint, Escape release the cursor, left-click capture it again. The view is fixed at standing eye height and cannot jump, climb, open the door, pick up the key, or animate/chase the monster. The reusable movement helper in `ribbon_plugin_physics` resolves a vertical capsule against static axis-aligned boxes on XZ, stopping and sliding at walls; it is intentionally not a general rigid-body or ray-query system. The prior Rapier decision is revised in `docs/DECISIONS.md` to state why this smallest controller is the current fit and when to reconsider Rapier.
 
 `python tools/make_test_models.py` has been rerun after the material changes; GLB model headers and asset-manifest SHA-256s were checked in the working container. Rust tools are unavailable in this environment, so formatting, clippy, workspace tests, and the Windows GPU walk-through remain unverified until run in the user's Windows checkout.
 

@@ -1,0 +1,12 @@
+[package]
+name = "ribbon_platform"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_app = { path = "../ribbon_app" }
+ribbon_plugins = { path = "../ribbon_plugins" }
+ribbon_events = { path = "../ribbon_events" }
+ribbon_math = { path = "../ribbon_math" }
+winit = "0.30.13"
+softbuffer = "0.4.6"

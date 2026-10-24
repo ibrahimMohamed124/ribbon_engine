@@ -6,17 +6,17 @@
 //! `.gltf` files with embedded data) are supported.
 //! Optional: `cargo run -p model_viewer --release -- --frames 1800 --profile-csv target/profiles/model-viewer.csv`.
 
-use engine_app::{App, AppExit, Stage, Time, World};
-use engine_assets::{AssetPlugin, AssetRef, AssetServer, FsSource, LoadState};
-use engine_events::WorldEventsExt;
-use engine_platform::{PlatformConfig, PlatformPlugin};
-use engine_plugins::AppPluginExt;
-use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
-use engine_render::profiling::RenderProfilePlugin;
-use engine_scene::ScenePlugin;
-use plugin_gltf::{GltfLoader, ModelAsset};
-use plugin_render3d::glam::{Quat, Vec3};
-use plugin_render3d::{Camera3D, ModelInstance, Render3dPlugin, Transform3D};
+use ribbon_app::{App, AppExit, Stage, Time, World};
+use ribbon_assets::{AssetPlugin, AssetRef, AssetServer, FsSource, LoadState};
+use ribbon_events::WorldEventsExt;
+use ribbon_platform::{PlatformConfig, PlatformPlugin};
+use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
+use ribbon_plugin_render3d::glam::{Quat, Vec3};
+use ribbon_plugin_render3d::{Camera3D, ModelInstance, Render3dPlugin, Transform3D};
+use ribbon_plugins::AppPluginExt;
+use ribbon_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use ribbon_render::profiling::RenderProfilePlugin;
+use ribbon_scene::ScenePlugin;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
@@ -183,7 +183,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut app = App::new();
     app.insert_resource(PlatformConfig {
-        title: "Voxelworks model viewer".to_owned(),
+        title: "Ribbon model viewer".to_owned(),
         width: 960,
         height: 540,
     });

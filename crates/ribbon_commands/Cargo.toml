@@ -1,0 +1,9 @@
+[package]
+name = "ribbon_commands"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_ecs = { path = "../ribbon_ecs" }
+ribbon_reflect = { path = "../ribbon_reflect" }
+ribbon_scene = { path = "../ribbon_scene" }

@@ -3,8 +3,8 @@ mod shared;
 
 use std::time::Instant;
 
-use engine_render::Framebuffer;
-use plugin_rendering::cpu::render::{render, RenderStyle};
+use ribbon_plugin_rendering::cpu::render::{render, RenderStyle};
+use ribbon_render::Framebuffer;
 use shared::{graded_style, Scene, SceneShader, HEIGHT, WIDTH};
 
 fn main() {

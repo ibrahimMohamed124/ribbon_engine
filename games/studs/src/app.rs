@@ -9,26 +9,26 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use engine_app::{App, AppExit, Stage, Time, World};
-use engine_events::WorldEventsExt;
-use engine_math::Vect;
-use engine_platform::input::{Key, MouseSource, ALL_KEYS};
-use engine_platform::runtime::CursorGrabState;
-use engine_platform::{Input as PlatformInput, PlatformConfig, WindowFrame, WindowHandle};
-use engine_plugins::{AppPluginExt, Plugin};
-use engine_render::{DrawList, FramePlan, Framebuffer, Renderer};
-use plugin_audio::{AudioListener, PlaySound, SetAmbience, SoundId};
+use ribbon_app::{App, AppExit, Stage, Time, World};
+use ribbon_events::WorldEventsExt;
+use ribbon_math::Vect;
+use ribbon_platform::input::{Key, MouseSource, ALL_KEYS};
+use ribbon_platform::runtime::CursorGrabState;
+use ribbon_platform::{Input as PlatformInput, PlatformConfig, WindowFrame, WindowHandle};
+use ribbon_plugin_audio::{AudioListener, PlaySound, SetAmbience, SoundId};
 #[cfg(feature = "gpu")]
-use plugin_render3d::{
+use ribbon_plugin_render3d::{
     glam::{Mat4, Quat, Vec3},
     OffscreenCamera3D, OffscreenDraw3D, OffscreenVoxelRenderer, SunLight, VoxelBlockColor,
 };
-use plugin_rendering::cpu::renderer::CpuRenderer;
-use plugin_rendering::ecs::{CpuBackend, DefaultShader, RenderBackend, RenderSettings};
-use plugin_rendering::material::MaterialTable;
-use plugin_rendering::Scene;
+use ribbon_plugin_rendering::cpu::renderer::CpuRenderer;
+use ribbon_plugin_rendering::ecs::{CpuBackend, DefaultShader, RenderBackend, RenderSettings};
+use ribbon_plugin_rendering::material::MaterialTable;
+use ribbon_plugin_rendering::Scene;
 #[cfg(feature = "gpu")]
-use plugin_voxel::ChunkedVoxelWorld;
+use ribbon_plugin_voxel::ChunkedVoxelWorld;
+use ribbon_plugins::{AppPluginExt, Plugin};
+use ribbon_render::{DrawList, FramePlan, Framebuffer, Renderer};
 
 use crate::audio::{ambiences, sounds, AudioEvent};
 use crate::enemy::proximity_intensity;
@@ -96,7 +96,7 @@ impl StudsState {
 enum RendererImpl {
     Cpu(CpuRenderer<StudsSurface>),
     /// STUDS' GPU backend exercises the engine's native mesh renderer. The legacy voxel
-    /// raycaster remains available in `plugin_rendering` for compatibility/rollback, but
+    /// raycaster remains available in `ribbon_plugin_rendering` for compatibility/rollback, but
     /// this game no longer selects it as its GPU implementation.
     #[cfg(feature = "gpu")]
     MeshGpu(Box<OffscreenVoxelRenderer>),
@@ -323,7 +323,7 @@ impl Plugin for StudsPlugin {
         app.world.remove_resource::<CpuBackend<DefaultShader>>();
         #[cfg(feature = "gpu")]
         app.world
-            .remove_resource::<plugin_rendering::ecs::GpuBackend>();
+            .remove_resource::<ribbon_plugin_rendering::ecs::GpuBackend>();
         app.insert_resource(renderer);
         app.insert_resource(state);
         game_ecs::install_game(&mut app.world, initial_game);
@@ -331,17 +331,19 @@ impl Plugin for StudsPlugin {
 
         if let Some(warning) = warning {
             app.world
-                .resource_mut::<engine_app::LogBuffer>()
-                .push(engine_app::LogLevel::Warn, warning);
+                .resource_mut::<ribbon_app::LogBuffer>()
+                .push(ribbon_app::LogLevel::Warn, warning);
         }
 
         #[cfg(feature = "audio")]
-        match plugin_audio::rodio_backend::RodioBackend::new(crate::audio::sound_bank()) {
+        match ribbon_plugin_audio::rodio_backend::RodioBackend::new(crate::audio::sound_bank()) {
             Ok(backend) => {
-                app.world.resource_mut::<plugin_audio::AudioOutput>().0 = Some(Box::new(backend));
+                app.world
+                    .resource_mut::<ribbon_plugin_audio::AudioOutput>()
+                    .0 = Some(Box::new(backend));
             }
-            Err(error) => app.world.resource_mut::<engine_app::LogBuffer>().push(
-                engine_app::LogLevel::Warn,
+            Err(error) => app.world.resource_mut::<ribbon_app::LogBuffer>().push(
+                ribbon_app::LogLevel::Warn,
                 format!("audio output unavailable; continuing silently: {error}"),
             ),
         }
@@ -377,10 +379,10 @@ pub fn build_app_with_renderer(
         width: 320,
         height: 180,
     });
-    app.add_plugin(engine_platform::PlatformPlugin)?;
-    app.add_plugin(engine_scene::ScenePlugin)?;
-    app.add_plugin(plugin_rendering::ecs::RenderingPlugin)?;
-    app.add_plugin(plugin_audio::AudioPlugin)?;
+    app.add_plugin(ribbon_platform::PlatformPlugin)?;
+    app.add_plugin(ribbon_scene::ScenePlugin)?;
+    app.add_plugin(ribbon_plugin_rendering::ecs::RenderingPlugin)?;
+    app.add_plugin(ribbon_plugin_audio::AudioPlugin)?;
     if preview {
         app.add_plugin(StudsPlugin {
             seed: Some(seed.unwrap_or(42)),
@@ -446,9 +448,9 @@ fn update_ui_and_collect_input(world: &mut World) {
                         .map(|config| (config.width.max(1), config.height.max(1)))
                 })
                 .unwrap_or((framebuffer_size.0 as u32, framebuffer_size.1 as u32));
-            let viewport = engine_platform::window::viewport(window_size, framebuffer_size);
+            let viewport = ribbon_platform::window::viewport(window_size, framebuffer_size);
             let mouse_position = platform_input.mouse_position.and_then(|position| {
-                engine_platform::window::window_to_framebuffer(
+                ribbon_platform::window::window_to_framebuffer(
                     position,
                     &viewport,
                     framebuffer_size,
@@ -756,8 +758,8 @@ fn render_game_frame(world: &mut World) {
                             clear_color,
                         );
                         if let Err(error) = error {
-                            world.resource_mut::<engine_app::LogBuffer>().push(
-                                engine_app::LogLevel::Warn,
+                            world.resource_mut::<ribbon_app::LogBuffer>().push(
+                                ribbon_app::LogLevel::Warn,
                                 format!("STUDS mesh renderer frame failed: {error}; falling back to CPU"),
                             );
                             renderer.output.pixels.fill(0);
@@ -771,7 +773,7 @@ fn render_game_frame(world: &mut World) {
                                 });
                             }
                         }
-                        plugin_rendering::cpu::renderer::composite_frame_layers(
+                        ribbon_plugin_rendering::cpu::renderer::composite_frame_layers(
                             &mut renderer.output,
                             &world_layer,
                             brightness,
@@ -786,8 +788,8 @@ fn render_game_frame(world: &mut World) {
                             ui_layer,
                         );
                         if let Some(error) = error {
-                            world.resource_mut::<engine_app::LogBuffer>().push(
-                                engine_app::LogLevel::Warn,
+                            world.resource_mut::<ribbon_app::LogBuffer>().push(
+                                ribbon_app::LogLevel::Warn,
                                 format!("STUDS renderer frame failed: {error}"),
                             );
                         }
@@ -803,8 +805,8 @@ fn render_game_frame(world: &mut World) {
                             ui_layer,
                         );
                         if let Some(error) = error {
-                            world.resource_mut::<engine_app::LogBuffer>().push(
-                                engine_app::LogLevel::Warn,
+                            world.resource_mut::<ribbon_app::LogBuffer>().push(
+                                ribbon_app::LogLevel::Warn,
                                 format!("STUDS renderer frame failed: {error}"),
                             );
                         }
@@ -843,11 +845,11 @@ fn render_cpu_frame(
 
 #[cfg(feature = "gpu")]
 fn studs_camera(
-    camera: plugin_rendering::Camera,
+    camera: ribbon_plugin_rendering::Camera,
     width: usize,
     height: usize,
 ) -> OffscreenCamera3D {
-    let forward = engine_math::forward_vec(camera.view);
+    let forward = ribbon_math::forward_vec(camera.view);
     let aspect = width.max(1) as f32 / height.max(1) as f32;
     let fov_y = 2.0 * ((camera.hfov * 0.5).tan() / aspect.max(1.0e-4)).atan();
     OffscreenCamera3D {
@@ -1040,7 +1042,7 @@ fn emit_audio_events(world: &mut World) {
 struct AudioFrame {
     events: Vec<AudioEvent>,
     spatial_events: Vec<crate::audio::SpatialAudioEvent>,
-    ambience: Option<(plugin_audio::AmbienceId, f32)>,
+    ambience: Option<(ribbon_plugin_audio::AmbienceId, f32)>,
     effects_gain: f32,
     ambient_gain: f32,
     listener: AudioListener,

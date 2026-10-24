@@ -1,10 +1,10 @@
 [package]
-name = "plugin_animation"
+name = "ribbon_plugin_animation"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-engine_app = { path = "../../crates/engine_app" }
-engine_plugins = { path = "../../crates/engine_plugins" }
-engine_ecs = { path = "../../crates/engine_ecs" }
-engine_math = { path = "../../crates/engine_math" }
+ribbon_app = { path = "../../crates/ribbon_app" }
+ribbon_plugins = { path = "../../crates/ribbon_plugins" }
+ribbon_ecs = { path = "../../crates/ribbon_ecs" }
+ribbon_math = { path = "../../crates/ribbon_math" }

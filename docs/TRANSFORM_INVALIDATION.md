@@ -13,7 +13,7 @@ Before this change, every `PostUpdate` reconstructed the local/parent maps, reso
 
 ## Contract implemented
 
-Each propagation path owns a private resource cache in `engine_scene`. It stores the last observed local values, the previous parent edges, and the last propagated globals. The cache is moved out of the world during its system and reinserted after processing, avoiding a full cache clone every frame.
+Each propagation path owns a private resource cache in `ribbon_scene`. It stores the last observed local values, the previous parent edges, and the last propagated globals. The cache is moved out of the world during its system and reinserted after processing, avoiding a full cache clone every frame.
 
 At each pass:
 

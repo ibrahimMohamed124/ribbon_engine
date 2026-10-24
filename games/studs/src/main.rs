@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::io;
 
-use plugin_rendering::ecs::RenderBackend;
+use ribbon_plugin_rendering::ecs::RenderBackend;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut backend = if cfg!(feature = "gpu") {

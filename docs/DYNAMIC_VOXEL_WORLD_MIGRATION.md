@@ -2,9 +2,9 @@
 
 ## Goal and boundary
 
-This phase routes STUDS' GPU mode through the engine-owned `plugin_voxel` chunk API and `plugin_render3d` mesh renderer. STUDS remains a game/sample used to exercise the engine. Gameplay policy stays in `games/studs`; reusable voxel storage, remeshing, GPU uploads, GPU resource eviction and rendering stay in engine crates/plugins.
+This phase routes STUDS' GPU mode through the engine-owned `ribbon_plugin_voxel` chunk API and `ribbon_plugin_render3d` mesh renderer. STUDS remains a game/sample used to exercise the engine. Gameplay policy stays in `games/studs`; reusable voxel storage, remeshing, GPU uploads, GPU resource eviction and rendering stay in engine crates/plugins.
 
-The previous CPU raycaster remains selectable as a reference/fallback. The old GPU raycaster code in `plugin_rendering` is intentionally retained for rollback and comparative coverage; this phase changes the STUDS GPU route rather than deleting compatibility code prematurely.
+The previous CPU raycaster remains selectable as a reference/fallback. The old GPU raycaster code in `ribbon_plugin_rendering` is intentionally retained for rollback and comparative coverage; this phase changes the STUDS GPU route rather than deleting compatibility code prematurely.
 
 ## Engine-side implementation
 
@@ -25,16 +25,16 @@ The previous CPU raycaster remains selectable as a reference/fallback. The old G
 3. removes GPU buffers when a chunk becomes empty and reuses released mesh slots;
 4. renders chunks and additional instances with the common depth/PBR/shadow pipeline to an HDR target;
 5. tone maps and explicitly converts to sRGB for an `Rgba8Unorm` offscreen target;
-6. returns the result using `engine_render::Framebuffer` for the existing window-frame contract.
+6. returns the result using `ribbon_render::Framebuffer` for the existing window-frame contract.
 
 The normal ECS `Render3dPlugin` path also evicts uploaded voxel mesh buffers when their extracted instances disappear, rather than retaining every historical mesh forever.
 
 ### STUDS integration (`games/studs`)
 
 - The generated maze is held in `ChunkedVoxelWorld` with 8x8xfull-height chunks. The engine-only `voxel_mesh_showcase` also exercises dynamic removal/restoration of a floor voxel at a chunk corner on the native ECS surface renderer, with only the owner and face-neighbor chunks rebuilt.
-- `--renderer gpu` uses `plugin_render3d::OffscreenVoxelRenderer`; it no longer routes through the legacy `plugin_rendering::gpu::voxel::GpuRenderer` raycaster.
+- `--renderer gpu` uses `ribbon_plugin_render3d::OffscreenVoxelRenderer`; it no longer routes through the legacy `ribbon_plugin_rendering::gpu::voxel::GpuRenderer` raycaster.
 - The game supplies only its block IDs, linear RGB palette, camera values, flashlight-derived scene lighting, enemy/page visual instances and game UI/overlay draw lists.
-- `plugin_rendering` owns the shared world-overlay/brightness/UI compositing used by the CPU renderer and the GPU-backed game route.
+- `ribbon_plugin_rendering` owns the shared world-overlay/brightness/UI compositing used by the CPU renderer and the GPU-backed game route.
 - The game CPU renderer remains the reference/fallback implementation. The legacy renderer source is retained elsewhere in the workspace until the manual GPU runtime checklist below has been completed.
 
 ## Acceptance criteria
@@ -42,10 +42,10 @@ The normal ECS `Render3dPlugin` path also evicts uploaded voxel mesh buffers whe
 | Requirement | Implementation/evidence | Remaining verification |
 |---|---|---|
 | Load a voxel world | `ChunkedVoxelWorld::new(VoxelWorld, chunk_size, empty_block)`; STUDS wraps its generated maze in this type | Run STUDS on the target Windows machine |
-| Build chunk meshes | `rebuild_dirty_chunks` uses greedy chunk meshing and retains CPU snapshots | `cargo test -p plugin_voxel` |
+| Build chunk meshes | `rebuild_dirty_chunks` uses greedy chunk meshing and retains CPU snapshots | `cargo test -p ribbon_plugin_voxel` |
 | Edit one block and update affected chunks | `set_block` tracks revisions/dirty chunks; interior edits dirty one chunk, face edits dirty the owner and adjacent chunk | Full workspace test matrix |
 | Handle chunk boundaries | Mesher reads neighboring world cells; tests cover cross-boundary interface culling and boundary invalidation | Visual check for seams in a live scene |
-| Render through new GPU renderer | STUDS GPU backend uses `plugin_render3d::OffscreenVoxelRenderer` and the HDR/PBR mesh pipeline | Manual GPU run, because CI unit tests do not guarantee an adapter/window presentation is available |
+| Render through new GPU renderer | STUDS GPU backend uses `ribbon_plugin_render3d::OffscreenVoxelRenderer` and the HDR/PBR mesh pipeline | Manual GPU run, because CI unit tests do not guarantee an adapter/window presentation is available |
 | Retain game stability during migration | CPU fallback and the legacy implementation remain available; the game's controls/simulation modules were not migrated into the engine | Compare `--renderer gpu` and `--renderer cpu` in a full play session |
 | Preserve engine/game separation | `games/studs/README.md` states the boundary and this file maps responsibilities | Review any future feature against that boundary |
 
@@ -76,4 +76,4 @@ Check that the maze floor, walls and ceiling have correct orientation, the camer
 
 ## Scope deliberately not claimed
 
-This path still presents through an offscreen framebuffer/readback because STUDS uses the backend-neutral `WindowFrame` presentation contract. The native `plugin_render3d` path now has a reusable spotlight component with a perspective shadow map, PCF filtering, up to eight point lights, map-based normal/AO/emissive shading, height/distance fog and a compact bloom pass; see `examples/horror_slice` for the separate native-surface acceptance scene. This generic renderer feature is not yet parity with the legacy STUDS raycaster's game-specific flashlight effects. Streaming-world loads, asynchronous mesh jobs, LOD and occlusion culling remain future work.
+This path still presents through an offscreen framebuffer/readback because STUDS uses the backend-neutral `WindowFrame` presentation contract. The native `ribbon_plugin_render3d` path now has a reusable spotlight component with a perspective shadow map, PCF filtering, up to eight point lights, map-based normal/AO/emissive shading, height/distance fog and a compact bloom pass; see `examples/horror_slice` for the separate native-surface acceptance scene. This generic renderer feature is not yet parity with the legacy STUDS raycaster's game-specific flashlight effects. Streaming-world loads, asynchronous mesh jobs, LOD and occlusion culling remain future work.

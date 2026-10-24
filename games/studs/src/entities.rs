@@ -1,4 +1,4 @@
-use plugin_rendering::entities::{
+use ribbon_plugin_rendering::entities::{
     EntityAnimation, EntityBox, EntityDefinition, EntityKind, EntityRegistry, EntityRenderMode,
     EntityShadow,
 };

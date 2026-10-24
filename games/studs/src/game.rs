@@ -12,13 +12,13 @@ use crate::player::Player;
 use crate::surfaces::{enemy_view, page_view, StudsSurface};
 use crate::ui::hud::{draw_caught, draw_hud, draw_won};
 use crate::world::{cell_center, World, AIR, CELLS, FLOOR_TOP};
-use engine_math::{forward_vec, hash4, Angles, Rng, Vect};
-use engine_render::Framebuffer;
-use plugin_rendering::cpu::canvas::Canvas;
-use plugin_rendering::cpu::render::raycaster::render_with_materials;
-use plugin_rendering::scene::Scene;
-use plugin_rendering::style::RenderStyle;
-use plugin_rendering::RENDER_DIST;
+use ribbon_math::{forward_vec, hash4, Angles, Rng, Vect};
+use ribbon_plugin_rendering::cpu::canvas::Canvas;
+use ribbon_plugin_rendering::cpu::render::raycaster::render_with_materials;
+use ribbon_plugin_rendering::scene::Scene;
+use ribbon_plugin_rendering::style::RenderStyle;
+use ribbon_plugin_rendering::RENDER_DIST;
+use ribbon_render::Framebuffer;
 
 pub const PAGES_TOTAL: usize = 6;
 const PAGE_PICKUP_RADIUS: f32 = 0.9;
@@ -375,12 +375,12 @@ impl Game {
                 Some(Scene {
                     world: &self.world,
                     empty_voxel: AIR,
-                    camera: plugin_rendering::Camera {
+                    camera: ribbon_plugin_rendering::Camera {
                         eye,
                         view,
                         hfov: hfov * (1.0 - jumpscare * 0.12),
                     },
-                    lighting: plugin_rendering::LightingParams {
+                    lighting: ribbon_plugin_rendering::LightingParams {
                         light_level: flash,
                         intensity: if style.billboards_enabled {
                             (prox * if enemy_seen { 1.15 } else { 1.0 }).clamp(0.0, 1.0)
@@ -571,12 +571,12 @@ impl<'a> GameReadView<'a> {
                 Some(Scene {
                     world: self.world,
                     empty_voxel: AIR,
-                    camera: plugin_rendering::Camera {
+                    camera: ribbon_plugin_rendering::Camera {
                         eye,
                         view,
                         hfov: hfov * (1.0 - jumpscare * 0.12),
                     },
-                    lighting: plugin_rendering::LightingParams {
+                    lighting: ribbon_plugin_rendering::LightingParams {
                         light_level: flash,
                         intensity: if style.billboards_enabled {
                             (prox * if enemy_seen { 1.15 } else { 1.0 }).clamp(0.0, 1.0)

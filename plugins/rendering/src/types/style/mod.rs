@@ -11,7 +11,7 @@ pub use render_style::{LevelLut, RenderStyle};
 #[cfg(test)]
 mod tests {
     use super::{Palette, RenderStyle, Tonemap, LEVEL_COUNT};
-    use engine_math::pack_gray;
+    use ribbon_math::pack_gray;
 
     fn nonlinear_style() -> RenderStyle {
         RenderStyle {

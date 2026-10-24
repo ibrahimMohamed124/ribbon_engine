@@ -1,5 +1,5 @@
-use engine_math::{Rng, Vect};
-use plugin_voxel::{Hit, VoxelWorld};
+use ribbon_math::{Rng, Vect};
+use ribbon_plugin_voxel::{Hit, VoxelWorld};
 
 const EMPTY: u8 = 0;
 const SOLID: u8 = 1;

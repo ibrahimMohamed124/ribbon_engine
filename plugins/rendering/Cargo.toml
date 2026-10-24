@@ -1,24 +1,24 @@
 [package]
-name = "plugin_rendering"
+name = "ribbon_plugin_rendering"
 version = "0.1.0"
 edition = "2021"
 
 [features]
 default = ["cpu", "gpu"]
 cpu = ["dep:rayon"]
-gpu = ["engine_render/gpu", "dep:wgpu", "dep:pollster", "dep:bytemuck"]
+gpu = ["ribbon_render/gpu", "dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [dependencies]
-engine_app = { path = "../../crates/engine_app" }
-engine_plugins = { path = "../../crates/engine_plugins" }
-engine_ecs = { path = "../../crates/engine_ecs" }
-engine_events = { path = "../../crates/engine_events" }
-engine_assets = { path = "../../crates/engine_assets" }
-engine_platform = { path = "../../crates/engine_platform" }
-engine_scene = { path = "../../crates/engine_scene" }
-engine_math = { path = "../../crates/engine_math" }
-plugin_voxel = { path = "../voxel" }
-engine_render = { path = "../../crates/engine_render", default-features = false }
+ribbon_app = { path = "../../crates/ribbon_app" }
+ribbon_plugins = { path = "../../crates/ribbon_plugins" }
+ribbon_ecs = { path = "../../crates/ribbon_ecs" }
+ribbon_events = { path = "../../crates/ribbon_events" }
+ribbon_assets = { path = "../../crates/ribbon_assets" }
+ribbon_platform = { path = "../../crates/ribbon_platform" }
+ribbon_scene = { path = "../../crates/ribbon_scene" }
+ribbon_math = { path = "../../crates/ribbon_math" }
+ribbon_plugin_voxel = { path = "../voxel" }
+ribbon_render = { path = "../../crates/ribbon_render", default-features = false }
 rayon = { version = "1.10", optional = true }
 wgpu = { version = "25.0.2", optional = true }
 pollster = { version = "0.4.0", optional = true }

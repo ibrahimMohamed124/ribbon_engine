@@ -26,7 +26,7 @@ environment. Validate on the development machine:
 ```powershell
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p plugin_render3d spotlight_only_corridor_writes_a_headless_png -- --nocapture
+cargo test -p ribbon_plugin_render3d spotlight_only_corridor_writes_a_headless_png -- --nocapture
 ```
 
 If the GPU test still reports zero changed pixels, inspect the newly generated

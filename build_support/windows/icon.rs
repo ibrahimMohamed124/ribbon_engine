@@ -1,6 +1,6 @@
 // Shared Windows launcher-icon embedding for the workspace's executable packages.
 //
-// Runtime window icons are set by `engine_platform`; this build helper additionally
+// Runtime window icons are set by `ribbon_platform`; this build helper additionally
 // embeds the same `.ico` as a PE resource so Explorer shortcuts and the executable file
 // use the Ribbon Engine identity on Windows.
 

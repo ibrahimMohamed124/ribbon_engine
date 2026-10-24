@@ -14,6 +14,8 @@
 
 Commands are from the repository root. Build A from the pre-optimization profiler source, copy its executable, then build B from the optimized source and copy it separately. Each capture script invocation uses the named prebuilt executable:
 
+The A/B captures predate the Ribbon package-namespace rename. Package IDs in this command record are intentionally preserved as they were run; use the current `ribbon_render` and `ribbon_plugin_render3d` package names for new work.
+
 ```powershell
 cargo fmt --all -- --check
 cargo check -p plugin_render3d -p engine_render

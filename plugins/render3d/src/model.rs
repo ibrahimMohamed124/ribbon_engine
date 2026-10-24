@@ -3,7 +3,7 @@
 use crate::mesh::Vertex;
 use crate::renderer::{MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, TextureData};
 use glam::Mat4;
-use plugin_gltf::ModelAsset;
+use ribbon_plugin_gltf::ModelAsset;
 use std::collections::HashSet;
 
 /// One uploaded primitive and where it sits in model space.
@@ -135,9 +135,9 @@ mod tests {
     use super::upload_model;
     use crate::components::{Camera3D, SunLight, Transform3D};
     use crate::renderer::{Draw, MeshRenderer, Scene};
-    use engine_render::gpu::GpuContext;
-    use engine_render::gpu_window::clear_view;
     use glam::{Mat4, Vec3};
+    use ribbon_render::gpu::GpuContext;
+    use ribbon_render::gpu_window::clear_view;
 
     const CUBE: &[u8] = include_bytes!("../../../assets/models/checker_cube.glb");
 
@@ -153,7 +153,7 @@ mod tests {
         let (device, queue) = (context.device(), context.queue());
         clear_view(device, queue, context.target().view(), [0.0, 0.0, 0.0, 1.0]);
         let mut renderer = MeshRenderer::new(device, queue, wgpu::TextureFormat::Rgba8Unorm);
-        let model = plugin_gltf::parse(CUBE).expect("model parses");
+        let model = ribbon_plugin_gltf::parse(CUBE).expect("model parses");
         let parts = upload_model(&mut renderer, device, queue, &model);
         assert_eq!(parts.len(), 1);
         assert_ne!(parts[0].material, MeshRenderer::WHITE);

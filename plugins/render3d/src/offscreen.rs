@@ -10,14 +10,14 @@ use crate::mesh::Vertex;
 use crate::post::{ToneMapper, HDR_FORMAT};
 use crate::profiling::GpuTimingSnapshot;
 use crate::renderer::{Draw, MeshId, MeshRenderer, Scene};
-use engine_render::gpu::{
+use glam::{Mat4, Vec3};
+use ribbon_plugin_voxel::{ChunkCoord, ChunkedVoxelWorld, VoxelChunkMesh};
+use ribbon_render::gpu::{
     GpuContext, TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool,
 };
-use engine_render::gpu_window::clear_view;
-use engine_render::profiling::RenderResourceStats;
-use engine_render::{graph::RenderError, Framebuffer};
-use glam::{Mat4, Vec3};
-use plugin_voxel::{ChunkCoord, ChunkedVoxelWorld, VoxelChunkMesh};
+use ribbon_render::gpu_window::clear_view;
+use ribbon_render::profiling::RenderResourceStats;
+use ribbon_render::{graph::RenderError, Framebuffer};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;

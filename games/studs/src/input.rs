@@ -4,8 +4,8 @@
 //! (continuous intent) and [`InputFrame`] (intent + one-shot events).
 //! Physical keys live in [`KeyBindings`], which are user-configurable.
 
-use engine_platform::input::Bindings;
-pub use engine_platform::input::{key_name, parse_key, Key, KeyState, MouseSource};
+use ribbon_platform::input::Bindings;
+pub use ribbon_platform::input::{key_name, parse_key, Key, KeyState, MouseSource};
 
 /// Everything the player can ask the game to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

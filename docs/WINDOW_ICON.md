@@ -3,12 +3,12 @@
 The engine uses `assets/engine_icon.jpg` as the original supplied logo. Three derived files are checked in alongside it:
 
 - `assets/engine_icon.png`: square emblem crop used as the editable, compact raster artwork.
-- `assets/engine_icon.rgba`: 64 x 64 tightly packed RGBA pixels embedded directly into `engine_platform`, so window creation requires no image-decoder dependency.
+- `assets/engine_icon.rgba`: 64 x 64 tightly packed RGBA pixels embedded directly into `ribbon_platform`, so window creation requires no image-decoder dependency.
 - `assets/engine_icon.ico`: multi-resolution Windows icon used for the executable's PE icon resource.
 
 ## Runtime windows
 
-`crates/engine_platform/src/window.rs` applies the icon through a shared `with_engine_icons` helper. The generic Winit `with_window_icon` sets the small Windows icon (`ICON_SMALL`) used in the titlebar. On Windows, the helper also uses Winit's `WindowAttributesExtWindows::with_taskbar_icon` to set the large icon (`ICON_BIG`) used by the taskbar. All active windowed applications use this helper through the shared `WinitRunner`.
+`crates/ribbon_platform/src/window.rs` applies the icon through a shared `with_engine_icons` helper. The generic Winit `with_window_icon` sets the small Windows icon (`ICON_SMALL`) used in the titlebar. On Windows, the helper also uses Winit's `WindowAttributesExtWindows::with_taskbar_icon` to set the large icon (`ICON_BIG`) used by the taskbar. All active windowed applications use this helper through the shared `WinitRunner`.
 
 ## Launcher / executable icon on Windows
 

@@ -1,6 +1,6 @@
 # Dynamic voxel mesh showcase
 
-This engine-only example demonstrates the reusable dynamic voxel APIs without putting engine logic in a game. The world is held in `plugin_voxel::ChunkedVoxelWorld`; the example consumes `ChunkMeshUpdate` values, replaces only ECS entities belonging to dirty chunks, and attaches the resulting local meshes at each chunk's `origin_y_up`. The native `Render3dPlugin` extracts those entities and owns GPU upload/eviction.
+This engine-only example demonstrates the reusable dynamic voxel APIs without putting engine logic in a game. The world is held in `ribbon_plugin_voxel::ChunkedVoxelWorld`; the example consumes `ChunkMeshUpdate` values, replaces only ECS entities belonging to dirty chunks, and attaches the resulting local meshes at each chunk's `origin_y_up`. The native `Render3dPlugin` extracts those entities and owns GPU upload/eviction.
 
 Run from the workspace root:
 

@@ -33,7 +33,7 @@ def fetch(url: str, expected_sha256: str, destination: Path) -> bytes:
         data = destination.read_bytes()
     else:
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "Voxelworks-asset-fetch/1.0"})
+            request = urllib.request.Request(url, headers={"User-Agent": "Ribbon-asset-fetch/1.0"})
             with urllib.request.urlopen(request, timeout=45) as response:
                 data = response.read(MAX_BYTES + 1)
         except (OSError, urllib.error.URLError) as error:

@@ -8,13 +8,13 @@ use crate::components::{
     Camera3D, FogSettings, MeshInstance, ModelInstance, PointLight, SpotLight, SunLight,
     VoxelMeshInstance3D,
 };
-use engine_app::{App, Stage, World};
-use engine_assets::Handle;
-use engine_plugins::Plugin;
-use engine_scene::GlobalTransform3D;
 use glam::Mat4;
-use plugin_gltf::ModelAsset;
-use plugin_voxel::VoxelChunkMesh;
+use ribbon_app::{App, Stage, World};
+use ribbon_assets::Handle;
+use ribbon_plugin_gltf::ModelAsset;
+use ribbon_plugin_voxel::VoxelChunkMesh;
+use ribbon_plugins::Plugin;
+use ribbon_scene::GlobalTransform3D;
 use std::sync::Arc;
 
 /// Camera and resolved world pose selected for one render frame.
@@ -83,7 +83,7 @@ pub struct ExtractedScene3D {
 
 /// Extract camera, transform, mesh, model and light data from the live ECS world.
 pub fn extract_scene_3d(world: &mut World) {
-    let frame = world.resource::<engine_app::Time>().frame;
+    let frame = world.resource::<ribbon_app::Time>().frame;
     let sun = world
         .try_resource::<SunLight>()
         .copied()
@@ -184,9 +184,9 @@ impl Plugin for RenderExtraction3DPlugin {
 mod tests {
     use super::{extract_scene_3d, ExtractedScene3D};
     use crate::{Camera3D, FogSettings, MeshInstance, PointLight, SpotLight};
-    use engine_app::App;
-    use engine_scene::GlobalTransform3D;
     use glam::Vec3;
+    use ribbon_app::App;
+    use ribbon_scene::GlobalTransform3D;
 
     #[test]
     fn extracts_spot_and_point_lights_and_fog_settings() {

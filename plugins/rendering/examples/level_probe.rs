@@ -1,5 +1,5 @@
-use plugin_rendering::cpu::render::lighting::light_with_style;
-use plugin_rendering::cpu::render::{Palette, RenderStyle, Tonemap, RENDER_DIST};
+use ribbon_plugin_rendering::cpu::render::lighting::light_with_style;
+use ribbon_plugin_rendering::cpu::render::{Palette, RenderStyle, Tonemap, RENDER_DIST};
 
 fn graded_style() -> RenderStyle {
     RenderStyle {
@@ -26,7 +26,7 @@ fn main() {
     let baseline = RenderStyle::default();
     let graded = graded_style();
     let mut before = graded_style();
-    before.tonemap = plugin_rendering::cpu::render::Tonemap::Exp { exposure: 1.15 };
+    before.tonemap = ribbon_plugin_rendering::cpu::render::Tonemap::Exp { exposure: 1.15 };
     before.gamma = 2.2;
     before.ambient = 0.035;
     before.texture_strength = 0.55;

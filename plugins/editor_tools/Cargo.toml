@@ -1,15 +1,15 @@
 [package]
-name = "plugin_editor_tools"
+name = "ribbon_plugin_editor_tools"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-engine_editor = { path = "../../crates/engine_editor" }
-engine_commands = { path = "../../crates/engine_commands" }
-engine_reflect = { path = "../../crates/engine_reflect" }
-engine_scene = { path = "../../crates/engine_scene" }
-engine_ecs = { path = "../../crates/engine_ecs" }
-engine_app = { path = "../../crates/engine_app" }
-engine_plugins = { path = "../../crates/engine_plugins" }
-engine_render = { path = "../../crates/engine_render" }
-engine_math = { path = "../../crates/engine_math" }
+ribbon_editor = { path = "../../crates/ribbon_editor" }
+ribbon_commands = { path = "../../crates/ribbon_commands" }
+ribbon_reflect = { path = "../../crates/ribbon_reflect" }
+ribbon_scene = { path = "../../crates/ribbon_scene" }
+ribbon_ecs = { path = "../../crates/ribbon_ecs" }
+ribbon_app = { path = "../../crates/ribbon_app" }
+ribbon_plugins = { path = "../../crates/ribbon_plugins" }
+ribbon_render = { path = "../../crates/ribbon_render" }
+ribbon_math = { path = "../../crates/ribbon_math" }

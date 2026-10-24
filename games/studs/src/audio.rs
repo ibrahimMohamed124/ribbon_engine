@@ -1,11 +1,11 @@
 //! Game audio events translated to the reusable mixer and desktop sound bank.
 
-use plugin_audio::mixer::{Audio as Mixer, AudioBackend as MixerBackend};
-use plugin_audio::{AmbienceAsset, AmbienceId, SoundAsset, SoundBank, SoundId};
+use ribbon_plugin_audio::mixer::{Audio as Mixer, AudioBackend as MixerBackend};
+use ribbon_plugin_audio::{AmbienceAsset, AmbienceId, SoundAsset, SoundBank, SoundId};
 
 /// Game-specific sound IDs. Numeric values remain stable for saved/debugged data.
 pub mod sounds {
-    use plugin_audio::SoundId;
+    use ribbon_plugin_audio::SoundId;
 
     pub const FOOTSTEP: SoundId = SoundId(0);
     pub const CHASE_FOOTSTEP: SoundId = SoundId(1);
@@ -19,7 +19,7 @@ pub mod sounds {
 
 /// Game-specific ambience IDs.
 pub mod ambiences {
-    use plugin_audio::AmbienceId;
+    use ribbon_plugin_audio::AmbienceId;
 
     pub const MENU: AmbienceId = AmbienceId(0);
     pub const THREAT: AmbienceId = AmbienceId(1);

@@ -1,7 +1,7 @@
 use crate::canvas::Canvas;
 use crate::material::MaterialTable;
 use crate::scene::Scene as RenderScene;
-use engine_render::{DrawCommand, DrawList, FramePlan, Framebuffer, Renderer};
+use ribbon_render::{DrawCommand, DrawList, FramePlan, Framebuffer, Renderer};
 
 use crate::render::lighting::SurfaceShader;
 use crate::render::post::adjust_brightness;
@@ -97,8 +97,8 @@ pub fn apply_draw_list(framebuffer: &mut Framebuffer, draw_list: &DrawList) {
 #[cfg(test)]
 mod tests {
     use super::{CpuRenderer, FramePlan};
-    use engine_render::Renderer;
-    use engine_render::{DrawCommand, DrawList, Framebuffer};
+    use ribbon_render::Renderer;
+    use ribbon_render::{DrawCommand, DrawList, Framebuffer};
 
     struct NoopShader;
 
@@ -106,8 +106,8 @@ mod tests {
         fn albedo(
             &self,
             _block: u8,
-            _hit: &plugin_voxel::Hit,
-            _direction: engine_math::Vect,
+            _hit: &ribbon_plugin_voxel::Hit,
+            _direction: ribbon_math::Vect,
             _style: &crate::RenderStyle,
         ) -> f32 {
             0.0
