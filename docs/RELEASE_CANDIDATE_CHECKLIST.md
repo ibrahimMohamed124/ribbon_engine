@@ -1,70 +1,41 @@
-# Ribbon Engine release-candidate checklist
+# Ribbon Engine Release Candidate Checklist
 
-This is a release gate, not a claim that the current archive has already passed every item. Mark a
-box complete only after retaining the command output or review record for the exact candidate tree.
+This checklist records release gates; it does not assert they passed merely because code compiles.
 
-## Release identity and source audit
+## Local correctness
 
-- [ ] Agree the release version and changelog entry; do not tag or publish while workspace packages
-      still claim `0.1.x` unless that is the intentional release scheme.
-- [ ] Verify `git status --short`, `git diff --check`, tracked/untracked files, and the final diff.
-- [ ] Search production sources, manifests, examples, and CI for retired `GpuRenderer`, `GpuPresenter`,
-      `ribbon_plugin_rendering::gpu`, `render_gpu_frame_system`, and `RenderBackend` APIs. Hits in the
-      explicit retirement regression test and historical documentation must be classified, not blindly
-      deleted.
-- [ ] Verify `plugins/rendering/tests/legacy_gpu_backend_retired.rs` still fails when the retired
-      API/module is reintroduced in an isolated test fixture or when its source guards are deliberately
-      challenged. Do not make the guard permissive to silence a failure.
-- [ ] Review the deliberate breaking API migration in `docs/RENDERING_API_CONTRACTS.md` against all
-      examples and public exports.
+- [ ] `git diff --check` is clean and the reviewed diff contains no unrelated changes.
+- [ ] `cargo fmt --all -- --check` passes.
+- [ ] `cargo check --locked --workspace --all-targets` passes.
+- [ ] `cargo clippy --locked --workspace --all-targets -- -D warnings` passes.
+- [ ] `cargo test --locked --workspace` passes.
+- [ ] No-default-feature build, Clippy, and tests pass.
+- [ ] Release examples build succeeds.
+- [ ] Dependency policy and retired-backend source audit pass.
 
-## Material/rendering contract
+## Interactive showcase verification
 
-- [ ] `SurfaceShader` is documented and tested as CPU-only; custom albedo/entity callbacks change CPU
-      output, and the test does not claim GPU parity.
-- [ ] `PbrMaterialDesc`, `TextureData`, `Draw::tint`, and `VoxelBlockColor` document color spaces,
-      supported maps/factors, missing-palette fallback, and unsupported callback/per-block texture
-      behavior accurately.
-- [ ] GPU mesh shader validation and material/base-color texture tests pass.
-- [ ] The offscreen dynamic mesh lifecycle test passes on a GPU-equipped runner with
-      `RIBBON_REQUIRE_GPU_TESTS=1`, with no `SKIP` output.
-- [ ] If product requirements require arbitrary custom surface callbacks or per-block PBR maps on GPU,
-      do not sign off based on documentation alone; implement a shared material/shader representation
-      and add cross-backend tests as a separately scoped feature.
+- [ ] `graphics_showcase`: in-window control guide is readable; Space, arrows and R work; right-mouse drag orbits in the expected direction; mouse wheel zoom is bounded; resize/focus loss does not corrupt the camera.
+- [ ] `voxel_mesh_showcase`: WASD/R/F selection stays in bounds; E/Q edit one cell per press; C changes the material; T resets deterministically; marker tracks the target; panel reports real world/chunk and renderer-published metrics.
+- [ ] Editing `(7, 5, 0)` exercises chunk-face neighbors; compare revision/remesh counts and GPU mesh counters after remove/re-add.
+- [ ] Resize/minimize/restore both showcase windows and confirm the overlay clips safely and rendering resumes.
 
-## Required build/test matrix
+## GPU and material contract
 
-- [ ] `git diff --check`
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo check --locked --workspace --all-targets`
-- [ ] `cargo clippy --locked --workspace --all-targets -- -D warnings`
-- [ ] `cargo build --locked --workspace --examples`
-- [ ] `cargo test --locked --workspace`
-- [ ] `cargo build --locked --workspace --all-targets --no-default-features`
-- [ ] `cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings`
-- [ ] `cargo test --locked --workspace --no-default-features`
-- [ ] `cargo build --release --locked --workspace --examples`
-- [ ] `python tools/check_deps.py`
-- [ ] `python games/studs/tools/fetch_assets.py --check` from the actual Git checkout
-- [ ] Review mutually exclusive features before attempting `--all-features`; add supported feature
-      combinations to CI explicitly rather than assuming all features can coexist.
+- [ ] Required offscreen GPU mesh lifecycle test actually executes on a supported adapter; it must not silently skip.
+- [ ] Manual GPU visual check confirms material textures, PBR lighting, shadows, tone mapping, mesh replacement and empty-chunk eviction.
+- [ ] The documented CPU-only `SurfaceShader` callback limitation remains explicit unless GPU behavior and regression coverage are added.
 
-## Runtime acceptance on target Windows hardware
+## CI workflow handling
 
-- [ ] `cargo run --release -p graphics_showcase`
-- [ ] `cargo run --release -p voxel_mesh_showcase`; edit at chunk boundaries and check for seams/stale mesh.
-- [ ] `cargo run --release -p studs --no-default-features -- --renderer cpu`
-- [ ] `cargo run --release -p studs -- --renderer gpu`
-- [ ] Verify WASD, mouse look direction, pitch clamping, resize/minimize/restore, audio, menus, and shutdown.
-- [ ] Check GPU adapter initialization, actual rendered pixels, and GPU-resource upload/release behavior;
-      adapter initialization alone is not visual acceptance.
-- [ ] Capture and review representative PBR/HDR/shadow output; review known renderer limitations in the
-      3D plugin README before labeling the feature set production-ready.
+- [ ] CI YAML is statically parsed and all referenced paths/commands reviewed.
+- [ ] Existing triggers, permissions, concurrency, and runner assumptions are preserved unless reviewed changes require otherwise.
+- [ ] CI definitions cover formatting, default/no-default build and test, Clippy, examples, interactive-showcase unit tests, and retired-backend source audit.
+- [ ] The GitHub Actions checks for the candidate commit complete successfully; record any unavailable platform/GPU checks explicitly.
 
-## Current honest status
+## Release metadata
 
-The source-level contract/test/documentation changes in this patch have not been compiled in this
-editing environment because `cargo`, `rustc`, and `rustfmt` are unavailable here. Therefore this file
-remains an unchecked release gate. The prior Windows results reported before this patch do not validate
-these new changes. Do not declare a release candidate complete until the matrix above is run against
-this exact patch and target-side runtime checks are recorded.
+- [ ] Root and example READMEs describe real controls and renderer behavior.
+- [ ] Changelog lists the changes and the removal of old APIs where applicable.
+- [ ] Known limitations and platform-specific GPU requirements are documented.
+- [ ] Version/tag is not advanced to `v1.0.0` until all required release gates are satisfied.

@@ -78,6 +78,8 @@ jobs:
         run: |
           cargo run --locked -p hello_ecs --no-default-features
           cargo run --locked -p voxel_room --no-default-features -- --renderer cpu --headless
+      - name: Clippy without default features
+        run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
       - name: Test without default features
         run: cargo test --locked --workspace --no-default-features
       - name: Verify platform optional dependencies are absent
@@ -120,6 +122,21 @@ jobs:
       - name: New workspace dependency policy
         run: python tools/check_deps.py
 
+      - name: Retired legacy GPU voxel renderer source audit
+        shell: bash
+        run: |
+          if rg -n --glob '*.rs' '(GpuRenderer|GpuBackend|gpu::voxel|render_gpu_frame_system)' plugins/rendering/src; then
+            echo "Retired GPU voxel raycaster symbols must not return to production source"
+            exit 1
+          fi
+          cargo test --locked -p ribbon_plugin_rendering --test legacy_gpu_backend_retired -- --nocapture
+
+      - name: Interactive showcase and window-overlay regressions
+        run: |
+          cargo test --locked -p ribbon_render overlay
+          cargo test --locked -p graphics_showcase interactive_control_tests
+          cargo test --locked -p voxel_mesh_showcase interactive_controls_tests
+
       - name: Engine dependency and game-content boundary
         shell: bash
         run: |
@@ -156,6 +173,8 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build examples
         run: cargo build --locked --workspace --examples
+      - name: Build release examples
+        run: cargo build --locked --workspace --release --examples
       - name: Level probe
         if: runner.os == 'Linux'
         run: cargo run --release --locked -p ribbon_plugin_rendering --example level_probe
