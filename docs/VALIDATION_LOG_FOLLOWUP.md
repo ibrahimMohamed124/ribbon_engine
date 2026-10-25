@@ -6,7 +6,7 @@ This note records the follow-up for the Windows validation output supplied after
 
 - `cargo fmt --check` reported formatting-only differences in `crates/ribbon_assets/src/lib.rs`, `crates/ribbon_schedule/src/lib.rs`, `examples/horror_slice/src/main.rs`, `games/studs/examples/realistic_bench.rs`, `games/studs/tests/golden.rs`, and `games/studs/tests/renderer.rs`. Those reported formatting differences are corrected in this archive; no test cases were added or changed semantically.
 - `cargo clippy --workspace --all-targets -- -D warnings` completed successfully in the supplied log.
-- The unit/integration test groups displayed before doctests reported success, including the existing ignored GPU `SurfaceShader` limitation.
+- The historical unit/integration test groups reported success, including an ignored comparison between custom CPU `SurfaceShader` callbacks and the legacy GPU voxel raycaster. That comparison test was removed with the retired GPU renderer; the underlying callback boundary remains. The current supported contract is documented in `docs/RENDERING_API_CONTRACTS.md` and behavior-tested for retained CPU callbacks in `plugins/rendering/tests/surface_shader_contract.rs`. No CPU/GPU callback parity is claimed.
 - Both `cargo test --workspace -j 1` and `cargo test --workspace --no-default-features -j 1` stopped at the `ribbon_app` doctest with `unresolved import ribbon_ecs::SyncResource`.
 - `python tools/check_deps.py` completed successfully in the supplied log.
 
