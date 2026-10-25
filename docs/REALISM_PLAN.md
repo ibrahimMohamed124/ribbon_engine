@@ -2,6 +2,13 @@
 
 # STUDS realism upgrade plan
 
+> **Historical game-rendering record.** Phase entries below record implementation at the time they
+> were written and include the now-retired GPU voxel raycaster/WGSL path. Those entries are not a
+> description of the current GPU mesh renderer. Current engine rendering capabilities and material
+> contracts are maintained in `docs/RENDERER_PLAN.md`, `docs/RENDERING_API_CONTRACTS.md`, and
+> `plugins/render3d/README.md`. The current STUDS GPU path uses `ribbon_plugin_render3d` meshes; it
+> does not claim CPU sprite-atlas or `SurfaceShader` callback parity.
+
 ## Audit and baseline (2026-10-16)
 
 The workspace has a dependency-light scene model, CPU and wgpu renderers, and a deterministic golden suite. Legacy Classic and Moody pixels remain protected. Realistic data is carried as plain RGBA mip chains and material texture IDs; asset decode/processing stays outside `voxelworks_scene`. Built-in entities are still boxes (`WARDEN` and `PAGE`).

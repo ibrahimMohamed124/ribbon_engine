@@ -12,17 +12,20 @@ confusing integrated capabilities with features that remain in the roadmap.
 2. **PBR material inputs.** `ribbon_plugin_gltf` retains metallic/roughness factors and
    the packed metallic-roughness image index. When a glTF material omits
    `metallicFactor`, the loader preserves glTF 2.0’s default value of `1.0`.
-   `ribbon_plugin_render3d` uploads base color
-   as sRGB and the G=roughness/B=metallic map as linear data with generated mip
-   levels. The shader evaluates a Cook-Torrance GGX forward BRDF. The public
-   `PbrMaterialDesc` groups factors and optional texture maps into one descriptor,
-   keeping the material upload API explicit without an oversized argument list.
+   `ribbon_plugin_render3d` uploads base color and emissive maps as sRGB and
+   metallic-roughness, tangent-space normal and occlusion maps as linear data, with
+   generated mip levels and neutral fallbacks when inputs are invalid/missing. The shader
+   evaluates a Cook-Torrance GGX forward BRDF. The public `PbrMaterialDesc` groups factors
+   and supported maps into one descriptor, keeping the material upload API explicit without
+   an oversized argument list.
 3. **HDR and tone mapping.** Mesh color renders to `Rgba16Float`, then a fullscreen
    Reinhard tone mapper writes the acquired surface image.
-4. **Directional shadows.** A depth-only directional-light pass creates a single
-   shadow map; the material pass samples it with a depth-comparison sampler and
-   depth bias. Cascades, PCF kernels, point/spot shadows and production-grade
-   stability work remain incomplete.
+4. **Directional and spotlight shadows.** A depth-only directional-light pass creates a
+   single shadow map, and the material pass samples it with depth comparison and bias. The
+   renderer also supports one perspective shadow map for the first shadow-casting spotlight;
+   both maps use 3x3 PCF. Cascaded shadows, additional shadow-casting spotlights, more robust
+   shadow bounds and acne/peter-panning hardening remain incomplete. Point lights are supported
+   for direct lighting (up to eight) but do not cast shadows.
 5. **Main-pass visibility.** Conservative bounding-sphere/frustum tests reduce
    the color-pass instance list. The shadow list retains valid off-screen draws
    so objects outside the camera view can still cast shadows.
@@ -52,16 +55,24 @@ confusing integrated capabilities with features that remain in the roadmap.
   exercise incremental remeshing, entity replacement and GPU-resource eviction; STUDS does not
   gain a block-breaking mechanic just to exercise the engine. Engine-level tests cover owner-chunk
   updates, boundary neighbors, no-op edits, out-of-bounds edits and empty-chunk eviction updates.
-- The PBR shader does not yet implement normal/occlusion/emissive textures,
-  alpha modes, vertex colors, image-based lighting, or multiple point/spot lights.
-- The current shadow map is a single fixed-resolution directional map without
-  cascades or a multi-tap PCF kernel.
+- The active GPU mesh renderer supports normal/occlusion/emissive maps, point lights (up to eight),
+  one shadow-casting spotlight, exponential fog and a compact bloom contribution. It does not yet
+  support alpha blend/mask modes, vertex colors, image-based lighting, cascaded shadows, multiple
+  shadow-casting spotlights, screen-space ambient occlusion, or GPU-driven culling. The separate
+  CPU `SurfaceShader` callbacks are not shared with the GPU mesh renderer; see
+  `docs/RENDERING_API_CONTRACTS.md`.
+- The directional shadow map is a single fixed-resolution map without cascades. Directional and
+  selected spotlight shadows currently use a 3x3 PCF kernel, but broader adapter validation,
+  stable shadow bounds, acne/peter-panning hardening and additional shadow-casting spotlights remain
+  incomplete.
 - The render graph is a scheduling/dependency graph, not a transient GPU resource
   allocator or complete graph of every internal render subpass.
-- Normal/AO/emissive texture sampling, height/distance fog, and a compact bright-pass
-  bloom contribution are implemented in `ribbon_plugin_render3d`. GPU culling, LOD, skeletal
-  animation, GPU-driven culling and world streaming remain planned work. The legacy GPU voxel raycaster
-  deletion is complete; the CPU raycaster remains supported.
+- The offscreen voxel convenience API uses `VoxelBlockColor` linear RGB tints over a shared white
+  PBR material; it does not assign independent PBR texture sets per voxel block or invoke CPU
+  `SurfaceShader` callbacks. This boundary is deliberate and covered in
+  `docs/RENDERING_API_CONTRACTS.md`. LOD, skeletal mesh animation, GPU-driven culling and world
+  streaming remain planned work. The legacy GPU voxel raycaster deletion is complete; the CPU
+  raycaster remains supported.
 
 ## PBR renderer test expectations
 

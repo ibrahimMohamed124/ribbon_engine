@@ -31,10 +31,12 @@ cargo run -p graphics_showcase -- --frames 600
 `ribbon_plugin_render3d` also accepts greedy-meshed voxel chunks; run
 `cargo run -p voxel_mesh_showcase` to see that path.
 
-This is a first PBR/rendering vertical slice, not a complete modern renderer. Normal,
-occlusion and emissive maps, alpha modes, cascaded/soft shadows, point/spot lights,
-ambient occlusion, bloom, fog, IBL, GPU culling and STUDS migration remain future
-work. See [`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md).
+This is a focused PBR/rendering showcase, not a complete modern renderer. The engine supports
+base-color, metallic-roughness, normal, occlusion and emissive maps, point lighting, a directional
+shadow map and one shadow-casting spotlight, fog and bloom. Remaining work includes alpha
+blend/mask modes, cascaded shadows, additional shadow-casting spotlights, image-based lighting,
+screen-space ambient occlusion and GPU-driven culling. This showcase does not demonstrate every
+supported feature in one scene. See [`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md).
 
 ## Render profiling capture
 
