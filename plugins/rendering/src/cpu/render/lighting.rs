@@ -9,9 +9,22 @@ use ribbon_plugin_voxel::{face_ao, face_uv, Hit, VoxelWorld};
 pub const CONE_INNER: f32 = 0.985;
 pub const CONE_OUTER: f32 = 0.86;
 
+/// CPU-only extension point for the legacy voxel-scene renderer.
+///
+/// These callbacks are invoked by `ribbon_plugin_rendering::cpu` and are not part of the
+/// GPU mesh renderer contract. `Render3dPlugin`, `MeshRenderer`, and `OffscreenVoxelRenderer`
+/// do not invoke this trait. Arbitrary Rust callbacks cannot be translated into WGSL
+/// automatically; mesh applications should express supported appearance using GPU material
+/// factors/maps (`PbrMaterialDesc`) and mesh data. The offscreen voxel API currently supports
+/// a per-block linear-RGB tint (`VoxelBlockColor`), not callback-equivalent per-hit shading.
 pub trait SurfaceShader: Sync {
+    /// Return the CPU renderer's scalar albedo for a voxel hit. This is a grayscale multiplier,
+    /// not an RGBA material or a portable shader program; the CPU renderer applies lighting,
+    /// ambient occlusion, and the selected `RenderStyle` afterwards.
     fn albedo(&self, block: u8, hit: &Hit, direction: Vect, style: &RenderStyle) -> f32;
 
+    /// Material-aware CPU override. The default forwards to [`SurfaceShader::albedo`].
+    /// This callback remains CPU-only and is not evaluated by the GPU mesh renderer.
     fn albedo_with_materials(
         &self,
         block: u8,
@@ -23,6 +36,9 @@ pub trait SurfaceShader: Sync {
         self.albedo(block, hit, direction, style)
     }
 
+    /// Choose grayscale brightness and emissive behavior for a CPU-rendered entity primitive.
+    /// This per-hit callback is not consumed by the GPU mesh renderer; use mesh materials and
+    /// per-instance tint when targeting `ribbon_plugin_render3d`.
     fn entity_surface(
         &self,
         _kind: EntityKind,
@@ -38,6 +54,7 @@ pub trait SurfaceShader: Sync {
     }
 }
 
+/// Appearance returned by [`SurfaceShader::entity_surface`] for the CPU renderer only.
 #[derive(Clone, Copy, Debug)]
 pub struct EntitySurface {
     pub gray: f32,

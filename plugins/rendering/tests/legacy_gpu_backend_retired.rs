@@ -130,6 +130,37 @@ fn active_workspace_rust_sources_do_not_reference_the_retired_gpu_api() {
 }
 
 #[test]
+fn cpu_surface_shader_and_gpu_mesh_material_contracts_stay_explicit() {
+    let root = manifest_dir();
+    let lighting = fs::read_to_string(root.join("src/cpu/render/lighting.rs"))
+        .expect("CPU surface lighting contract must be readable");
+    assert!(
+        lighting.contains("CPU-only extension point"),
+        "SurfaceShader must remain explicitly documented as CPU-only"
+    );
+    assert!(
+        lighting.contains("do not invoke this trait"),
+        "the CPU/GPU callback boundary must remain documented"
+    );
+
+    let workspace = root.join("../..");
+    let offscreen = fs::read_to_string(workspace.join("plugins/render3d/src/offscreen.rs"))
+        .expect("offscreen mesh renderer contract must be readable");
+    assert!(offscreen.contains("does not consume `SurfaceShader` or `MaterialTable`"));
+    assert!(offscreen.contains("voxel_block_tint"));
+
+    let api_doc = fs::read_to_string(workspace.join("docs/RENDERING_API_CONTRACTS.md"))
+        .expect("rendering API contract document must be readable");
+    assert!(api_doc.contains("CPU `SurfaceShader` contract"));
+    assert!(
+        api_doc.contains("does not assign separate PBR map sets/material handles per voxel block")
+    );
+    assert!(workspace
+        .join("docs/RELEASE_CANDIDATE_CHECKLIST.md")
+        .is_file());
+}
+
+#[test]
 fn studs_selects_the_engine_mesh_renderer_without_coupling_to_legacy_ecs_backend() {
     let workspace = manifest_dir().join("../..");
     let app = fs::read_to_string(workspace.join("games/studs/src/app.rs"))

@@ -47,6 +47,18 @@ The `examples/graphics_showcase`, `examples/model_viewer`,
 `examples/scene_hierarchy_3d`, and `examples/voxel_mesh_showcase` applications
 show these paths in context.
 
+## Material contract
+
+`PbrMaterialDesc` and `TextureData` define GPU mesh material input: linear factors plus optional
+base-color/emissive sRGB maps and linear metallic-roughness/normal/occlusion maps. Invalid or
+over-device-limit texture dimensions and mismatched byte lengths use neutral fallback maps instead
+of being passed to wgpu as invalid extents. `Draw::tint` is a linear RGB multiplier. The offscreen voxel convenience API is intentionally narrower: its
+`VoxelBlockColor` palette maps each block ID to a linear RGB tint over the shared white PBR material.
+It does not accept the CPU renderer's `SurfaceShader`, does not execute custom per-hit Rust callbacks,
+and currently does not bind independent PBR texture sets per voxel block. See
+[`../../docs/RENDERING_API_CONTRACTS.md`](../../docs/RENDERING_API_CONTRACTS.md) for the supported
+contract and deliberate compatibility boundary.
+
 ## Limitations
 
 This is an intentionally focused PBR implementation, not a complete production

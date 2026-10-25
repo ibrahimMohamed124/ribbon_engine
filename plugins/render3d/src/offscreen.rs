@@ -48,8 +48,13 @@ impl Default for OffscreenCamera3D {
     }
 }
 
-/// Linear RGB tint for one voxel block identifier. Block identity/palette policy belongs
-/// to the application, while this engine type only carries rendering data.
+/// Linear RGB tint for one voxel block identifier in [`OffscreenVoxelRenderer::render`].
+///
+/// The palette is a deliberately small data contract: each chunk mesh uses the renderer's shared
+/// white PBR material multiplied by this tint. It does not accept `MaterialTable` or execute the
+/// CPU-only `SurfaceShader` callbacks, and it does not currently select distinct PBR texture maps
+/// per voxel block. Applications needing textured per-block materials should use the mesh APIs
+/// directly or treat such mapping as a separate future capability.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VoxelBlockColor {
     pub block: u8,
@@ -97,6 +102,15 @@ pub struct OffscreenVoxelRenderer {
     voxel_mesh_gpu_releases_cumulative: u64,
     size: (u32, u32),
     context: GpuContext,
+}
+
+const DEFAULT_VOXEL_BLOCK_TINT: [f32; 3] = [0.58, 0.58, 0.58];
+
+fn voxel_block_tint(block: u8, palette: &[VoxelBlockColor]) -> [f32; 3] {
+    palette
+        .iter()
+        .find(|entry| entry.block == block)
+        .map_or(DEFAULT_VOXEL_BLOCK_TINT, |entry| entry.color)
 }
 
 impl OffscreenVoxelRenderer {
@@ -240,7 +254,11 @@ impl OffscreenVoxelRenderer {
     /// Apply pending world edits to GPU meshes and render the current scene. Passing `None`
     /// for `camera` clears the frame and returns a blank framebuffer, useful for menus.
     ///
-    /// `block_palette` uses linear RGB. Missing block IDs fall back to neutral gray.
+    /// `block_palette` maps block IDs to linear-RGB tints; missing IDs use a neutral-gray tint.
+    /// All voxel chunk meshes use the shared white PBR material multiplied by that tint. This
+    /// method does not consume `SurfaceShader` or `MaterialTable` and cannot reproduce arbitrary
+    /// CPU per-hit callbacks or assign independent texture maps to block IDs. Use
+    /// `MeshRenderer::upload_pbr_material_with_maps` for supported PBR mesh materials.
     pub fn render(
         &mut self,
         world: &mut ChunkedVoxelWorld,
@@ -273,10 +291,7 @@ impl OffscreenVoxelRenderer {
             let mut draws = Vec::new();
             for meshes in self.uploaded_chunks.values() {
                 for uploaded in meshes {
-                    let color = block_palette
-                        .iter()
-                        .find(|entry| entry.block == uploaded.source.block)
-                        .map_or([0.58, 0.58, 0.58], |entry| entry.color);
+                    let color = voxel_block_tint(uploaded.source.block, block_palette);
                     draws.push(Draw {
                         mesh: uploaded.id,
                         material: MeshRenderer::WHITE,
@@ -424,6 +439,25 @@ mod tests {
     const WIDTH: usize = 8;
     const HEIGHT: usize = 4;
     const DEPTH: usize = 2;
+
+    #[test]
+    fn voxel_block_palette_is_linear_rgb_with_a_neutral_missing_id_fallback() {
+        let palette = [
+            VoxelBlockColor {
+                block: 1,
+                color: [0.12, 0.34, 0.56],
+            },
+            VoxelBlockColor {
+                block: 7,
+                color: [0.91, 0.42, 0.08],
+            },
+        ];
+
+        assert_eq!(super::voxel_block_tint(1, &palette), [0.12, 0.34, 0.56]);
+        assert_eq!(super::voxel_block_tint(7, &palette), [0.91, 0.42, 0.08]);
+        assert_eq!(super::voxel_block_tint(99, &palette), [0.58, 0.58, 0.58]);
+        assert_eq!(super::voxel_block_tint(99, &[]), [0.58, 0.58, 0.58]);
+    }
 
     fn world_with_boundary_block() -> ChunkedVoxelWorld {
         let blocks = vec![AIR; WIDTH * HEIGHT * DEPTH];

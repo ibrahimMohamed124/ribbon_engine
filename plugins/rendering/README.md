@@ -6,4 +6,10 @@ This crate owns legacy voxel-scene/material types, CPU voxel rendering, and the 
 
 The former `gpu::voxel::GpuRenderer` / `GpuPresenter` implementation, the plugin's `gpu` feature, its shaders and its `RenderBackend` ECS selector have been removed. This is an intentional API break. New 3D GPU applications should use `ribbon_plugin_render3d`: `Render3dPlugin` for native-surface mesh rendering or `OffscreenVoxelRenderer` for a framebuffer/`WindowFrame` bridge. Mutable voxels flow through `ribbon_plugin_voxel::ChunkedVoxelWorld` and its greedy-meshed chunk updates.
 
+The `SurfaceShader` callbacks (`albedo`, `albedo_with_materials`, `entity_surface`) are CPU-only
+extensions. They are not automatically shared with the GPU mesh renderer; arbitrary Rust callbacks
+are not a cross-backend shader language. The GPU material contract is documented in
+[`../../docs/RENDERING_API_CONTRACTS.md`](../../docs/RENDERING_API_CONTRACTS.md), and behavioral tests
+in `tests/surface_shader_contract.rs` ensure that callbacks remain meaningful on the CPU path.
+
 The `ribbon_plugin_render3d` GPU dependencies are independent of this CPU-focused crate. Do not reintroduce the old renderer behind an unused feature flag. See `../../docs/LEGACY_RAYCASTER_RETIREMENT.md` and `../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md` for the migration rationale, regression tests and validation matrix.

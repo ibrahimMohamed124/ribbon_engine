@@ -1,8 +1,11 @@
 #![cfg(feature = "cpu")]
 
 mod common;
+#[path = "common/golden.rs"]
+mod golden;
 
-use common::{render_cpu, Fixture};
+use common::Fixture;
+use golden::render_cpu;
 use ribbon_render::Framebuffer;
 
 fn render(variant: usize) -> Framebuffer {
