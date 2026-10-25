@@ -16,7 +16,9 @@ use ribbon_plugin_render3d::{
     Transform3D,
 };
 use ribbon_plugins::AppPluginExt;
-use ribbon_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use ribbon_render::gpu_window::{
+    ClearColor, GpuWindow, GpuWindowPlugin, WindowTextOverlay, WindowTextOverlayPass,
+};
 use ribbon_render::profiling::RenderProfilePlugin;
 use ribbon_scene::ScenePlugin;
 use std::error::Error;
@@ -49,6 +51,12 @@ struct ShowcaseState {
     camera_height: f32,
     camera_height_max: f32,
     camera_distance: f32,
+    initial_camera_height: f32,
+    initial_orbit_speed: f32,
+    initial_camera_distance: f32,
+    camera_distance_min: f32,
+    camera_distance_max: f32,
+    initial_paused: bool,
     paused: bool,
     frame_limit: Option<u64>,
     extraction_reported: bool,
@@ -425,11 +433,37 @@ fn spawn_model(
     ));
 }
 
+fn apply_pointer_camera_input(
+    orbit_angle: &mut f32,
+    camera_height: &mut f32,
+    camera_distance: &mut f32,
+    delta: (f32, f32),
+    scroll: f32,
+    height_bounds: (f32, f32),
+    distance_bounds: (f32, f32),
+) {
+    if delta.0.is_finite() && delta.1.is_finite() {
+        // Positive horizontal movement rotates to the right, matching an intuitive orbit drag.
+        *orbit_angle = (*orbit_angle + delta.0 * 0.005).rem_euclid(std::f32::consts::TAU);
+        *camera_height = (*camera_height - delta.1 * 0.04).clamp(height_bounds.0, height_bounds.1);
+    }
+    if scroll.is_finite() {
+        // Positive wheel delta zooms inward; bounds prevent the camera entering the scene.
+        *camera_distance =
+            (*camera_distance - scroll * 0.75).clamp(distance_bounds.0, distance_bounds.1);
+    }
+}
+
 fn animate_showcase(world: &mut World) {
-    let delta = world.resource::<Time>().delta.as_secs_f32();
+    let raw_delta = world.resource::<Time>().delta.as_secs_f32();
+    let delta = if raw_delta.is_finite() {
+        raw_delta.clamp(0.0, 0.1)
+    } else {
+        0.0
+    };
     let elapsed = world.resource::<Time>().elapsed.as_secs_f32();
     let frame = world.resource::<Time>().frame;
-    let (space, left, right, up, down, reset) = {
+    let (space, left, right, up, down, reset, mouse_drag, mouse_scroll) = {
         let input = world.resource::<Input>();
         (
             input.just_pressed(Key::Space),
@@ -438,17 +472,19 @@ fn animate_showcase(world: &mut World) {
             input.is_down(Key::Up),
             input.is_down(Key::Down),
             input.just_pressed(Key::R),
+            input.mouse_buttons.right.then_some(input.mouse_delta),
+            input.mouse_scroll,
         )
     };
 
-    let (orbit_angle, camera_height, camera_distance, paused, frame_limit) = {
+    let (orbit_angle, orbit_speed, camera_height, camera_distance, paused, frame_limit) = {
         let state = world.resource_mut::<ShowcaseState>();
         if reset {
             state.orbit_angle = 0.35;
-            state.orbit_speed = 0.24;
-            state.camera_height =
-                (state.camera_distance * 0.31).clamp(5.0, state.camera_height_max);
-            state.paused = false;
+            state.orbit_speed = state.initial_orbit_speed;
+            state.camera_distance = state.initial_camera_distance;
+            state.camera_height = state.initial_camera_height;
+            state.paused = state.initial_paused;
         }
         if space {
             state.paused = !state.paused;
@@ -470,11 +506,36 @@ fn animate_showcase(world: &mut World) {
             state.camera_height =
                 (state.camera_height - delta * 2.0).clamp(1.5, state.camera_height_max);
         }
+        let height_max = state.camera_height_max;
+        let distance_min = state.camera_distance_min;
+        let distance_max = state.camera_distance_max;
+        if let Some((dx, dy)) = mouse_drag {
+            apply_pointer_camera_input(
+                &mut state.orbit_angle,
+                &mut state.camera_height,
+                &mut state.camera_distance,
+                (dx, dy),
+                0.0,
+                (1.5, height_max),
+                (distance_min, distance_max),
+            );
+        }
+        apply_pointer_camera_input(
+            &mut state.orbit_angle,
+            &mut state.camera_height,
+            &mut state.camera_distance,
+            (0.0, 0.0),
+            mouse_scroll,
+            (1.5, height_max),
+            (distance_min, distance_max),
+        );
         if !state.paused {
-            state.orbit_angle += delta * state.orbit_speed;
+            state.orbit_angle =
+                (state.orbit_angle + delta * state.orbit_speed).rem_euclid(std::f32::consts::TAU);
         }
         (
             state.orbit_angle,
+            state.orbit_speed,
             state.camera_height,
             state.camera_distance,
             state.paused,
@@ -521,6 +582,22 @@ fn animate_showcase(world: &mut World) {
     for (_, (transform, _)) in world.query_mut::<(&mut Transform3D, &Camera3D)>() {
         *transform = Transform3D::looking_at(eye, target, Vec3::Y);
     }
+
+    world.resource_mut::<WindowTextOverlay>().lines = vec![
+        "GRAPHICS SHOWCASE".to_owned(),
+        "SPACE PAUSE OR RESUME ANIMATION".to_owned(),
+        "LEFT RIGHT CHANGE ORBIT SPEED".to_owned(),
+        "UP DOWN CHANGE CAMERA HEIGHT".to_owned(),
+        "RIGHT MOUSE DRAG ORBITS CAMERA".to_owned(),
+        "MOUSE WHEEL ZOOMS IN OR OUT".to_owned(),
+        "R RESET CAMERA AND CONTROL STATE".to_owned(),
+        format!("STATE {}", if paused { "PAUSED" } else { "RUNNING" }),
+        format!("ORBIT SPEED {:.2} RAD PER SECOND", orbit_speed),
+        format!(
+            "CAMERA HEIGHT {:.1} DISTANCE {:.1}",
+            camera_height, camera_distance
+        ),
+    ];
 
     if frame_limit.is_some_and(|limit| frame >= limit) {
         world.send_event(AppExit);
@@ -969,13 +1046,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         height: 800,
     });
     app.insert_resource(ClearColor([0.018, 0.028, 0.048, 1.0]));
+    let initial_orbit_speed = if profile_static_scene { 0.0 } else { 0.24 };
+    let initial_paused = profile_static_scene;
     app.insert_resource(ShowcaseState {
         orbit_angle: 0.35,
-        orbit_speed: if profile_static_scene { 0.0 } else { 0.24 },
+        orbit_speed: initial_orbit_speed,
         camera_height,
         camera_height_max,
         camera_distance,
-        paused: profile_static_scene,
+        initial_camera_height: camera_height,
+        initial_orbit_speed,
+        initial_camera_distance: camera_distance,
+        camera_distance_min: (camera_distance * 0.45).max(5.0),
+        camera_distance_max: (camera_distance * 2.5).max(camera_distance + 8.0),
+        initial_paused,
+        paused: initial_paused,
         frame_limit,
         extraction_reported: false,
         extraction_empty_frames: 0,
@@ -985,6 +1070,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             "[PROFILE] static scene enabled; camera, model transforms, and lighting are paused"
         );
     }
+    app.insert_resource(WindowTextOverlay {
+        lines: vec![
+            "GRAPHICS SHOWCASE".to_owned(),
+            "LOADING CONTROLS...".to_owned(),
+        ],
+        visible: true,
+    });
     app.add_plugin(GpuWindowPlugin)?;
     app.insert_resource(SunLight {
         direction: Vec3::new(-0.45, -0.78, -0.45).normalize(),
@@ -992,6 +1084,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         ambient: Vec3::splat(0.20),
     });
     app.add_plugin(Render3dPlugin)?;
+    app.world
+        .resource_mut::<GpuWindow>()
+        .add_pass(Box::new(WindowTextOverlayPass::default()));
     if let Some(path) = profile_csv {
         app.add_plugin(RenderProfilePlugin::new(path).warmup_frames(profile_warmup))?;
     }
@@ -1068,13 +1163,66 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Live features: native wgpu surface, ECS extraction, indexed meshes, depth buffer,");
     println!("Cook-Torrance metallic-roughness PBR, HDR tone mapping, directional shadows, and frustum culling.");
     println!(
-        "Controls: Space pause/resume, Left/Right orbit speed, Up/Down camera height, R reset."
+        "Controls appear in-window: Space pause/resume, Left/Right orbit speed, Up/Down height, right mouse drag orbit, wheel zoom, R reset."
     );
-    println!("Remaining: normal/occlusion/emissive maps, alpha modes, cascaded/soft shadows, AO, bloom, fog, IBL, and GPU culling.");
+    println!("Remaining renderer work: alpha modes, cascaded shadows, additional shadow-casting spotlights, IBL, screen-space AO, and GPU-driven culling.");
     println!(
         "Run `cargo run -p voxel_mesh_showcase` to view greedy voxels on the same mesh pipeline."
     );
 
     app.build()?.run();
     Ok(())
+}
+
+#[cfg(test)]
+mod interactive_control_tests {
+    use super::apply_pointer_camera_input;
+
+    #[test]
+    fn dragging_right_orbits_right_and_vertical_drag_changes_height() {
+        let (mut angle, mut height, mut distance) = (1.0, 5.0, 16.0);
+        apply_pointer_camera_input(
+            &mut angle,
+            &mut height,
+            &mut distance,
+            (20.0, -10.0),
+            0.0,
+            (1.5, 9.0),
+            (5.0, 40.0),
+        );
+        assert!(angle > 1.0);
+        assert!(height > 5.0);
+        assert_eq!(distance, 16.0);
+    }
+
+    #[test]
+    fn scroll_zooms_in_and_camera_stays_inside_bounds() {
+        let (mut angle, mut height, mut distance) = (1.0, 5.0, 16.0);
+        apply_pointer_camera_input(
+            &mut angle,
+            &mut height,
+            &mut distance,
+            (0.0, 0.0),
+            100.0,
+            (1.5, 9.0),
+            (5.0, 24.0),
+        );
+        assert_eq!(distance, 5.0);
+        assert_eq!(height, 5.0);
+    }
+
+    #[test]
+    fn non_finite_pointer_deltas_do_not_corrupt_camera_state() {
+        let (mut angle, mut height, mut distance) = (1.0, 5.0, 16.0);
+        apply_pointer_camera_input(
+            &mut angle,
+            &mut height,
+            &mut distance,
+            (f32::NAN, f32::INFINITY),
+            f32::NAN,
+            (1.5, 9.0),
+            (5.0, 24.0),
+        );
+        assert_eq!((angle, height, distance), (1.0, 5.0, 16.0));
+    }
 }

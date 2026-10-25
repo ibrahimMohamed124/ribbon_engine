@@ -12,10 +12,16 @@ cargo run -p graphics_showcase -- --frames 600
 
 ## Controls
 
-- **Space**: pause or resume animated objects, moving directional light, and camera orbit.
+The same control guide is rendered inside the window. The startup terminal also prints a short guide.
+
+- **Space**: pause or resume animated objects, moving directional light, and automatic camera orbit.
 - **Left / Right**: reduce or increase orbit speed; continuing left can reverse the orbit.
 - **Up / Down**: raise or lower the camera.
-- **R**: reset the orbit, camera height, and animation state.
+- **Hold right mouse button and drag**: orbit horizontally and adjust camera elevation. Dragging right rotates the viewpoint to the right.
+- **Mouse wheel**: zoom in or out, within safe camera-distance limits.
+- **R**: reset camera distance, orbit, camera height, orbit speed, and pause/control state.
+
+The in-window overlay is rendered as a final alpha-blended pass after the 3D scene. It uses the engine's shared 5x7 bitmap font and clips to the current surface size; it does not depend on game-specific UI code.
 
 ## What it demonstrates
 
@@ -24,19 +30,20 @@ cargo run -p graphics_showcase -- --frames 600
 - ECS extraction of camera, global transforms, models and sunlight.
 - glTF/GLB loading, cached imported models, base-color textures and mip chains.
 - Cook-Torrance/GGX metallic-roughness material shading.
-- A single directional shadow map, an `Rgba16Float` HDR scene target, and Reinhard tone mapping.
+- A directional shadow map, an `Rgba16Float` HDR scene target, and Reinhard tone mapping.
 - CPU frustum culling for the main color pass while retaining off-screen objects for shadows.
 - Per-frame transforms, camera orbit, and frame-limit shutdown for capture workflows.
 
 `ribbon_plugin_render3d` also accepts greedy-meshed voxel chunks; run
 `cargo run -p voxel_mesh_showcase` to see that path.
 
-This is a focused PBR/rendering showcase, not a complete modern renderer. The engine supports
-base-color, metallic-roughness, normal, occlusion and emissive maps, point lighting, a directional
-shadow map and one shadow-casting spotlight, fog and bloom. Remaining work includes alpha
-blend/mask modes, cascaded shadows, additional shadow-casting spotlights, image-based lighting,
-screen-space ambient occlusion and GPU-driven culling. This showcase does not demonstrate every
-supported feature in one scene. See [`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md).
+This is a focused showcase, not a complete modern renderer, and it does not exercise every engine
+feature. The renderer also supports normal, occlusion and emissive maps, up to eight point lights,
+one shadow-casting spotlight, exponential fog and a compact bloom contribution. Remaining work
+includes alpha blend/mask modes, cascaded shadows, additional shadow-casting spotlights, image-based
+lighting, screen-space ambient occlusion and GPU-driven culling. STUDS currently uses the offscreen
+mesh renderer for GPU mode; native-surface voxel rendering for STUDS is a separate future milestone.
+See [`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md).
 
 ## Render profiling capture
 

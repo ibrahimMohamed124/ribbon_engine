@@ -6,11 +6,29 @@ Run from the workspace root:
 
 ```powershell
 cargo run -p voxel_mesh_showcase
-# Optional finite run; the demo removes a floor voxel at frame 120 and restores it at frame 180.
+# Optional finite run for a bounded capture or smoke check:
 cargo run -p voxel_mesh_showcase -- --frames 240
 ```
 
-The edit is deliberately placed on an intersection of horizontal chunk boundaries so neighboring chunk invalidation and seam handling can be inspected. Console messages identify the removal and restoration frames.
+The world is no longer edited by a timed script. You control edits directly so you can observe invalidation and mesh replacement at your own pace.
+
+
+## Controls and interactive editing
+
+The control guide and live diagnostics are drawn inside the window.
+
+- **D / A**: increase/decrease X. **W / S**: increase/decrease Y in the source grid.
+- **R / F**: increase/decrease the selected voxel coordinate along Z.
+- **E**: place the selected block type at the target coordinate.
+- **Q**: remove the block at the target coordinate.
+- **C**: cycle through block types 1–4.
+- **T**: reset the voxel world, target coordinate, camera, and edit counter.
+- **Left / Right**: orbit the camera; **Up / Down** adjust camera elevation.
+- **Hold right mouse button and drag** to orbit; the **mouse wheel** zooms.
+
+A small marker floats above the selected cell. The overlay reports the target and owning chunk, block id, world revision, dirty chunks, the last non-empty chunk-remesh count, edit count, last action, and renderer-published GPU mesh cache/upload/release counters. Those renderer counters are from the latest published render diagnostics and can lag an edit by one frame. Byte counts are estimates where applicable, not driver VRAM readings.
+
+Use the initial selected coordinate `(7, 5, 0)` to start: it lies on the X and Y chunk-face boundary intersection, so removing/replacing its floor voxel invalidates the owner and both adjacent chunks. Selection is clamped to the actual world bounds, edits are one-shot per key press, and reset rebuilds a deterministic initial world.
 
 ## Render profiling capture
 

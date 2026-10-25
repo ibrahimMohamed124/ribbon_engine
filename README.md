@@ -40,10 +40,12 @@ feature-named under `plugins/`. Runnable examples retain concise names such as `
 `graphics_showcase`. The namespace change is an API/package rename: downstream Cargo dependencies and
 Rust imports must use the Ribbon names.
 
+`graphics_showcase` displays its controls in-window and supports mouse orbit/zoom; `voxel_mesh_showcase` supports keyboard block editing and shows chunk/GPU mesh diagnostics in its in-window panel.
+
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for the dependency graph, frame order and
 known limits, [docs/RENDERING_API_CONTRACTS.md](docs/RENDERING_API_CONTRACTS.md) for the public
 CPU/GPU material contract, [docs/RELEASE_CANDIDATE_CHECKLIST.md](docs/RELEASE_CANDIDATE_CHECKLIST.md)
-for release acceptance, [CHANGELOG.md](CHANGELOG.md) for user-facing migrations, and
+for release acceptance, [CHANGELOG.md](CHANGELOG.md) for user-facing changes, and
 [docs/SCALABILITY_ROADMAP.md](docs/SCALABILITY_ROADMAP.md),
 [docs/GPU_RESOURCE_LIFETIME_PROFILING.md](docs/GPU_RESOURCE_LIFETIME_PROFILING.md), and
 [docs/PERFORMANCE_BASELINES.md](docs/PERFORMANCE_BASELINES.md) for scalability, GPU profiling, and
@@ -74,8 +76,8 @@ Choose a backend with `cargo run -p studs -- --renderer gpu` or `--renderer cpu`
 `auto` currently prefers GPU when that feature is compiled in and falls back to CPU
 if GPU initialization fails. The STUDS GPU path uses `ribbon_plugin_render3d::OffscreenVoxelRenderer`
 for GPU mesh rasterization and copies the tone-mapped framebuffer through `WindowFrame`.
-The CPU path remains the deterministic reference/fallback; native-surface presentation for STUDS
-(without the offscreen framebuffer/readback bridge) is a separate future milestone.
+The CPU path remains the deterministic reference/fallback; native-surface voxel rendering
+is a separate future milestone.
 
 ## Horror Slice visual acceptance example
 
