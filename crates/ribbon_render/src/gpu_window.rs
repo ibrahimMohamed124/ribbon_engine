@@ -12,6 +12,9 @@ use ribbon_platform::WindowHandle;
 use ribbon_plugins::Plugin;
 use std::time::Instant;
 
+mod overlay;
+pub use overlay::{WindowTextOverlay, WindowTextOverlayPass};
+
 /// Color the window is cleared to each frame, as linear RGBA in `0.0..=1.0`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClearColor(pub [f64; 4]);
