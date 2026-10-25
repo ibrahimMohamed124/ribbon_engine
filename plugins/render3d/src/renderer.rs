@@ -32,7 +32,12 @@ pub struct MaterialId {
     generation: u32,
 }
 
-/// RGBA8 pixels in sRGB encoding, row-major from the top-left.
+/// Tightly packed RGBA8 pixels, row-major from the top-left, for a GPU mesh material map.
+///
+/// The byte layout is shared across map types, but color-space interpretation depends on the
+/// descriptor slot: base-color and emissive maps are sRGB, while metallic-roughness, normal, and
+/// occlusion maps are linear data. The renderer validates dimensions against the device limit and
+/// byte length, and substitutes the documented neutral map when a supplied texture is unusable.
 #[derive(Clone, Copy, Debug)]
 pub struct TextureData<'a> {
     /// Width in pixels.
@@ -43,7 +48,13 @@ pub struct TextureData<'a> {
     pub rgba8: &'a [u8],
 }
 
-/// Parameters and optional texture maps for a metallic-roughness material.
+/// Parameters and optional texture maps for a GPU metallic-roughness mesh material.
+///
+/// This is the supported material contract for `ribbon_plugin_render3d`. It is intentionally
+/// data-driven and does not execute the CPU renderer's `SurfaceShader` callbacks. Applications
+/// moving from those callbacks must represent the required appearance with these factors/maps,
+/// mesh vertex data, and per-instance tint; arbitrary Rust surface functions have no automatic
+/// GPU equivalent.
 #[derive(Clone, Copy, Debug)]
 pub struct PbrMaterialDesc<'a> {
     /// Linear RGBA base-color factor.
@@ -344,7 +355,18 @@ fn linear_to_srgb(value: f32) -> u8 {
 }
 
 /// Box-filter mip chain (level 0 first). Color is averaged in linear light.
+///
+/// Returns an empty chain when the dimensions are zero or the input is not tightly packed RGBA8
+/// for the supplied dimensions. This keeps direct callers from indexing malformed image data;
+/// material uploads separately validate dimensions against the active device limits.
 pub fn build_mips(width: u32, height: u32, rgba8: &[u8]) -> Vec<(u32, u32, Vec<u8>)> {
+    let expected_len = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if width == 0 || height == 0 || expected_len != Some(rgba8.len()) {
+        return Vec::new();
+    }
+
     let mut levels = vec![(width, height, rgba8.to_vec())];
     while let Some((w, h, previous)) = levels.last() {
         if *w == 1 && *h == 1 {
@@ -352,7 +374,8 @@ pub fn build_mips(width: u32, height: u32, rgba8: &[u8]) -> Vec<(u32, u32, Vec<u
         }
         let (w, h) = (*w, *h);
         let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-        let mut next = Vec::with_capacity((nw * nh * 4) as usize);
+        let mut next =
+            Vec::with_capacity((nw as usize).saturating_mul(nh as usize).saturating_mul(4));
         for y in 0..nh {
             for x in 0..nw {
                 let mut color = [0.0_f32; 3];
@@ -360,7 +383,7 @@ pub fn build_mips(width: u32, height: u32, rgba8: &[u8]) -> Vec<(u32, u32, Vec<u
                 for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                     let sx = (x * 2 + dx).min(w - 1);
                     let sy = (y * 2 + dy).min(h - 1);
-                    let at = ((sy * w + sx) * 4) as usize;
+                    let at = (sy as usize * w as usize + sx as usize) * 4;
                     for (channel, sum) in color.iter_mut().enumerate() {
                         *sum += srgb_to_linear(previous[at + channel]);
                     }
@@ -384,7 +407,8 @@ fn build_data_mips(width: u32, height: u32, rgba8: &[u8]) -> Vec<(u32, u32, Vec<
         }
         let (w, h) = (*w, *h);
         let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-        let mut next = Vec::with_capacity((nw * nh * 4) as usize);
+        let mut next =
+            Vec::with_capacity((nw as usize).saturating_mul(nh as usize).saturating_mul(4));
         for y in 0..nh {
             for x in 0..nw {
                 for channel in 0..4 {
@@ -392,7 +416,7 @@ fn build_data_mips(width: u32, height: u32, rgba8: &[u8]) -> Vec<(u32, u32, Vec<
                     for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                         let sx = (x * 2 + dx).min(w - 1);
                         let sy = (y * 2 + dy).min(h - 1);
-                        let at = ((sy * w + sx) * 4 + channel) as usize;
+                        let at = (sy as usize * w as usize + sx as usize) * 4 + channel;
                         sum += u32::from(previous[at]);
                     }
                     next.push(((sum + 2) / 4) as u8);
@@ -543,21 +567,32 @@ fn select_spot_lights(lights: &[SpotLight]) -> (Option<SpotLight>, Option<SpotLi
     (active, shadow)
 }
 
-fn valid_texture<'a>(texture: Option<TextureData<'a>>, fallback: &'a [u8; 4]) -> TextureData<'a> {
-    match texture {
-        Some(texture)
-            if texture.width > 0
-                && texture.height > 0
-                && texture.rgba8.len()
-                    == (texture.width as usize) * (texture.height as usize) * 4 =>
+fn valid_texture<'a>(
+    texture: Option<TextureData<'a>>,
+    fallback: &'a [u8; 4],
+    max_dimension: u32,
+) -> TextureData<'a> {
+    if let Some(texture) = texture {
+        // Dimensions come from the public descriptor. Validate the device limit and use checked
+        // arithmetic so malformed dimensions cannot overflow before the neutral fallback runs or
+        // reach wgpu as an unsupported texture extent.
+        let expected_len = (texture.width as usize)
+            .checked_mul(texture.height as usize)
+            .and_then(|pixels| pixels.checked_mul(4));
+        if texture.width > 0
+            && texture.height > 0
+            && texture.width <= max_dimension
+            && texture.height <= max_dimension
+            && expected_len == Some(texture.rgba8.len())
         {
-            texture
+            return texture;
         }
-        _ => TextureData {
-            width: 1,
-            height: 1,
-            rgba8: fallback,
-        },
+    }
+
+    TextureData {
+        width: 1,
+        height: 1,
+        rgba8: fallback,
     }
 }
 
@@ -1320,8 +1355,10 @@ impl MeshRenderer {
             emissive_factor,
         } = material;
         let white = [255_u8; 4];
-        let base_source = valid_texture(base_color_texture, &white);
-        let surface_source = valid_texture(metallic_roughness_texture, &white);
+        let max_texture_dimension = device.limits().max_texture_dimension_2d;
+        let base_source = valid_texture(base_color_texture, &white, max_texture_dimension);
+        let surface_source =
+            valid_texture(metallic_roughness_texture, &white, max_texture_dimension);
         let base_texture = self.upload_cached_texture(
             device,
             queue,
@@ -1341,9 +1378,11 @@ impl MeshRenderer {
         let white_occlusion = [255_u8; 4];
         // With no emissive map, white leaves the glTF emissiveFactor unmodified.
         let white_emissive = [255_u8; 4];
-        let normal_source = valid_texture(normal_texture, &flat_normal);
-        let occlusion_source = valid_texture(occlusion_texture, &white_occlusion);
-        let emissive_source = valid_texture(emissive_texture, &white_emissive);
+        let normal_source = valid_texture(normal_texture, &flat_normal, max_texture_dimension);
+        let occlusion_source =
+            valid_texture(occlusion_texture, &white_occlusion, max_texture_dimension);
+        let emissive_source =
+            valid_texture(emissive_texture, &white_emissive, max_texture_dimension);
         let normal_gpu_texture =
             self.upload_cached_texture(device, queue, normal_source, "material normal map", false);
         let occlusion_gpu_texture = self.upload_cached_texture(
@@ -1965,7 +2004,8 @@ fn texture_mip_bytes(width: u32, height: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_mips, pack_point_lights, select_spot_lights, Draw, MeshRenderer, Scene, TextureData,
+        build_mips, pack_point_lights, select_spot_lights, texture_cache_key, valid_texture, Draw,
+        MeshRenderer, Scene, TextureData,
     };
     use crate::components::{Camera3D, FogSettings, PointLight, SpotLight, SunLight, Transform3D};
     use glam::{Mat4, Vec3};
@@ -2029,6 +2069,116 @@ mod tests {
     fn pixel(pixels: &[u32], x: u32, y: u32) -> (u32, u32, u32) {
         let p = pixels[(y * SIZE + x) as usize];
         ((p >> 16) & 0xff, (p >> 8) & 0xff, p & 0xff)
+    }
+
+    #[test]
+    fn invalid_textures_use_neutral_fallback_without_overflow() {
+        let white = [255_u8; 4];
+        let pixels = [12_u8, 34, 56, 255];
+        let truncated = [12_u8, 34, 56];
+
+        let missing = valid_texture(None, &white, 8192);
+        assert_eq!((missing.width, missing.height), (1, 1));
+        assert_eq!(missing.rgba8, white.as_slice());
+
+        let zero_width = valid_texture(
+            Some(TextureData {
+                width: 0,
+                height: 1,
+                rgba8: &white,
+            }),
+            &white,
+            8192,
+        );
+        assert_eq!((zero_width.width, zero_width.height), (1, 1));
+        assert_eq!(zero_width.rgba8, white.as_slice());
+
+        let truncated_data = valid_texture(
+            Some(TextureData {
+                width: 1,
+                height: 1,
+                rgba8: &truncated,
+            }),
+            &white,
+            8192,
+        );
+        assert_eq!((truncated_data.width, truncated_data.height), (1, 1));
+        assert_eq!(truncated_data.rgba8, white.as_slice());
+
+        let over_device_limit = valid_texture(
+            Some(TextureData {
+                width: 2,
+                height: 1,
+                rgba8: &[12_u8, 34, 56, 255, 65, 43, 21, 255],
+            }),
+            &white,
+            1,
+        );
+        assert_eq!((over_device_limit.width, over_device_limit.height), (1, 1));
+        assert_eq!(over_device_limit.rgba8, white.as_slice());
+
+        let overflowing_dimensions = valid_texture(
+            Some(TextureData {
+                width: u32::MAX,
+                height: u32::MAX,
+                rgba8: &white,
+            }),
+            &white,
+            u32::MAX,
+        );
+        assert_eq!(
+            (overflowing_dimensions.width, overflowing_dimensions.height),
+            (1, 1)
+        );
+        assert_eq!(overflowing_dimensions.rgba8, white.as_slice());
+
+        let valid = valid_texture(
+            Some(TextureData {
+                width: 1,
+                height: 1,
+                rgba8: &pixels,
+            }),
+            &white,
+            8192,
+        );
+        assert_eq!((valid.width, valid.height), (1, 1));
+        assert_eq!(valid.rgba8, pixels.as_slice());
+    }
+
+    #[test]
+    fn texture_cache_key_separates_srgb_color_maps_from_linear_data_maps() {
+        let pixels = [128_u8, 96, 64, 255];
+        let texture = TextureData {
+            width: 1,
+            height: 1,
+            rgba8: &pixels,
+        };
+        assert_eq!(
+            texture_cache_key(texture, true),
+            texture_cache_key(texture, true)
+        );
+        assert_eq!(
+            texture_cache_key(texture, false),
+            texture_cache_key(texture, false)
+        );
+        assert_ne!(
+            texture_cache_key(texture, true),
+            texture_cache_key(texture, false),
+            "the same bytes interpreted as sRGB and linear data must not share a GPU cache entry"
+        );
+
+        let changed_pixels = [128_u8, 96, 63, 255];
+        assert_ne!(
+            texture_cache_key(texture, false),
+            texture_cache_key(
+                TextureData {
+                    rgba8: &changed_pixels,
+                    ..texture
+                },
+                false,
+            ),
+            "different texture content must not reuse the same cache key"
+        );
     }
 
     fn cube(model: Mat4, tint: [f32; 3]) -> Draw {
@@ -2380,6 +2530,15 @@ mod tests {
             "spotlight-only corridor should retain deep shadow; dark pixels={dark_pixels}; inspect {}",
             output.display()
         );
+    }
+
+    #[test]
+    fn mip_builder_rejects_zero_dimensions_malformed_buffers_and_overflow() {
+        assert!(build_mips(0, 1, &[]).is_empty());
+        assert!(build_mips(1, 0, &[]).is_empty());
+        assert!(build_mips(1, 1, &[]).is_empty());
+        assert!(build_mips(2, 2, &[0; 15]).is_empty());
+        assert!(build_mips(u32::MAX, u32::MAX, &[255; 4]).is_empty());
     }
 
     #[test]
