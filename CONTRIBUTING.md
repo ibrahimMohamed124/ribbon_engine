@@ -5,7 +5,7 @@ Keep reusable engine code and game-specific code in their respective layers.
 
 ## Where code goes
 
-- `crates/ribbon_*`: Ribbon Engine core. Foundations (`ribbon_math`, `ribbon_ecs`,
+- `crates/*`: Ribbon Engine core (package names retain the `ribbon_*` namespace). Foundations (`ribbon_math`, `ribbon_ecs`,
   `ribbon_events`, `ribbon_schedule`) have no platform or rendering knowledge.
 - `plugins/*` (package `ribbon_plugin_*`): optional behavior installed into an `App`. A
   plugin declares its dependencies on other plugins, never owns the app loop and
@@ -25,7 +25,7 @@ Keep reusable engine code and game-specific code in their respective layers.
 - Put renderer-neutral behavior in shared data when both backends need to interpret
   it. If a capability remains CPU-specific, document it and cover the limitation
   with a named test.
-- Record decisions that the plans leave open in `docs/DECISIONS.md`.
+- Record new architectural decisions as numbered ADRs under `docs/decisions/`; the legacy log is preserved in `docs/decisions/0000-legacy-decision-log.md`.
 
 ## Before submitting
 
@@ -47,4 +47,4 @@ existing game golden values unchanged.
 - Keep dependencies flowing toward foundations. The enforced layers are `crates/` → `crates/`; `plugins/` → `crates/` + `plugins/`; and `examples/`/`games/` → `crates/` + `plugins/`. No workspace package may depend on a game. These boundaries are enforced by `tools/check_deps.py` in addition to the explicit allowlist; update `tools/allowed_deps.toml` alongside intentional direct dependency changes.
 - Do not place self-hosted GitHub Actions runner installations, `_work` checkouts, runner logs, `target/`, or generated ZIP deliveries in source control. The local `.github-actions-runner/` folder is ignored deliberately.
 - Keep runtime/platform code separate from OS-specific PE-resource compilation: window icon selection belongs in `ribbon_platform`; Windows executable resource embedding belongs in `build_support/windows/`.
-- For scalability changes, measure before widening concurrent execution. `ribbon_schedule` offers `SystemConfig::parallel` with typed component/resource access declarations, conflict-free batches, and a serial fallback. Declarations are a caller contract; structural world changes and conditional systems stay exclusive. Compare parallel results against serial execution and profile thread-startup costs before relying on performance gains. Asset loading/retention and transform dirty tracking likewise need explicit ownership/invalidation contracts. Record design decisions in `docs/DECISIONS.md` and update this architecture guide.
+- For scalability changes, measure before widening concurrent execution. `ribbon_schedule` offers `SystemConfig::parallel` with typed component/resource access declarations, conflict-free batches, and a serial fallback. Declarations are a caller contract; structural world changes and conditional systems stay exclusive. Compare parallel results against serial execution and profile thread-startup costs before relying on performance gains. Asset loading/retention and transform dirty tracking likewise need explicit ownership/invalidation contracts. Record design decisions in `docs/decisions/` and update this architecture guide.
