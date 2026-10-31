@@ -74,6 +74,11 @@ pub trait RenderNode: Send + Sync {
     /// Execute the pass in a backend-neutral context.
     fn run(&mut self, context: &mut RenderContext) -> Result<(), RenderError>;
 
+    /// Release device-owned resources after the device-lost callback fires. Called on the
+    /// render-owning thread before the old context is dropped and before a new device is built.
+    #[cfg(feature = "gpu")]
+    fn on_device_lost(&mut self, _world: &mut World) {}
+
     /// Execute the pass as part of a GPU window frame. Existing graph nodes remain
     /// backend-neutral and use `run`; GPU render nodes can override this hook.
     #[cfg(feature = "gpu")]
@@ -190,6 +195,15 @@ impl RenderGraph {
             self.nodes[index].run(context)?;
         }
         Ok(())
+    }
+
+    /// Notify every node that its device was lost. Nodes must drop all device-owned objects
+    /// and retain/requeue only CPU-side descriptions that can be recreated on a new device.
+    #[cfg(feature = "gpu")]
+    pub fn notify_device_lost(&mut self, world: &mut World) {
+        for node in &mut self.nodes {
+            node.on_device_lost(world);
+        }
     }
 
     /// Execute the same validated graph for one native GPU frame. The ECS world and

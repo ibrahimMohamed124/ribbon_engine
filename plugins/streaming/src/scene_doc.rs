@@ -4,7 +4,7 @@
 //! dependencies separately through `PrefabCodecRegistry`, so decoding a document never performs
 //! synchronous asset IO or creates GPU resources.
 
-use ribbon_assets::{AssetLoader, LoadContext, LoadError, LoadErrorKind};
+use ribbon_assets::{AssetLoader, AssetMemoryBreakdown, LoadContext, LoadError, LoadErrorKind};
 use ribbon_reflect::Value;
 use ribbon_scene::SceneDoc;
 use std::mem::size_of;
@@ -39,6 +39,13 @@ impl AssetLoader for SceneDocLoader {
 
     fn estimated_size_bytes(&self, document: &Self::Asset) -> u64 {
         estimate_scene_doc_bytes(document)
+    }
+
+    fn memory_breakdown(&self, document: &Self::Asset) -> AssetMemoryBreakdown {
+        AssetMemoryBreakdown {
+            scene_metadata_bytes: estimate_scene_doc_bytes(document),
+            ..AssetMemoryBreakdown::default()
+        }
     }
 }
 
@@ -124,8 +131,13 @@ mod tests {
             .load(encoded.as_bytes(), &mut context)
             .unwrap();
         assert_eq!(decoded, document);
-        assert!(
-            SceneDocLoader.estimated_size_bytes(&decoded) > std::mem::size_of::<SceneDoc>() as u64
+        let estimated = SceneDocLoader.estimated_size_bytes(&decoded);
+        assert!(estimated > std::mem::size_of::<SceneDoc>() as u64);
+        assert_eq!(
+            SceneDocLoader
+                .memory_breakdown(&decoded)
+                .scene_metadata_bytes,
+            estimated
         );
     }
 

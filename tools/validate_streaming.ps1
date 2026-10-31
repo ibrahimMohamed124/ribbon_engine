@@ -27,13 +27,43 @@ $requiredStatsFields = @(
     'generic_gpu_upload_failures_cumulative',
     'generic_gpu_releases_cumulative',
     'generic_gpu_uploads_this_frame',
-    'generic_gpu_upload_bytes_this_frame'
+    'generic_gpu_upload_bytes_this_frame',
+    'streaming_max_activation_latency_ns',
+    'streaming_slowest_region_id',
+    'streaming_slowest_region_requested_ns',
+    'streaming_slowest_region_cpu_loading_ns',
+    'streaming_slowest_region_gpu_warmup_ns',
+    'streaming_slowest_region_ready_wait_ns',
+    'streaming_slowest_region_physics_ns',
+    'streaming_slowest_region_activation_ns',
+    'streaming_slowest_region_current_state_ns',
+    'streaming_slowest_region_last_activation_ns',
+    'generic_gpu_resident_bytes_estimate',
+    'generic_gpu_queued_bytes_estimate',
+    'generic_gpu_budget_overage_bytes',
+    'generic_gpu_evictions_cumulative',
+    'generic_gpu_memory_pressure_events',
+    'generic_gpu_budget_rejections_cumulative',
+    'generic_gpu_sampler_count_over_budget'
 )
 $missingStatsFields = @($requiredStatsFields | Where-Object {
     $renderStatsSource -notmatch ('(?m)^\s*pub\s+' + [regex]::Escape($_) + '\s*:')
 })
 if ($missingStatsFields.Count -gt 0) {
     throw ("Renderer diagnostics schema is incomplete in {0}: {1}. Reapply the complete world-streaming overlay." -f $renderStatsPath, ($missingStatsFields -join ', '))
+}
+
+$coordinatorPath = Join-Path $repoRoot 'plugins/streaming/src/coordinator.rs'
+$coordinatorSource = Get-Content -LiteralPath $coordinatorPath -Raw
+$requiredCoordinatorMarkers = @(
+    'pub struct RegionActivationBreakdown',
+    'pub elapsed_ns: u64',
+    'scene_doc_revision_changed',
+    'slowest_activation'
+)
+$missingCoordinatorMarkers = @($requiredCoordinatorMarkers | Where-Object { $coordinatorSource -notmatch [regex]::Escape($_) })
+if ($missingCoordinatorMarkers.Count -gt 0) {
+    throw ("Streaming lifecycle source is incomplete in {0}: {1}. Reapply the complete world-streaming overlay." -f $coordinatorPath, ($missingCoordinatorMarkers -join ', '))
 }
 
 $resultsRoot = Join-Path $repoRoot 'test-results'

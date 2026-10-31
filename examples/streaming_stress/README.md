@@ -25,6 +25,12 @@ The GPU window is automated: the observer and camera move along a generated forw
 Keep the window open until the harness closes it. Do not minimize it during the run because some
 window/render loops throttle redraw while minimized.
 
+To exercise GPU residency pressure on a real adapter, add `-ExpectGpuPressure`. The harness then
+sets a tight texture/sampler budget, verifies a new request is rejected while all existing leases are
+live, lets the real texture uploads complete, releases their leases, and requests a replacement.
+That request must evict a previously READY texture; the renderer must release the actual GPU handle
+on its owning thread and drain all remaining leases before the phase passes.
+
 ## Headless-only run
 
 For machines or CI workers without a graphics adapter:
@@ -52,6 +58,31 @@ It intentionally reports GPU metrics as unavailable; it never fabricates a succe
   -UploadBudgetMiB 2
 ```
 
+For a longer CPU soak, use up to 20 cycles and 512 regions/assets:
+
+```powershell
+.\examples\streaming_stress\run_streaming_stress.ps1 `
+  -HeadlessOnly `
+  -Regions 192 `
+  -Cycles 20 `
+  -Assets 256 `
+  -AssetBytesKiB 256
+```
+
+To combine the long route with the GPU pressure/eviction test, omit `-HeadlessOnly`, add
+`-ExpectGpuPressure`, and keep the GPU window visible. A 20-cycle GPU run can be long; adjust
+`-FramesPerRegion` and `-GpuTimeoutMinutes` to the test machine.
+
+```powershell
+.\examples\streaming_stress\run_streaming_stress.ps1 `
+  -Regions 96 `
+  -Cycles 20 `
+  -Assets 256 `
+  -FramesPerRegion 8 `
+  -TailFrames 240 `
+  -ExpectGpuPressure
+```
+
 `-TailFrames` must be at least 48 so the test has time to reconcile physics cleanup and region unloading after the route. `-SkipBuild` reuses the existing release executable. `-GpuTimeoutMinutes` bounds the GPU phase and
 terminates it if the window stops making progress. The PowerShell runner starts Cargo, Python, and
 the harness as tracked child processes, captures stdout/stderr separately, and records working-set
@@ -64,6 +95,7 @@ and private-byte samples for each process.
 | Repeated load/activate/deactivate/unload of many regions | Deterministic observer traverses generated collider regions forward and backward; final out-of-range phase verifies unload. |
 | CPU/GPU memory while traversing | Per-update AssetServer residency, pinned/unpinned bytes, renderer GPU allocation estimates, plus OS process working set/private bytes. |
 | GPU upload budgets under load | Many distinct GLB model uploads plus standalone texture and sampler warmups, measured against the configured count and byte budget each rendered frame. |
+| GPU memory-pressure admission and eviction | With `-ExpectGpuPressure`, the harness verifies a pinned overcommit rejection, then uploads and evicts an actually READY texture after its final lease is dropped; the render thread performs the release. |
 | Cancellation while work is active | A dedicated AssetSource first holds a real AssetServer worker in cancellable I/O and validates direct cancellation; a second case starts a required `.scenedoc` load through a real region, moves the observer beyond unload distance while the worker is blocked, and verifies region teardown releases the lease and cancels that active read. |
 | Shared resources across regions/consumers | Every GPU route/overlap region references a common model plus unique models; CPU phase verifies duplicate `AssetRef` requests, lease retention and logical region references from two scenes. Generic GPU duplicate keys are checked for one queued upload. |
 | Active-region concurrency | Both phases explicitly activate four overlapping regions at the same time, hold the four-region state for a configured interval, record activation latency/peak concurrency, and fail if the cap is exceeded. |
@@ -103,7 +135,7 @@ target/streaming-stress-runs/<timestamp>/
 - The PowerShell `process-memory.csv` sampler observes the direct child process only, not all descendant processes or total system/GPU memory. A 25 ms default interval is intended to collect multiple samples during the short headless run.
 - GPU timing is only available when the actual adapter/backend exposes timestamp queries.
 - The upload budget permits one oversized first upload in a frame to avoid starvation. The acceptance check allows that documented exception, but verifies subsequent work does not exceed the configured budget.
-- The GPU phase uses real renderer work. A headless run never marks GPU warmup or GPU memory as successful.
+- The GPU phase uses real renderer work. A headless run never marks GPU warmup or GPU memory as successful. The optional residency pressure test estimates allocation bytes from upload payloads; this is not an exact driver-reported VRAM cap.
 - These tests are stress/regression signals, not a substitute for profiling a shipping game's actual content on its target devices.
 
 ## Direct executable usage
@@ -113,5 +145,5 @@ run directly:
 
 ```powershell
 cargo run --release -p ribbon_streaming_stress -- --mode headless --regions 48 --cycles 2
-cargo run --release -p ribbon_streaming_stress -- --mode gpu --regions 48 --cycles 2 --asset-root target/streaming-stress-corpus --require-gpu
+cargo run --release -p ribbon_streaming_stress -- --mode gpu --regions 48 --cycles 2 --asset-root target/streaming-stress-corpus --require-gpu --expect-gpu-pressure
 ```

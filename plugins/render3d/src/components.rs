@@ -12,6 +12,16 @@ pub use ribbon_render_contracts::{
 };
 use std::sync::Arc;
 
+/// Marker for render entities that have been spawned as part of a streaming activation but have
+/// not reached their region's visibility commit yet. The render extraction pass omits marked
+/// entities; physics and other ECS systems continue to observe them normally.
+///
+/// Streaming removes this marker from every region-owned visual entity in one Update once all
+/// required visuals and colliders are ready. Applications may also use it to stage their own
+/// renderer-facing entity groups.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StagedRender;
+
 /// An instance of caller-owned indexed triangle geometry rendered by the native mesh pass.
 ///
 /// Geometry is reference-counted so multiple entities can share one CPU mesh and the renderer

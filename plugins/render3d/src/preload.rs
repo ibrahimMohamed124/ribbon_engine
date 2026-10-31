@@ -56,6 +56,66 @@ impl GpuUploadBudget {
         }
     }
 }
+/// Soft residency budget for the renderer's glTF model cache. The limit never evicts live scene
+/// placements or required warmups; it produces pressure levels and over-budget diagnostics while
+/// the existing liveness pass evicts only models no longer referenced by either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelGpuResidencyBudget {
+    /// Estimated model-cache bytes before a pressure level is reported. `None` disables reporting.
+    pub max_bytes: Option<u64>,
+    /// Percentage of the limit at which warning pressure begins.
+    pub warning_percent: u8,
+    /// Percentage of the limit at which high pressure begins.
+    pub high_percent: u8,
+    /// Percentage of the limit at which critical pressure begins.
+    pub critical_percent: u8,
+}
+
+impl Default for ModelGpuResidencyBudget {
+    fn default() -> Self {
+        Self {
+            max_bytes: Some(1024 * 1024 * 1024),
+            warning_percent: 75,
+            high_percent: 90,
+            critical_percent: 100,
+        }
+    }
+}
+
+impl ModelGpuResidencyBudget {
+    pub fn normalized(self) -> Self {
+        let warning_percent = self.warning_percent.clamp(1, 100);
+        let high_percent = self.high_percent.clamp(warning_percent, 100);
+        let critical_percent = self.critical_percent.clamp(high_percent, 100);
+        Self {
+            max_bytes: self.max_bytes,
+            warning_percent,
+            high_percent,
+            critical_percent,
+        }
+    }
+
+    /// Return pressure level: 0 normal, 1 warning, 2 high, 3 critical.
+    pub fn pressure_level(self, resident_bytes: u64) -> u8 {
+        let Some(limit) = self.max_bytes else {
+            return 0;
+        };
+        if limit == 0 {
+            return u8::from(resident_bytes > 0) * 3;
+        }
+        let budget = self.normalized();
+        let usage_percent = (u128::from(resident_bytes) * 100 / u128::from(limit)).min(100) as u8;
+        if usage_percent >= budget.critical_percent {
+            3
+        } else if usage_percent >= budget.high_percent {
+            2
+        } else if usage_percent >= budget.warning_percent {
+            1
+        } else {
+            0
+        }
+    }
+}
 
 /// GPU preparation state for one requested model generation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -202,6 +262,16 @@ impl ModelWarmup {
         true
     }
 
+    /// A replacement device invalidates every uploaded model handle. Keep requests alive so the
+    /// owning renderer can warm them again from AssetServer's retained CPU assets.
+    pub(crate) fn reset_after_device_loss(&mut self) {
+        for entry in &mut self.entries {
+            if matches!(&entry.status, ModelWarmupStatus::Ready) {
+                entry.status = ModelWarmupStatus::WaitingForGpu;
+            }
+        }
+    }
+
     pub(crate) fn counts(&self) -> ModelWarmupCounts {
         let mut counts = ModelWarmupCounts {
             requested: self.entries.len(),
@@ -260,6 +330,32 @@ mod tests {
             server.get(handle).expect("CPU model resident").clone(),
             handle,
         )
+    }
+
+    #[test]
+    fn model_gpu_residency_budget_reports_warning_high_and_critical_pressure() {
+        use super::ModelGpuResidencyBudget;
+        let budget = ModelGpuResidencyBudget::default();
+        assert_eq!(budget.pressure_level(700 * 1024 * 1024), 0);
+        assert_eq!(budget.pressure_level(800 * 1024 * 1024), 1);
+        assert_eq!(budget.pressure_level(950 * 1024 * 1024), 2);
+        assert_eq!(budget.pressure_level(1024 * 1024 * 1024), 3);
+        assert_eq!(
+            ModelGpuResidencyBudget {
+                max_bytes: Some(0),
+                ..budget
+            }
+            .pressure_level(1),
+            3
+        );
+        assert_eq!(
+            ModelGpuResidencyBudget {
+                max_bytes: None,
+                ..budget
+            }
+            .pressure_level(u64::MAX),
+            0
+        );
     }
 
     #[test]

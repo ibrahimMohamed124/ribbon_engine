@@ -1,18 +1,19 @@
 [CmdletBinding()]
 param(
-    [ValidateRange(2, 256)] [int]$Regions = 48,
-    [ValidateRange(1, 10)] [int]$Cycles = 2,
-    [ValidateRange(2, 256)] [int]$Assets = 64,
+    [ValidateRange(2, 512)] [int]$Regions = 48,
+    [ValidateRange(1, 20)] [int]$Cycles = 2,
+    [ValidateRange(2, 512)] [int]$Assets = 64,
     [ValidateRange(1, 16384)] [int]$AssetBytesKiB = 256,
     [ValidateRange(8, 512)] [int]$TextureSize = 512,
     [ValidateRange(1, 600)] [int]$FramesPerRegion = 24,
     [ValidateRange(48, 10000)] [int]$TailFrames = 120,
     [ValidateRange(1, 64)] [int]$UploadsPerFrame = 2,
     [ValidateRange(1, 4096)] [int]$UploadBudgetMiB = 2,
-    [ValidateRange(1, 120)] [int]$GpuTimeoutMinutes = 10,
+    [ValidateRange(1, 180)] [int]$GpuTimeoutMinutes = 60,
     [ValidateRange(10, 1000)] [int]$MemorySampleIntervalMs = 25,
     [string]$OutputRoot = "target/streaming-stress-runs",
     [switch]$HeadlessOnly,
+    [switch]$ExpectGpuPressure,
     [switch]$SkipBuild
 )
 
@@ -302,6 +303,9 @@ if (-not $HeadlessOnly) {
         "--output-dir", $gpuOutput,
         "--require-gpu"
     )
+    if ($ExpectGpuPressure) {
+        $gpuArgs += "--expect-gpu-pressure"
+    }
     Write-Host "`n[GPU] A real native render window will open. Keep it open until the harness exits." -ForegroundColor Yellow
     $gpuResult = Invoke-TrackedProcess `
         -Name "gpu" `
@@ -323,6 +327,7 @@ $lines.Add("- Project: $ProjectRoot")
 $lines.Add("- Regions / cycles: $Regions / $Cycles")
 $lines.Add("- Generated GLB assets: $Assets")
 $lines.Add("- Upload budget: $UploadsPerFrame operations / $UploadBudgetMiB MiB per rendered frame")
+$lines.Add("- GPU residency pressure test: $ExpectGpuPressure")
 $lines.Add("- Process memory sampling interval: $MemorySampleIntervalMs ms")
 $lines.Add("")
 $lines.Add("| Phase | Result | Exit code | Duration (s) | Peak working set (MiB) | Peak private bytes (MiB) |")

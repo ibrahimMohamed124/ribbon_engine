@@ -17,7 +17,7 @@ pub mod renderer;
 
 pub use components::{
     BuiltinMesh, Camera3D, DynamicMeshInstance3D, FogSettings, GpuMeshInstance3D, MeshInstance,
-    ModelInstance, PointLight, SpotLight, SunLight, Transform3D,
+    ModelInstance, PointLight, SpotLight, StagedRender, SunLight, Transform3D,
 };
 pub use extract::{
     extract_scene_3d, ExtractedCamera3D, ExtractedDynamicMesh3D, ExtractedMesh3D, ExtractedModel3D,
@@ -25,14 +25,14 @@ pub use extract::{
 };
 pub use glam;
 pub use gpu_streaming::{
-    GpuResourceData, GpuResourceHandle, GpuResourceKey, GpuResourceLease, GpuResourceRequestError,
-    GpuResourceWarmup, GpuResourceWarmupCounts, GpuResourceWarmupStatus, OwnedPbrMaterialData,
-    OwnedTextureData,
+    GpuResidencyBudget, GpuResourceClass, GpuResourceData, GpuResourceHandle, GpuResourceKey,
+    GpuResourceLease, GpuResourceRequestError, GpuResourceWarmup, GpuResourceWarmupCounts,
+    GpuResourceWarmupStatus, OwnedPbrMaterialData, OwnedTextureData,
 };
 pub use model::{try_upload_model, upload_model, validate_model_for_upload, GpuModelPart};
 pub use pollster;
 pub use prefab::register_prefab_components;
-pub use preload::{GpuUploadBudget, ModelWarmup, ModelWarmupStatus};
+pub use preload::{GpuUploadBudget, ModelGpuResidencyBudget, ModelWarmup, ModelWarmupStatus};
 pub use renderer::{
     Draw, GpuSamplerAddressMode, GpuSamplerDesc, GpuSamplerFilter, MaterialId, MeshId,
     MeshRenderer, PbrMaterialDesc, SamplerId, Scene, TextureData, TextureId,
@@ -132,6 +132,10 @@ struct MeshPass {
     tonemapper: Option<(wgpu::TextureFormat, ToneMapper)>,
     /// Uploaded models keyed by asset handle id and generation.
     models: HashMap<ModelAssetKey, Vec<GpuModelPart>>,
+    /// Upload-size estimate for each live glTF model cache entry; subset of renderer mesh/material totals.
+    model_cache_bytes: HashMap<ModelAssetKey, u64>,
+    model_cache_pressure_events: u64,
+    model_cache_pressure_level: u8,
     /// Last CPU-content revision observed for each model handle.
     asset_revisions: HashMap<ModelAssetKey, u64>,
     /// GPU uploads for shared runtime-provided mesh geometry, keyed by the retained Arc allocation.
@@ -152,6 +156,39 @@ struct MeshPass {
 impl FramePass for MeshPass {
     fn name(&self) -> &'static str {
         "mesh pass"
+    }
+
+    fn on_device_lost(&mut self, world: &mut World) {
+        // Drop renderer/pipeline/texture objects on the render-owning thread before GpuContext.
+        self.renderer = None;
+        self.hdr = None;
+        self.hdr_size = None;
+        self.tonemapper = None;
+        self.transient_targets = TransientTexturePool::default();
+        self.models.clear();
+        self.model_cache_bytes.clear();
+        self.model_cache_pressure_level = 0;
+        self.asset_revisions.clear();
+        self.dynamic_meshes.clear();
+        self.failed_model_uploads.clear();
+        self.pending_model_validations
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+        self.pending_gpu_resource_validations
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+        if world.try_resource::<ModelWarmup>().is_some() {
+            world
+                .resource_mut::<ModelWarmup>()
+                .reset_after_device_loss();
+        }
+        if world.try_resource::<GpuResourceWarmup>().is_some() {
+            world
+                .resource_mut::<GpuResourceWarmup>()
+                .reset_after_device_loss();
+        }
     }
 
     fn render(&mut self, world: &mut World, target: &FrameTarget<'_>) {
@@ -284,6 +321,27 @@ impl MeshPass {
             resources.scene_model_placements = extracted.models.len();
         }
         resources.gpu_model_cache_entries = self.models.len();
+        let model_cache_bytes = self
+            .model_cache_bytes
+            .values()
+            .fold(0_u64, |total, bytes| total.saturating_add(*bytes));
+        let model_budget = world
+            .try_resource::<ModelGpuResidencyBudget>()
+            .copied()
+            .unwrap_or_default()
+            .normalized();
+        let pressure_level = model_budget.pressure_level(model_cache_bytes);
+        if pressure_level > self.model_cache_pressure_level {
+            self.model_cache_pressure_events = self.model_cache_pressure_events.saturating_add(1);
+        }
+        self.model_cache_pressure_level = pressure_level;
+        resources.model_gpu_cache_bytes_estimate = model_cache_bytes;
+        resources.model_gpu_cache_budget_bytes = model_budget.max_bytes.unwrap_or(0);
+        resources.model_gpu_cache_over_budget_bytes = model_budget
+            .max_bytes
+            .map_or(0, |limit| model_cache_bytes.saturating_sub(limit));
+        resources.model_gpu_cache_pressure_events = self.model_cache_pressure_events;
+        resources.model_gpu_cache_pressure_level = pressure_level;
         resources.model_gpu_uploads_cumulative = self.model_gpu_uploads_cumulative;
         resources.model_gpu_releases_cumulative = self.model_gpu_releases_cumulative;
         resources.model_gpu_uploads_this_frame = self.model_gpu_uploads_this_frame;
@@ -305,6 +363,15 @@ impl MeshPass {
             resources.generic_gpu_uploads_cumulative = counts.completed_uploads;
             resources.generic_gpu_upload_failures_cumulative = counts.failed_uploads;
             resources.generic_gpu_releases_cumulative = counts.released_resources;
+            resources.generic_gpu_resident_bytes_estimate = counts.resident_bytes_estimate;
+            resources.generic_gpu_recovery_payload_bytes_estimate =
+                counts.recovery_payload_bytes_estimate;
+            resources.generic_gpu_queued_bytes_estimate = counts.queued_bytes_estimate;
+            resources.generic_gpu_budget_overage_bytes = counts.budget_overage_bytes;
+            resources.generic_gpu_evictions_cumulative = counts.evicted_resources;
+            resources.generic_gpu_memory_pressure_events = counts.memory_pressure_events;
+            resources.generic_gpu_budget_rejections_cumulative = counts.budget_rejections;
+            resources.generic_gpu_sampler_count_over_budget = counts.sampler_count_over_budget;
         }
         resources.generic_gpu_uploads_this_frame = self.generic_gpu_uploads_this_frame;
         resources.generic_gpu_upload_bytes_this_frame = self.generic_gpu_upload_bytes_this_frame;
@@ -335,6 +402,14 @@ impl MeshPass {
         }
         if world.try_resource::<RenderDiagnostics>().is_none() {
             world.insert_resource(RenderDiagnostics::default());
+        }
+        if let Some(diagnostics) = world.try_resource::<RenderDiagnostics>() {
+            resources.gpu_device_loss_events = diagnostics.gpu_device_loss_events;
+            resources.gpu_device_recovery_attempts = diagnostics.gpu_device_recovery_attempts;
+            resources.gpu_device_recovery_successes = diagnostics.gpu_device_recovery_successes;
+            resources.gpu_device_recovery_failures = diagnostics.gpu_device_recovery_failures;
+            resources.gpu_last_device_loss_message =
+                diagnostics.gpu_last_device_loss_message.clone();
         }
         {
             let diagnostics = world.resource_mut::<RenderDiagnostics>();
@@ -368,6 +443,13 @@ impl MeshPass {
                     worker_stats.completions_processed_last_poll;
                 resources.asset_worker_pending_completions = worker_stats.pending_completions;
                 resources.cpu_asset_resident_bytes_estimate = stats.resident_bytes_estimate;
+                resources.cpu_asset_geometry_bytes_estimate = stats.geometry_bytes_estimate;
+                resources.cpu_asset_texture_bytes_estimate = stats.texture_bytes_estimate;
+                resources.cpu_asset_material_bytes_estimate = stats.material_bytes_estimate;
+                resources.cpu_asset_animation_bytes_estimate = stats.animation_bytes_estimate;
+                resources.cpu_asset_scene_metadata_bytes_estimate =
+                    stats.scene_metadata_bytes_estimate;
+                resources.cpu_asset_other_bytes_estimate = stats.other_bytes_estimate;
                 resources.cpu_asset_pinned_bytes_estimate = stats.pinned_bytes_estimate;
                 resources.cpu_asset_unpinned_bytes_estimate = stats.unpinned_bytes_estimate;
                 resources.cpu_asset_loaded_count = stats.loaded_assets;
@@ -456,6 +538,7 @@ impl MeshPass {
         for (revision @ (key, cpu_revision), handle, path, error) in completed {
             if let Some(error) = error {
                 if let Some(parts) = self.models.remove(&key) {
+                    self.model_cache_bytes.remove(&key);
                     self.model_gpu_releases_cumulative =
                         self.model_gpu_releases_cumulative.saturating_add(1);
                     if let Some(renderer) = self.renderer.as_mut() {
@@ -751,6 +834,7 @@ impl MeshPass {
             validation_error.or(out_of_memory_error)
         });
         self.models.insert(key, parts);
+        self.model_cache_bytes.insert(key, estimated_upload_bytes);
         self.asset_revisions.insert(key, revision);
         self.model_gpu_uploads_cumulative = self.model_gpu_uploads_cumulative.saturating_add(1);
         frame_budget.uploads = frame_budget.uploads.saturating_add(1);
@@ -860,6 +944,8 @@ impl MeshPass {
                 self.models.clear();
                 self.dynamic_meshes.clear();
             }
+            self.model_cache_bytes.clear();
+            self.model_cache_pressure_level = 0;
             self.asset_revisions.clear();
             self.pending_model_validations
                 .lock()
@@ -914,6 +1000,7 @@ impl MeshPass {
         if !stale_model_keys.is_empty() {
             for key in stale_model_keys {
                 if let Some(parts) = self.models.remove(&key) {
+                    self.model_cache_bytes.remove(&key);
                     self.model_gpu_releases_cumulative =
                         self.model_gpu_releases_cumulative.saturating_add(1);
                     if let Some(renderer) = self.renderer.as_mut() {
@@ -1278,6 +1365,8 @@ impl MeshPass {
         }
         if self.renderer.is_none() {
             self.models.clear();
+            self.model_cache_bytes.clear();
+            self.model_cache_pressure_level = 0;
             self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
         }
         if self.hdr_size != Some(target.size) {

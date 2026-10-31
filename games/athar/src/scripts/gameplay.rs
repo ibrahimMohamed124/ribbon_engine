@@ -9,7 +9,7 @@ use ribbon_platform::Input;
 use ribbon_plugin_render3d::glam::{Quat, Vec3};
 use ribbon_plugin_render3d::{Camera3D, FogSettings, SunLight, Transform3D};
 use ribbon_plugin_streaming::{
-    RegionId, RegionState, SceneId, StreamObserver, StreamingCoordinator,
+    RegionId, RegionState, SceneId, SceneState, StreamObserver, StreamingCoordinator,
 };
 use ribbon_render::gpu_window::{ClearColor, WindowTextOverlay};
 use std::time::Instant;
@@ -377,12 +377,12 @@ fn finish_village_activation_if_ready(world: &mut World, state: &mut AdventureSt
     {
         return;
     }
-    let region_id = RegionId::new(village::VILLAGE_REGION_ID);
+    let scene_id = SceneId::new(village::VILLAGE_SCENE_ID);
     match world
         .resource::<StreamingCoordinator>()
-        .region_state(&region_id)
+        .scene_state(&scene_id)
     {
-        Some(RegionState::Active) => {
+        Some(SceneState::Active) => {
             if let Err(error) = enter_village(world, state) {
                 state.transition_state = VillageTransitionState::TransitionFailed {
                     asset: "<village-activation>".to_owned(),
@@ -394,14 +394,25 @@ fn finish_village_activation_if_ready(world: &mut World, state: &mut AdventureSt
                 }
             }
         }
-        Some(RegionState::Failed(reason)) => {
-            let reason = reason.clone();
+        Some(SceneState::Failed(failed_regions)) => {
+            let coordinator = world.resource::<StreamingCoordinator>();
+            let reasons = failed_regions
+                .iter()
+                .map(|region_id| {
+                    let reason = match coordinator.region_state(region_id) {
+                        Some(RegionState::Failed(reason)) => reason.as_str(),
+                        _ => "region failed without a diagnostic reason",
+                    };
+                    format!("{}: {reason}", region_id.as_str())
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
             state.transition_state = VillageTransitionState::TransitionFailed {
                 asset: "<village-activation>".to_owned(),
-                reason: reason.clone(),
+                reason: reasons.clone(),
             };
             state.set_message(
-                format!("Village activation failed: {reason}. Press E to retry."),
+                format!("Village scene activation failed: {reasons}. Press E to retry."),
                 30.0,
             );
         }
@@ -411,12 +422,14 @@ fn finish_village_activation_if_ready(world: &mut World, state: &mut AdventureSt
 
 fn enter_village(world: &mut World, state: &mut AdventureState) -> Result<(), String> {
     let region_id = RegionId::new(village::VILLAGE_REGION_ID);
-    if !world
-        .resource::<StreamingCoordinator>()
-        .region_state(&region_id)
-        .is_some_and(|state| matches!(state, RegionState::Active))
+    let scene_id = SceneId::new(village::VILLAGE_SCENE_ID);
+    let coordinator = world.resource::<StreamingCoordinator>();
+    if coordinator.scene_state(&scene_id) != Some(SceneState::Active)
+        || !coordinator
+            .region_state(&region_id)
+            .is_some_and(|state| matches!(state, RegionState::Active))
     {
-        return Err("streaming coordinator has not activated the village and registered its required colliders".to_owned());
+        return Err("streaming coordinator has not fully prepared and activated every village scene region and registered its required colliders".to_owned());
     }
     let snapshot = world.resource::<StreamingCoordinator>().snapshot();
     let region = snapshot

@@ -4,6 +4,7 @@ mod transient;
 use crate::frame::Framebuffer;
 use crate::graph::RenderError;
 use ribbon_platform::Window;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 pub use transient::{
     TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool,
@@ -105,6 +106,8 @@ pub struct GpuContext {
     queue: wgpu::Queue,
     device: wgpu::Device,
     adapter: wgpu::Adapter,
+    device_lost: Arc<AtomicBool>,
+    device_lost_message: Arc<Mutex<Option<String>>>,
     _instance: wgpu::Instance,
 }
 
@@ -180,6 +183,20 @@ impl GpuContext {
             })
             .await
             .map_err(|error| RenderError(format!("could not create wgpu device: {error}")))?;
+        // Device loss is different from a lost/outdated surface: every pipeline, buffer, view,
+        // and bind group created from this device must be rebuilt. Keep the callback limited to
+        // a thread-safe signal; the render-owning thread performs the actual teardown/recovery.
+        let device_lost = Arc::new(AtomicBool::new(false));
+        let device_lost_message = Arc::new(Mutex::new(None));
+        let lost_flag = Arc::clone(&device_lost);
+        let lost_message = Arc::clone(&device_lost_message);
+        device.set_device_lost_callback(move |reason, message| {
+            *lost_message
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                Some(format!("{reason:?}: {message}"));
+            lost_flag.store(true, Ordering::Release);
+        });
         let surface_config = if let (Some(surface), Some(window)) = (&surface, &window) {
             let capabilities = surface.get_capabilities(&adapter);
             let format = capabilities
@@ -243,6 +260,8 @@ impl GpuContext {
             surface_config,
             target,
             readback_buffer: Mutex::new(None),
+            device_lost,
+            device_lost_message,
         })
     }
 
@@ -259,6 +278,20 @@ impl GpuContext {
     /// Borrow the queue.
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
+    }
+
+    /// Whether wgpu has reported that this context's device was lost. The flag is set by the
+    /// device-lost callback and consumed by the window presenter on the render-owning thread.
+    pub fn is_device_lost(&self) -> bool {
+        self.device_lost.load(Ordering::Acquire)
+    }
+
+    /// Human-readable device-loss reason captured by wgpu, when available.
+    pub fn device_lost_message(&self) -> Option<String> {
+        self.device_lost_message
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Borrow the optional window surface.

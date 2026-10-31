@@ -156,6 +156,12 @@ impl FramePass for WindowTextOverlayPass {
         "window text overlay"
     }
 
+    fn on_device_lost(&mut self, _world: &mut World) {
+        self.pipeline = None;
+        self.vertex_buffer = None;
+        self.vertex_capacity = 0;
+    }
+
     fn render(&mut self, world: &mut World, target: &FrameTarget<'_>) {
         let Some(overlay) = world.try_resource::<WindowTextOverlay>() else {
             return;

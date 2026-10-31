@@ -4,7 +4,7 @@
 //! entities are created by the streaming coordinator after the description has been decoded.
 
 use glam::{Quat, Vec3};
-use ribbon_assets::{AssetLoader, LoadContext, LoadError, LoadErrorKind};
+use ribbon_assets::{AssetLoader, AssetMemoryBreakdown, LoadContext, LoadError, LoadErrorKind};
 use ribbon_scene::Transform3D;
 use serde::{Deserialize, Serialize};
 
@@ -273,6 +273,13 @@ impl AssetLoader for WorldPartitionLoader {
         }
         bytes
     }
+
+    fn memory_breakdown(&self, partition: &Self::Asset) -> AssetMemoryBreakdown {
+        AssetMemoryBreakdown {
+            scene_metadata_bytes: self.estimated_size_bytes(partition),
+            ..AssetMemoryBreakdown::default()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -310,6 +317,13 @@ mod tests {
             .load(encoded.as_bytes(), &mut context)
             .unwrap();
         assert_eq!(decoded, asset);
+        let estimate = WorldPartitionLoader.estimated_size_bytes(&decoded);
+        assert_eq!(
+            WorldPartitionLoader
+                .memory_breakdown(&decoded)
+                .scene_metadata_bytes,
+            estimate
+        );
         let definitions = decoded.region_definitions().unwrap();
         assert_eq!(definitions.len(), 1);
         assert_eq!(

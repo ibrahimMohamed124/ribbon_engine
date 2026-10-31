@@ -52,6 +52,10 @@ pub trait FramePass: Send + Sync + 'static {
 
     /// Draw into `target`. GPU resources should be created lazily from its device.
     fn render(&mut self, world: &mut World, target: &FrameTarget<'_>);
+
+    /// Drop every device-owned object before a replacement device is created. Implementations
+    /// must retain only CPU-side descriptions needed to recreate those objects lazily.
+    fn on_device_lost(&mut self, _world: &mut World) {}
 }
 
 const NO_RESOURCES: &[&str] = &[];
@@ -127,6 +131,10 @@ impl RenderNode for FramePassNode {
         Ok(())
     }
 
+    fn on_device_lost(&mut self, world: &mut World) {
+        self.pass.on_device_lost(world);
+    }
+
     fn run_frame(
         &mut self,
         _context: &mut RenderContext,
@@ -181,6 +189,8 @@ pub struct GpuWindow {
     present_input: std::sync::Arc<std::sync::Mutex<String>>,
     context: Option<GpuContext>,
     failed: bool,
+    recovering: bool,
+    next_recovery_attempt: Option<Instant>,
 }
 
 impl Default for GpuWindow {
@@ -198,6 +208,8 @@ impl Default for GpuWindow {
             present_input,
             context: None,
             failed: false,
+            recovering: false,
+            next_recovery_attempt: None,
         }
     }
 }
@@ -302,26 +314,74 @@ pub fn gpu_window_system(world: &mut World) {
     let mut surface_lost_count = 0_u64;
     let mut surface_other_error_count = 0_u64;
     let mut render_graph_error_count = 0_u64;
+    let mut device_loss_events = 0_u64;
+    let mut device_recovery_attempts = 0_u64;
+    let mut device_recovery_successes = 0_u64;
+    let mut device_recovery_failures = 0_u64;
+    let mut last_device_loss_message = None;
     world.resource_scope::<GpuWindow, _>(|world, state| {
         let GpuWindow {
             context,
             failed,
             graph,
+            recovering,
+            next_recovery_attempt,
             ..
         } = state;
         if *failed {
             return;
         }
+        if context.as_ref().is_some_and(GpuContext::is_device_lost) {
+            last_device_loss_message = context.as_ref().and_then(GpuContext::device_lost_message);
+            graph.notify_device_lost(world);
+            *context = None;
+            *recovering = true;
+            *next_recovery_attempt = None;
+            device_loss_events = device_loss_events.saturating_add(1);
+            let detail = last_device_loss_message
+                .as_deref()
+                .unwrap_or("wgpu reported device loss");
+            error = Some(format!(
+                "GPU device lost; renderer resources released for recovery: {detail}"
+            ));
+        }
         if context.is_none() {
+            if *recovering
+                && next_recovery_attempt.is_some_and(|deadline| Instant::now() < deadline)
+            {
+                return;
+            }
+            if *recovering {
+                device_recovery_attempts = device_recovery_attempts.saturating_add(1);
+            }
             match pollster::block_on(GpuContext::new_for_window(
                 window.clone(),
                 size.width,
                 size.height,
             )) {
-                Ok(created) => *context = Some(created),
+                Ok(created) => {
+                    *context = Some(created);
+                    if *recovering {
+                        device_recovery_successes = device_recovery_successes.saturating_add(1);
+                    }
+                    *recovering = false;
+                    *next_recovery_attempt = None;
+                }
                 Err(failure) => {
-                    *failed = true;
-                    error = Some(format!("GPU window disabled: {}", failure.0));
+                    if *recovering {
+                        device_recovery_failures = device_recovery_failures.saturating_add(1);
+                        // Adapter/device recreation can fail temporarily during driver reset.
+                        // Retry at a bounded cadence without blocking or permanently disabling rendering.
+                        *next_recovery_attempt =
+                            Some(Instant::now() + std::time::Duration::from_secs(1));
+                        error = Some(format!(
+                            "GPU device recovery attempt failed; retrying: {}",
+                            failure.0
+                        ));
+                    } else {
+                        *failed = true;
+                        error = Some(format!("GPU window disabled: {}", failure.0));
+                    }
                     return;
                 }
             }
@@ -421,6 +481,10 @@ pub fn gpu_window_system(world: &mut World) {
         || surface_lost_count > 0
         || surface_other_error_count > 0
         || render_graph_error_count > 0
+        || device_loss_events > 0
+        || device_recovery_attempts > 0
+        || device_recovery_successes > 0
+        || device_recovery_failures > 0
     {
         if world.try_resource::<RenderDiagnostics>().is_none() {
             world.insert_resource(RenderDiagnostics::default());
@@ -439,6 +503,21 @@ pub fn gpu_window_system(world: &mut World) {
         diagnostics.render_graph_errors = diagnostics
             .render_graph_errors
             .saturating_add(render_graph_error_count);
+        diagnostics.gpu_device_loss_events = diagnostics
+            .gpu_device_loss_events
+            .saturating_add(device_loss_events);
+        diagnostics.gpu_device_recovery_attempts = diagnostics
+            .gpu_device_recovery_attempts
+            .saturating_add(device_recovery_attempts);
+        diagnostics.gpu_device_recovery_successes = diagnostics
+            .gpu_device_recovery_successes
+            .saturating_add(device_recovery_successes);
+        diagnostics.gpu_device_recovery_failures = diagnostics
+            .gpu_device_recovery_failures
+            .saturating_add(device_recovery_failures);
+        if let Some(message) = last_device_loss_message {
+            diagnostics.gpu_last_device_loss_message = message;
+        }
     }
     if let Some(CompletedGpuWindowFrame {
         frame_wall_ns,

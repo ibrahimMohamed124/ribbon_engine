@@ -121,6 +121,16 @@ pub struct RenderResourceStats {
     pub scene_model_placements: usize,
     /// Number of distinct glTF asset-generation keys currently uploaded by the render pass.
     pub gpu_model_cache_entries: usize,
+    /// Estimated GPU upload bytes retained by the glTF model cache; this is a subset of mesh/material totals.
+    pub model_gpu_cache_bytes_estimate: u64,
+    /// Soft glTF model-cache residency budget in estimated bytes, or zero when disabled.
+    pub model_gpu_cache_budget_bytes: u64,
+    /// Estimated glTF model-cache bytes above the configured soft budget.
+    pub model_gpu_cache_over_budget_bytes: u64,
+    /// Cumulative transitions into a higher glTF model-cache memory-pressure level.
+    pub model_gpu_cache_pressure_events: u64,
+    /// Current glTF model-cache pressure level: 0 normal, 1 warning, 2 high, 3 critical.
+    pub model_gpu_cache_pressure_level: u8,
     /// Cumulative distinct glTF model uploads for the current render-pass lifetime.
     pub model_gpu_uploads_cumulative: u64,
     /// Cumulative glTF GPU model cache entries released from the current render-pass lifetime.
@@ -149,6 +159,18 @@ pub struct RenderResourceStats {
     /// Estimated decoded CPU-side bytes currently held by the asset server.
     /// Kept separate from the GPU total to avoid mixing CPU and GPU allocation categories.
     pub cpu_asset_resident_bytes_estimate: u64,
+    /// Estimated CPU bytes attributed to decoded geometry allocations.
+    pub cpu_asset_geometry_bytes_estimate: u64,
+    /// Estimated CPU bytes attributed to decoded texture pixels and mip payloads.
+    pub cpu_asset_texture_bytes_estimate: u64,
+    /// Estimated CPU bytes attributed to decoded material records.
+    pub cpu_asset_material_bytes_estimate: u64,
+    /// Estimated CPU bytes attributed to decoded animation data where loaders expose it.
+    pub cpu_asset_animation_bytes_estimate: u64,
+    /// Estimated CPU bytes attributed to scene descriptions and hierarchy metadata.
+    pub cpu_asset_scene_metadata_bytes_estimate: u64,
+    /// Estimated CPU bytes from loaders without a more specific category.
+    pub cpu_asset_other_bytes_estimate: u64,
     /// Estimated CPU bytes protected by strong asset leases.
     pub cpu_asset_pinned_bytes_estimate: u64,
     /// Estimated CPU bytes eligible for budget eviction.
@@ -213,6 +235,26 @@ pub struct RenderResourceStats {
     pub streaming_cpu_budget_evictions_cumulative: u64,
     /// Invalid region-state transitions rejected by the coordinator.
     pub streaming_invalid_state_transitions: u64,
+    /// Worst observed per-region request-to-active duration, in nanoseconds.
+    pub streaming_max_activation_latency_ns: u64,
+    /// Stable id of the region responsible for the worst observed activation latency.
+    pub streaming_slowest_region_id: String,
+    /// Latest recorded request-stage duration for the slowest region.
+    pub streaming_slowest_region_requested_ns: u64,
+    /// Latest recorded CPU asset/decode stage duration for the slowest region.
+    pub streaming_slowest_region_cpu_loading_ns: u64,
+    /// Latest recorded GPU warmup stage duration for the slowest region.
+    pub streaming_slowest_region_gpu_warmup_ns: u64,
+    /// Latest recorded ready-wait stage duration for the slowest region.
+    pub streaming_slowest_region_ready_wait_ns: u64,
+    /// Latest recorded physics preparation stage duration for the slowest region.
+    pub streaming_slowest_region_physics_ns: u64,
+    /// Latest recorded activation/commit stage duration for the slowest region.
+    pub streaming_slowest_region_activation_ns: u64,
+    /// Elapsed duration of the slowest region's current in-flight state.
+    pub streaming_slowest_region_current_state_ns: u64,
+    /// Request-to-active duration for the slowest region's most recent completed attempt.
+    pub streaming_slowest_region_last_activation_ns: u64,
     /// Standalone mesh/material uploads queued for the renderer-owned generic warmup path.
     pub generic_gpu_warmup_queued: usize,
     /// Generic resource uploads submitted but awaiting asynchronous wgpu validation.
@@ -231,6 +273,30 @@ pub struct RenderResourceStats {
     pub generic_gpu_uploads_this_frame: usize,
     /// Estimated generic GPU upload traffic submitted in the latest frame.
     pub generic_gpu_upload_bytes_this_frame: u64,
+    /// Generic GPU bytes held by ready standalone leases.
+    pub generic_gpu_resident_bytes_estimate: u64,
+    /// CPU-side source payload retained by generic GPU leases for device-loss reconstruction.
+    /// This is not GPU residency and is tracked separately to avoid double-counting.
+    pub generic_gpu_recovery_payload_bytes_estimate: u64,
+    /// Cumulative device-loss events and replacement-device recovery results.
+    pub gpu_device_loss_events: u64,
+    pub gpu_device_recovery_attempts: u64,
+    pub gpu_device_recovery_successes: u64,
+    pub gpu_device_recovery_failures: u64,
+    /// Most recently observed device-loss reason, if one was provided by wgpu.
+    pub gpu_last_device_loss_message: String,
+    /// Generic GPU bytes reserved by queued or in-flight uploads.
+    pub generic_gpu_queued_bytes_estimate: u64,
+    /// Largest generic GPU total/class budget overage, in estimated bytes.
+    pub generic_gpu_budget_overage_bytes: u64,
+    /// Number of orphaned generic GPU resources evicted by residency admission.
+    pub generic_gpu_evictions_cumulative: u64,
+    /// Cumulative GPU residency pressure events handled by the generic manager.
+    pub generic_gpu_memory_pressure_events: u64,
+    /// Cumulative generic GPU requests rejected because live/in-flight leases exhaust budgets.
+    pub generic_gpu_budget_rejections_cumulative: u64,
+    /// Current number of samplers above the configured sampler-count limit.
+    pub generic_gpu_sampler_count_over_budget: usize,
 }
 
 impl RenderResourceStats {
@@ -297,6 +363,16 @@ pub struct RenderDiagnostics {
     pub surface_other_errors: u64,
     /// Render-graph failures after successful surface acquisition.
     pub render_graph_errors: u64,
+    /// Cumulative `wgpu` device-loss notifications handled by the native window renderer.
+    pub gpu_device_loss_events: u64,
+    /// Cumulative attempts to create a replacement adapter/device after loss.
+    pub gpu_device_recovery_attempts: u64,
+    /// Successful replacement-device creations after device loss.
+    pub gpu_device_recovery_successes: u64,
+    /// Failed replacement-device creations; the renderer retries at a bounded cadence.
+    pub gpu_device_recovery_failures: u64,
+    /// Most recent diagnostic reported by the device-lost callback.
+    pub gpu_last_device_loss_message: String,
     /// Most recent completed GPU duration spanning directional shadow, optional spot shadow,
     /// and the main mesh pass, if supported.
     pub last_gpu_shadow_and_mesh_ns: Option<u64>,

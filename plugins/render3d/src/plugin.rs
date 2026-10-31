@@ -32,6 +32,13 @@ impl Plugin for Render3dPlugin {
         if app.world.try_resource::<GpuUploadBudget>().is_none() {
             app.insert_resource(GpuUploadBudget::default());
         }
+        if app
+            .world
+            .try_resource::<ModelGpuResidencyBudget>()
+            .is_none()
+        {
+            app.insert_resource(ModelGpuResidencyBudget::default());
+        }
         // Compose codecs with physics and any other scene-aware plugins; do not replace an
         // existing registry as plugin build order is not otherwise constrained between peers.
         let mut prefab_codecs = app

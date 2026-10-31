@@ -121,6 +121,40 @@ impl RenderProfileRecorder {
             "live_streamed_textures",
             "live_streamed_samplers",
             "streamed_texture_bytes_estimate",
+            "streaming_max_activation_latency_ns",
+            "generic_gpu_resident_bytes_estimate",
+            "generic_gpu_queued_bytes_estimate",
+            "generic_gpu_budget_overage_bytes",
+            "generic_gpu_evictions_cumulative",
+            "generic_gpu_memory_pressure_events",
+            "generic_gpu_budget_rejections_cumulative",
+            "generic_gpu_sampler_count_over_budget",
+            "streaming_slowest_region_id",
+            "streaming_slowest_region_requested_ns",
+            "streaming_slowest_region_cpu_loading_ns",
+            "streaming_slowest_region_gpu_warmup_ns",
+            "streaming_slowest_region_ready_wait_ns",
+            "streaming_slowest_region_physics_ns",
+            "streaming_slowest_region_activation_ns",
+            "streaming_slowest_region_current_state_ns",
+            "streaming_slowest_region_last_activation_ns",
+            "generic_gpu_recovery_payload_bytes_estimate",
+            "gpu_device_loss_events",
+            "gpu_device_recovery_attempts",
+            "gpu_device_recovery_successes",
+            "gpu_device_recovery_failures",
+            "gpu_last_device_loss_message",
+            "cpu_asset_geometry_bytes_estimate",
+            "cpu_asset_texture_bytes_estimate",
+            "cpu_asset_material_bytes_estimate",
+            "cpu_asset_animation_bytes_estimate",
+            "cpu_asset_scene_metadata_bytes_estimate",
+            "cpu_asset_other_bytes_estimate",
+            "model_gpu_cache_bytes_estimate",
+            "model_gpu_cache_budget_bytes",
+            "model_gpu_cache_over_budget_bytes",
+            "model_gpu_cache_pressure_events",
+            "model_gpu_cache_pressure_level",
         ];
         write_csv_record(&mut writer, HEADER.iter().map(|field| (*field).to_owned()))?;
         for sample in &self.samples {
@@ -195,6 +229,47 @@ impl RenderProfileRecorder {
             row[115] = resources.live_streamed_textures.to_string();
             row[116] = resources.live_streamed_samplers.to_string();
             row[117] = resources.streamed_texture_bytes_estimate.to_string();
+            row[118] = resources.streaming_max_activation_latency_ns.to_string();
+            row[119] = resources.generic_gpu_resident_bytes_estimate.to_string();
+            row[120] = resources.generic_gpu_queued_bytes_estimate.to_string();
+            row[121] = resources.generic_gpu_budget_overage_bytes.to_string();
+            row[122] = resources.generic_gpu_evictions_cumulative.to_string();
+            row[123] = resources.generic_gpu_memory_pressure_events.to_string();
+            row[124] = resources
+                .generic_gpu_budget_rejections_cumulative
+                .to_string();
+            row[125] = resources.generic_gpu_sampler_count_over_budget.to_string();
+            row[126] = resources.streaming_slowest_region_id.clone();
+            row[127] = resources.streaming_slowest_region_requested_ns.to_string();
+            row[128] = resources
+                .streaming_slowest_region_cpu_loading_ns
+                .to_string();
+            row[129] = resources.streaming_slowest_region_gpu_warmup_ns.to_string();
+            row[130] = resources.streaming_slowest_region_ready_wait_ns.to_string();
+            row[131] = resources.streaming_slowest_region_physics_ns.to_string();
+            row[132] = resources.streaming_slowest_region_activation_ns.to_string();
+            row[133] = resources
+                .streaming_slowest_region_current_state_ns
+                .to_string();
+            row[134] = resources
+                .streaming_slowest_region_last_activation_ns
+                .to_string();
+            row[135] = resources
+                .generic_gpu_recovery_payload_bytes_estimate
+                .to_string();
+            row[136] = resources.gpu_device_loss_events.to_string();
+            row[137] = resources.gpu_device_recovery_attempts.to_string();
+            row[138] = resources.gpu_device_recovery_successes.to_string();
+            row[139] = resources.gpu_device_recovery_failures.to_string();
+            row[140] = resources.gpu_last_device_loss_message.clone();
+            row[141] = resources.cpu_asset_geometry_bytes_estimate.to_string();
+            row[142] = resources.cpu_asset_texture_bytes_estimate.to_string();
+            row[143] = resources.cpu_asset_material_bytes_estimate.to_string();
+            row[144] = resources.cpu_asset_animation_bytes_estimate.to_string();
+            row[145] = resources
+                .cpu_asset_scene_metadata_bytes_estimate
+                .to_string();
+            row[146] = resources.cpu_asset_other_bytes_estimate.to_string();
             row[12] = resources.live_meshes.to_string();
             row[13] = resources.live_materials.to_string();
             row[14] = resources.mesh_bytes_estimate.to_string();
@@ -253,6 +328,11 @@ impl RenderProfileRecorder {
             row[63] = resources.visible_mesh_instances.to_string();
             row[64] = resources.visible_draw_calls.to_string();
             row[65] = resources.shadow_draw_calls.to_string();
+            row[147] = resources.model_gpu_cache_bytes_estimate.to_string();
+            row[148] = resources.model_gpu_cache_budget_bytes.to_string();
+            row[149] = resources.model_gpu_cache_over_budget_bytes.to_string();
+            row[150] = resources.model_gpu_cache_pressure_events.to_string();
+            row[151] = resources.model_gpu_cache_pressure_level.to_string();
             write_csv_record(&mut writer, row)?;
             for pass in &sample.passes {
                 let mut pass_row = vec![String::new(); HEADER.len()];
@@ -367,6 +447,26 @@ mod tests {
         diagnostics.resources.live_streamed_textures = 3;
         diagnostics.resources.live_streamed_samplers = 2;
         diagnostics.resources.streamed_texture_bytes_estimate = 4096;
+        diagnostics.resources.streaming_slowest_region_id = "test-region".to_owned();
+        diagnostics.resources.streaming_slowest_region_requested_ns = 11;
+        diagnostics
+            .resources
+            .streaming_slowest_region_cpu_loading_ns = 12;
+        diagnostics.resources.streaming_slowest_region_gpu_warmup_ns = 13;
+        diagnostics.resources.streaming_slowest_region_ready_wait_ns = 14;
+        diagnostics.resources.streaming_slowest_region_physics_ns = 15;
+        diagnostics.resources.streaming_slowest_region_activation_ns = 16;
+        diagnostics
+            .resources
+            .streaming_slowest_region_current_state_ns = 17;
+        diagnostics
+            .resources
+            .streaming_slowest_region_last_activation_ns = 18;
+        diagnostics.resources.model_gpu_cache_bytes_estimate = 4096;
+        diagnostics.resources.model_gpu_cache_budget_bytes = 2048;
+        diagnostics.resources.model_gpu_cache_over_budget_bytes = 2048;
+        diagnostics.resources.model_gpu_cache_pressure_events = 3;
+        diagnostics.resources.model_gpu_cache_pressure_level = 3;
         recorder.record_diagnostics(&diagnostics);
 
         let mut output = Vec::new();
@@ -378,7 +478,7 @@ mod tests {
         let header: Vec<_> = rows.next().expect("header row").split(',').collect();
         let frame: Vec<_> = rows.next().expect("frame row").split(',').collect();
 
-        assert_eq!(header.len(), 118);
+        assert_eq!(header.len(), 152);
         assert_eq!(frame.len(), header.len());
         assert_eq!(header[75], "model_warmup_requested");
         assert_eq!(header[80], "model_gpu_uploads_this_frame");
@@ -409,6 +509,37 @@ mod tests {
         assert_eq!(header[115], "live_streamed_textures");
         assert_eq!(header[116], "live_streamed_samplers");
         assert_eq!(header[117], "streamed_texture_bytes_estimate");
+        assert_eq!(header[118], "streaming_max_activation_latency_ns");
+        assert_eq!(header[119], "generic_gpu_resident_bytes_estimate");
+        assert_eq!(header[125], "generic_gpu_sampler_count_over_budget");
+        assert_eq!(header[126], "streaming_slowest_region_id");
+        assert_eq!(header[127], "streaming_slowest_region_requested_ns");
+        assert_eq!(header[134], "streaming_slowest_region_last_activation_ns");
+        assert_eq!(header[135], "generic_gpu_recovery_payload_bytes_estimate");
+        assert_eq!(header[136], "gpu_device_loss_events");
+        assert_eq!(header[141], "cpu_asset_geometry_bytes_estimate");
+        assert_eq!(header[146], "cpu_asset_other_bytes_estimate");
+        assert_eq!(header[147], "model_gpu_cache_bytes_estimate");
+        assert_eq!(header[148], "model_gpu_cache_budget_bytes");
+        assert_eq!(header[149], "model_gpu_cache_over_budget_bytes");
+        assert_eq!(header[150], "model_gpu_cache_pressure_events");
+        assert_eq!(header[151], "model_gpu_cache_pressure_level");
+        assert_eq!(header[137], "gpu_device_recovery_attempts");
+        assert_eq!(header[138], "gpu_device_recovery_successes");
+        assert_eq!(header[139], "gpu_device_recovery_failures");
+        assert_eq!(header[140], "gpu_last_device_loss_message");
+        assert_eq!(frame[135], "0");
+        assert_eq!(frame[136], "0");
+        assert_eq!(frame[147], "4096");
+        assert_eq!(frame[148], "2048");
+        assert_eq!(frame[149], "2048");
+        assert_eq!(frame[150], "3");
+        assert_eq!(frame[151], "3");
+        assert_eq!(frame[126], "test-region");
+        assert_eq!(frame[127], "11");
+        assert_eq!(frame[132], "16");
+        assert_eq!(frame[133], "17");
+        assert_eq!(frame[134], "18");
         assert_eq!(frame[115], "3");
         assert_eq!(frame[116], "2");
         assert_eq!(frame[117], "4096");

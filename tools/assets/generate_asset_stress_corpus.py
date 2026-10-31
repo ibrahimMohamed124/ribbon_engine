@@ -13,7 +13,7 @@ import struct
 import zlib
 from pathlib import Path
 
-MAX_MODELS = 256
+MAX_MODELS = 512
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:

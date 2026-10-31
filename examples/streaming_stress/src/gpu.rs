@@ -14,8 +14,9 @@ use ribbon_platform::{PlatformConfig, PlatformPlugin};
 use ribbon_plugin_gltf::GltfLoader;
 use ribbon_plugin_physics::{Collider, PhysicsPlugin};
 use ribbon_plugin_render3d::{
-    Camera3D, GpuResourceData, GpuResourceKey, GpuResourceLease, GpuResourceWarmup, GpuSamplerDesc,
-    GpuUploadBudget, OwnedTextureData, Render3dPlugin, SunLight, Transform3D,
+    Camera3D, GpuResidencyBudget, GpuResourceData, GpuResourceKey, GpuResourceLease,
+    GpuResourceRequestError, GpuResourceWarmup, GpuSamplerDesc, GpuUploadBudget, OwnedTextureData,
+    Render3dPlugin, SunLight, Transform3D,
 };
 use ribbon_plugin_streaming::{
     RegionBounds, RegionCollider, RegionDefinition, RegionId, RegionModel, RegionPolicy,
@@ -45,6 +46,10 @@ struct GpuStressLeases {
 #[derive(Clone, Copy)]
 struct StressOptionsSnapshot {
     generic_resource_count: usize,
+    initial_resource_count: usize,
+    expect_gpu_pressure: bool,
+    pressure_stage: u8,
+    texture_size: u32,
 }
 
 #[derive(Clone)]
@@ -90,6 +95,10 @@ struct CaptureState {
     generic_live_textures: usize,
     generic_live_samplers: usize,
     generic_texture_bytes_estimate: u64,
+    gpu_pressure_rejection_passed: bool,
+    generic_gpu_evictions: u64,
+    generic_gpu_pressure_events: u64,
+    generic_gpu_budget_rejections: u64,
 }
 
 pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
@@ -99,7 +108,8 @@ pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
 
     let mut app = build_gpu_app(options, &output_dir)?;
     register_regions(&mut app, options)?;
-    let shared_dedup_passed = queue_generic_gpu_stress(&mut app, options)?;
+    let (shared_dedup_passed, gpu_pressure_rejection_passed) =
+        queue_generic_gpu_stress(&mut app, options)?;
 
     let route_frames = options
         .regions
@@ -154,6 +164,10 @@ pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
         generic_live_textures: 0,
         generic_live_samplers: 0,
         generic_texture_bytes_estimate: 0,
+        gpu_pressure_rejection_passed,
+        generic_gpu_evictions: 0,
+        generic_gpu_pressure_events: 0,
+        generic_gpu_budget_rejections: 0,
     })));
     app.insert_resource(capture.clone());
     app.add_system(Stage::First, route_observer_and_camera);
@@ -204,6 +218,10 @@ pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
     let generic_live_textures = state.generic_live_textures;
     let generic_live_samplers = state.generic_live_samplers;
     let generic_texture_bytes_estimate = state.generic_texture_bytes_estimate;
+    let gpu_pressure_rejection_passed = state.gpu_pressure_rejection_passed;
+    let generic_evictions = state.generic_gpu_evictions;
+    let generic_pressure_events = state.generic_gpu_pressure_events;
+    let generic_budget_rejections = state.generic_gpu_budget_rejections;
     drop(state);
 
     write_frame_csv(&output_dir.join("gpu-frames.csv"), &samples)?;
@@ -222,10 +240,10 @@ pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
     // so it is one continuous activation rather than two independent activations.
     let activation_expected = expected_activation_count(options.regions, options.cycles);
     let activation_passed = activation_count == activation_expected;
-    let expected_generic_resources = options.asset_count.min(8) + 1; // textures + one sampler
-    let generic_resources_complete = generic_uploads >= expected_generic_resources as u64
-        && generic_ready >= expected_generic_resources
-        && generic_failed == 0;
+    let expected_generic_resources =
+        options.asset_count.min(8) + 1 + usize::from(options.expect_gpu_pressure); // initial textures + sampler + optional replacement
+    let generic_resources_complete =
+        generic_uploads >= expected_generic_resources as u64 && generic_failed == 0;
     let generic_resources_released_passed = generic_leases_released
         && generic_release_count >= expected_generic_resources as u64
         && generic_live_textures == 0
@@ -260,6 +278,23 @@ pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
         (
             "Shared generic GPU request deduplicated".to_owned(),
             status(shared_dedup_passed, skip_gpu_checks),
+        ),
+        (
+            "GPU residency pressure rejects pinned overcommit".to_owned(),
+            status(
+                gpu_pressure_rejection_passed || !options.expect_gpu_pressure,
+                skip_gpu_checks,
+            ),
+        ),
+        (
+            "GPU residency pressure evicts released GPU resources".to_owned(),
+            status(
+                !options.expect_gpu_pressure
+                    || (generic_evictions > 0
+                        && generic_pressure_events > 0
+                        && generic_budget_rejections > 0),
+                skip_gpu_checks,
+            ),
         ),
         (
             "Active-region concurrency cap respected".to_owned(),
@@ -368,6 +403,12 @@ pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
             format!("{generic_release_count}/{expected_generic_resources}"),
         ),
         (
+            "Generic GPU evictions / pressure events / budget rejections".to_owned(),
+            format!(
+                "{generic_evictions} / {generic_pressure_events} / {generic_budget_rejections}"
+            ),
+        ),
+        (
             "Generic GPU live textures / samplers after release".to_owned(),
             format!("{generic_live_textures} / {generic_live_samplers}"),
         ),
@@ -442,7 +483,7 @@ pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
     )?;
 
     println!(
-        "[GPU] {}: frames={} model_uploads={} generic_uploads={} budget_violations={} activation={}/{} unloaded={}/{} concurrent={}/{} generic_released={}/{}",
+        "[GPU] {}: frames={} model_uploads={} generic_uploads={} budget_violations={} activation={}/{} unloaded={}/{} concurrent={}/{} generic_released={}/{} evictions={} pressure_rejections={}",
         if !gpu_hardware_observed && !options.require_gpu {
             "SKIPPED"
         } else if gpu_hardware_observed
@@ -454,6 +495,7 @@ pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
             && active_region_cap_passed
             && concurrent_cluster_passed
             && generic_resources_released_passed
+            && (!options.expect_gpu_pressure || (gpu_pressure_rejection_passed && generic_evictions > 0 && generic_pressure_events > 0 && generic_budget_rejections > 0))
             && generic_upload_failures == 0
             && model_failed == 0
             && generic_failed == 0
@@ -475,6 +517,8 @@ pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
         CONCURRENT_REGION_COUNT,
         generic_release_count,
         expected_generic_resources,
+        generic_evictions,
+        generic_budget_rejections,
     );
     println!(
         "[GPU] frame CSV: {}",
@@ -503,7 +547,12 @@ pub(crate) fn run(options: &Options) -> Result<(), Box<dyn Error>> {
             || !shared_dedup_passed
             || !active_region_cap_passed
             || !concurrent_cluster_passed
-            || !generic_resources_released_passed)
+            || !generic_resources_released_passed
+            || (options.expect_gpu_pressure
+                && (!gpu_pressure_rejection_passed
+                    || generic_evictions == 0
+                    || generic_pressure_events == 0
+                    || generic_budget_rejections == 0)))
     {
         return Err(
             "one or more GPU stress acceptance checks failed; inspect gpu-summary.md".into(),
@@ -695,39 +744,41 @@ fn register_regions(app: &mut App, options: &Options) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
-fn queue_generic_gpu_stress(app: &mut App, options: &Options) -> Result<bool, Box<dyn Error>> {
+fn queue_generic_gpu_stress(
+    app: &mut App,
+    options: &Options,
+) -> Result<(bool, bool), Box<dyn Error>> {
     let texture_count = options.asset_count.min(8);
     let side = options.texture_size as u32;
-    let mut leases = Vec::with_capacity(texture_count + 2);
+    let mut leases = Vec::with_capacity(texture_count * 2 + 1);
     let mut dedup_passed = false;
+    let mut pressure_rejection_passed = !options.expect_gpu_pressure;
+    let texture_bytes = u64::from(side)
+        .saturating_mul(u64::from(side))
+        .saturating_mul(4);
+    let texture_estimate = texture_bytes.saturating_add(texture_bytes / 3);
     let unique_queued = {
         let warmup = app.world.resource_mut::<GpuResourceWarmup>();
+        if options.expect_gpu_pressure {
+            warmup.set_budget(GpuResidencyBudget {
+                total_bytes: Some(
+                    texture_estimate
+                        .saturating_mul(texture_count as u64)
+                        .saturating_add(64),
+                ),
+                mesh_bytes: None,
+                texture_bytes: Some(texture_estimate.saturating_mul(texture_count as u64)),
+                material_bytes: None,
+                sampler_count: Some(1),
+            });
+        }
         for index in 0..texture_count {
             let key = GpuResourceKey {
                 namespace: GPU_TEXTURE_NAMESPACE,
                 id: index as u64,
                 generation: 0,
             };
-            let mut rgba8 = vec![0_u8; side as usize * side as usize * 4];
-            let color = [
-                (index as u8).wrapping_mul(37).wrapping_add(31),
-                (index as u8).wrapping_mul(59).wrapping_add(73),
-                (index as u8).wrapping_mul(83).wrapping_add(17),
-                255,
-            ];
-            let (pixels, remainder) = rgba8.as_chunks_mut::<4>();
-            debug_assert!(remainder.is_empty());
-            for pixel in pixels {
-                pixel.copy_from_slice(&color);
-            }
-            let payload = GpuResourceData::Texture {
-                image: OwnedTextureData {
-                    width: side,
-                    height: side,
-                    rgba8,
-                },
-                srgb: true,
-            };
+            let payload = stress_texture_payload(side, index as u8);
             let first = warmup.request(key, payload.clone(), 100 - index as i32)?;
             let before_duplicate = warmup.counts().queued;
             let second = warmup.request(key, payload, 120 - index as i32)?;
@@ -749,6 +800,18 @@ fn queue_generic_gpu_stress(app: &mut App, options: &Options) -> Result<bool, Bo
             200,
         )?;
         leases.push(sampler_lease);
+
+        if options.expect_gpu_pressure {
+            let overcommit_key = GpuResourceKey {
+                namespace: GPU_TEXTURE_NAMESPACE,
+                id: u64::MAX - 1,
+                generation: 0,
+            };
+            pressure_rejection_passed = matches!(
+                warmup.request(overcommit_key, stress_texture_payload(side, 241), 250),
+                Err(GpuResourceRequestError::BudgetExceeded(_))
+            );
+        }
         warmup.counts().queued
     };
     if unique_queued != texture_count + 1 {
@@ -758,11 +821,41 @@ fn queue_generic_gpu_stress(app: &mut App, options: &Options) -> Result<bool, Bo
         )
         .into());
     }
+    if !pressure_rejection_passed {
+        return Err("GPU residency pressure test failed to reject an overcommit while all existing texture leases were live".into());
+    }
     app.insert_resource(GpuStressLeases { _leases: leases });
     app.insert_resource(StressOptionsSnapshot {
         generic_resource_count: texture_count + 1,
+        initial_resource_count: texture_count + 1,
+        expect_gpu_pressure: options.expect_gpu_pressure,
+        pressure_stage: 0,
+        texture_size: side,
     });
-    Ok(dedup_passed)
+    Ok((dedup_passed, pressure_rejection_passed))
+}
+
+fn stress_texture_payload(side: u32, seed: u8) -> GpuResourceData {
+    let mut rgba8 = vec![0_u8; side as usize * side as usize * 4];
+    let color = [
+        seed.wrapping_mul(37).wrapping_add(31),
+        seed.wrapping_mul(59).wrapping_add(73),
+        seed.wrapping_mul(83).wrapping_add(17),
+        255,
+    ];
+    let (pixels, remainder) = rgba8.as_chunks_mut::<4>();
+    debug_assert!(remainder.is_empty());
+    for pixel in pixels {
+        pixel.copy_from_slice(&color);
+    }
+    GpuResourceData::Texture {
+        image: OwnedTextureData {
+            width: side,
+            height: side,
+            rgba8,
+        },
+        srgb: true,
+    }
 }
 
 fn route_observer_and_camera(world: &mut ribbon_app::World) {
@@ -840,32 +933,84 @@ fn route_observer_and_camera(world: &mut ribbon_app::World) {
         }
     }
 
-    // Drop generic warmup leases only after every request reached a terminal status and the
-    // region traversal/overlap phase has completed. The renderer observes orphaned leases and
-    // destroys the actual GPU objects on its owning thread during subsequent render frames.
+    // Drop generic warmup leases only after the first real GPU uploads are ready. In pressure
+    // mode, request a replacement while the old GPU entries are orphaned: admission must evict
+    // at least one READY texture, and the render thread must release its actual GPU handle.
     if release_after_ready {
-        let expected = world
-            .try_resource::<GpuStressLeases>()
-            .map(|_| true)
-            .unwrap_or(false);
-        if expected {
+        let snapshot = world.try_resource::<StressOptionsSnapshot>().copied();
+        if let Some(mut snapshot) = snapshot {
             let counts = world
                 .try_resource::<GpuResourceWarmup>()
                 .map(GpuResourceWarmup::counts)
                 .unwrap_or_default();
-            let expected_resources = world
-                .try_resource::<StressOptionsSnapshot>()
-                .map(|snapshot| snapshot.generic_resource_count)
-                .unwrap_or(0);
-            if expected_resources > 0
-                && counts.ready.saturating_add(counts.failed) >= expected_resources
-                && counts.queued == 0
-                && counts.preparing == 0
-            {
-                drop(world.remove_resource::<GpuStressLeases>());
-                if let Ok(mut state) = capture.0.lock() {
-                    state.generic_leases_released = true;
+            match snapshot.pressure_stage {
+                0 => {
+                    let ready = counts.ready >= snapshot.initial_resource_count
+                        && counts.failed == 0
+                        && counts.queued == 0
+                        && counts.preparing == 0;
+                    if ready {
+                        drop(world.remove_resource::<GpuStressLeases>());
+                        if snapshot.expect_gpu_pressure {
+                            let key = GpuResourceKey {
+                                namespace: GPU_TEXTURE_NAMESPACE,
+                                id: u64::MAX,
+                                generation: 0,
+                            };
+                            let replacement = world.resource_mut::<GpuResourceWarmup>().request(
+                                key,
+                                stress_texture_payload(snapshot.texture_size, 251),
+                                255,
+                            );
+                            match replacement {
+                                Ok(lease) => {
+                                    world.insert_resource(GpuStressLeases {
+                                        _leases: vec![lease],
+                                    });
+                                    snapshot.generic_resource_count = 1;
+                                    snapshot.pressure_stage = 1;
+                                    world.insert_resource(snapshot);
+                                }
+                                Err(error) => {
+                                    if let Ok(mut state) = capture.0.lock() {
+                                        state.failure = Some(format!("GPU replacement request failed under released-resource pressure: {error}"));
+                                    }
+                                }
+                            }
+                        } else {
+                            snapshot.pressure_stage = 3;
+                            world.insert_resource(snapshot);
+                            if let Ok(mut state) = capture.0.lock() {
+                                state.generic_leases_released = true;
+                            }
+                        }
+                    }
                 }
+                1 => {
+                    let replacement_ready =
+                        counts.ready > 0 && counts.queued == 0 && counts.preparing == 0;
+                    if replacement_ready {
+                        drop(world.remove_resource::<GpuStressLeases>());
+                        snapshot.pressure_stage = 2;
+                        world.insert_resource(snapshot);
+                    }
+                }
+                2 => {
+                    let expected_releases = snapshot.initial_resource_count as u64 + 1;
+                    if counts.released_resources >= expected_releases
+                        && counts.queued == 0
+                        && counts.preparing == 0
+                        && counts.ready == 0
+                        && counts.evicted_resources > 0
+                    {
+                        snapshot.pressure_stage = 3;
+                        world.insert_resource(snapshot);
+                        if let Ok(mut state) = capture.0.lock() {
+                            state.generic_leases_released = true;
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -996,6 +1141,9 @@ fn capture_gpu_frame(world: &mut ribbon_app::World, capture: &SharedCapture, opt
         state.generic_live_textures = render.resources.live_streamed_textures;
         state.generic_live_samplers = render.resources.live_streamed_samplers;
         state.generic_texture_bytes_estimate = render.resources.streamed_texture_bytes_estimate;
+        state.generic_gpu_evictions = warmup.evicted_resources;
+        state.generic_gpu_pressure_events = warmup.memory_pressure_events;
+        state.generic_gpu_budget_rejections = warmup.budget_rejections;
         state.concurrent_cluster_peak_active =
             state.concurrent_cluster_peak_active.max(concurrent_active);
         if concurrent_active == CONCURRENT_REGION_COUNT {

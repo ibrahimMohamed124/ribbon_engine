@@ -8,7 +8,9 @@ use ribbon_assets::{AssetRef, AssetServer, LoadErrorKind, LoadState};
 use ribbon_ecs::Entity;
 use ribbon_plugin_gltf::ModelAsset;
 use ribbon_plugin_physics::{Collider, PhysicsDebugData};
-use ribbon_plugin_render3d::{ModelInstance, ModelWarmup, ModelWarmupStatus, PointLight};
+use ribbon_plugin_render3d::{
+    GpuResourceWarmup, ModelInstance, ModelWarmup, ModelWarmupStatus, PointLight, StagedRender,
+};
 use ribbon_plugins::Plugin;
 use ribbon_reflect::TypeRegistry;
 use ribbon_render::profiling::{RenderDiagnostics, RenderProfileRecorder};
@@ -380,6 +382,77 @@ impl Default for StreamingConfig {
     }
 }
 
+/// Phase breakdown retained for the activation attempt that established the lifetime maximum.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RegionActivationBreakdown {
+    pub requested_ns: u64,
+    pub cpu_loading_ns: u64,
+    pub gpu_warmup_ns: u64,
+    pub ready_wait_ns: u64,
+    pub physics_preparation_ns: u64,
+    pub activation_ns: u64,
+    pub request_to_active_ns: u64,
+}
+
+/// Per-region lifecycle timing. Durations are accumulated for the most recent request/activation
+/// attempt; the slowest completed attempt retains its own immutable phase breakdown. The current
+/// state's elapsed time is sampled when a snapshot is created, so an in-flight stall is visible.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RegionLifecycleTiming {
+    pub requested_ns: u64,
+    pub cpu_loading_ns: u64,
+    pub gpu_warmup_ns: u64,
+    pub ready_wait_ns: u64,
+    pub physics_preparation_ns: u64,
+    pub activation_ns: u64,
+    pub active_ns: u64,
+    pub deactivation_ns: u64,
+    pub dormant_ns: u64,
+    pub unloading_ns: u64,
+    pub failed_ns: u64,
+    pub current_state_elapsed_ns: u64,
+    pub last_request_to_active_ns: Option<u64>,
+    pub max_request_to_active_ns: u64,
+    pub slowest_activation: Option<RegionActivationBreakdown>,
+    pub activation_count: u64,
+}
+
+impl RegionLifecycleTiming {
+    fn reset_attempt(&mut self) {
+        self.requested_ns = 0;
+        self.cpu_loading_ns = 0;
+        self.gpu_warmup_ns = 0;
+        self.ready_wait_ns = 0;
+        self.physics_preparation_ns = 0;
+        self.activation_ns = 0;
+        self.active_ns = 0;
+        self.deactivation_ns = 0;
+        self.dormant_ns = 0;
+        self.unloading_ns = 0;
+        self.failed_ns = 0;
+        self.current_state_elapsed_ns = 0;
+        self.last_request_to_active_ns = None;
+    }
+
+    fn add_state_time(&mut self, state: &RegionState, elapsed_ns: u64) {
+        let target = match state {
+            RegionState::Requested => &mut self.requested_ns,
+            RegionState::LoadingAssets => &mut self.cpu_loading_ns,
+            RegionState::WarmingGpu => &mut self.gpu_warmup_ns,
+            RegionState::Ready => &mut self.ready_wait_ns,
+            RegionState::PreparingPhysics => &mut self.physics_preparation_ns,
+            RegionState::Activating => &mut self.activation_ns,
+            RegionState::Active => &mut self.active_ns,
+            RegionState::Deactivating => &mut self.deactivation_ns,
+            RegionState::Dormant => &mut self.dormant_ns,
+            RegionState::Unloading => &mut self.unloading_ns,
+            RegionState::Failed(_) => &mut self.failed_ns,
+            RegionState::Unloaded => return,
+        };
+        *target = (*target).saturating_add(elapsed_ns);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RegionSnapshot {
     pub id: RegionId,
@@ -404,6 +477,7 @@ pub struct RegionSnapshot {
     pub resident_cpu_bytes_estimate: u64,
     pub cpu_ready_models: usize,
     pub gpu_ready_models: usize,
+    pub lifecycle_timing: RegionLifecycleTiming,
     pub last_error: Option<String>,
 }
 
@@ -412,6 +486,8 @@ pub struct StreamEvent {
     pub region: RegionId,
     pub from: RegionState,
     pub to: RegionState,
+    /// Time spent in `from` before this transition. Invalid transitions report zero.
+    pub elapsed_ns: u64,
     pub message: String,
 }
 
@@ -444,11 +520,23 @@ pub struct StreamDiagnostics {
     pub cpu_resident_budget_bytes: u64,
     /// Renderer-tracked GPU estimate above `gpu_estimate_bytes`.
     pub gpu_memory_over_budget_bytes: u64,
+    pub generic_gpu_resident_bytes_estimate: u64,
+    pub generic_gpu_queued_bytes_estimate: u64,
+    pub generic_gpu_budget_overage_bytes: u64,
+    pub generic_gpu_evictions_cumulative: u64,
+    pub generic_gpu_memory_pressure_events: u64,
+    pub generic_gpu_budget_rejections_cumulative: u64,
+    pub generic_gpu_sampler_count_over_budget: usize,
+    pub cpu_region_eviction_events: u64,
+    pub gpu_region_eviction_events: u64,
+    pub last_memory_pressure_region: Option<RegionId>,
     /// Cumulative CPU- or GPU-pressure region releases, not physical bytes freed.
     pub memory_pressure_events: u64,
     pub cpu_budget_evictions_cumulative: u64,
     pub invalid_state_transitions: u64,
     pub region_transitions: u64,
+    pub max_request_to_active_ns: u64,
+    pub slowest_activation_region: Option<RegionId>,
     pub last_update_cpu_ns: u64,
     pub last_update_profiled: bool,
     pub recent_events: VecDeque<StreamEvent>,
@@ -472,6 +560,7 @@ struct RegionRecord {
     state: RegionState,
     leases: BTreeMap<String, AssetRef<ModelAsset>>,
     scene_doc_lease: Option<AssetRef<SceneDoc>>,
+    scene_doc_revision: Option<u64>,
     scene_doc_dependencies_resolved: bool,
     scene_doc_instantiated: bool,
     prefab_entities: Vec<Entity>,
@@ -498,6 +587,10 @@ struct RegionRecord {
     resident_cpu_bytes_estimate: u64,
     cpu_ready_models: usize,
     gpu_ready_models: usize,
+    lifecycle_timing: RegionLifecycleTiming,
+    state_entered_at: Instant,
+    request_started_at: Option<Instant>,
+    reload_requested: bool,
 }
 
 impl RegionRecord {
@@ -674,6 +767,7 @@ impl StreamingCoordinator {
                 state: RegionState::Unloaded,
                 leases: BTreeMap::new(),
                 scene_doc_lease: None,
+                scene_doc_revision: None,
                 scene_doc_dependencies_resolved: false,
                 scene_doc_instantiated: false,
                 prefab_entities: Vec::new(),
@@ -699,6 +793,10 @@ impl StreamingCoordinator {
                 resident_cpu_bytes_estimate: 0,
                 cpu_ready_models: 0,
                 gpu_ready_models: 0,
+                lifecycle_timing: RegionLifecycleTiming::default(),
+                state_entered_at: Instant::now(),
+                request_started_at: None,
+                reload_requested: false,
             },
         );
         Ok(())
@@ -1191,6 +1289,16 @@ impl StreamingCoordinator {
                     resident_cpu_bytes_estimate: record.resident_cpu_bytes_estimate,
                     cpu_ready_models: record.cpu_ready_models,
                     gpu_ready_models: record.gpu_ready_models,
+                    lifecycle_timing: {
+                        let mut timing = record.lifecycle_timing;
+                        timing.current_state_elapsed_ns = record
+                            .state_entered_at
+                            .elapsed()
+                            .as_nanos()
+                            .min(u128::from(u64::MAX))
+                            as u64;
+                        timing
+                    },
                     last_error: match &record.state {
                         RegionState::Failed(message) => Some(message.clone()),
                         _ => None,
@@ -1415,6 +1523,7 @@ impl StreamingCoordinator {
         if let Some(record) = self.regions.get_mut(id) {
             record.leases.clear();
             record.scene_doc_lease = None;
+            record.scene_doc_revision = None;
             record.scene_doc_dependencies_resolved = false;
             record.scene_doc_instantiated = false;
             record.pending_typed_dependency_paths.clear();
@@ -1661,6 +1770,92 @@ impl StreamingCoordinator {
             record.last_distance = distance;
             record.scheduling_priority = priority;
         }
+        let scene_doc_generation_changed = self
+            .regions
+            .get(id)
+            .and_then(|record| {
+                Some((
+                    record.definition.scene_doc_path.as_deref()?,
+                    record.scene_doc_lease.as_ref()?.handle(),
+                ))
+            })
+            .is_some_and(|(path, held)| {
+                world
+                    .try_resource::<AssetServer>()
+                    .and_then(|server| server.current_handle::<SceneDoc>(path))
+                    .is_some_and(|current| current != held)
+            });
+        // AssetServer hot reload keeps the handle generation stable and advances a content
+        // revision. Once a SceneDoc prefab has been instantiated, that revision change must
+        // retire the old owned entities before the replacement document is instantiated.
+        let scene_doc_revision_changed = self.regions.get(id).is_some_and(|record| {
+            if !record.scene_doc_instantiated {
+                return false;
+            }
+            let (Some(lease), Some(held_revision), Some(server)) = (
+                record.scene_doc_lease.as_ref(),
+                record.scene_doc_revision,
+                world.try_resource::<AssetServer>(),
+            ) else {
+                return false;
+            };
+            server
+                .revision(lease.handle())
+                .is_some_and(|current| current != held_revision)
+        });
+        // Model generations must also invalidate a resident region. CPU readiness checks only
+        // run while LoadingAssets, so this active/dormant path is what makes model hot reload
+        // retire old region entities and their colliders before a new generation is prepared.
+        let model_generation_changed = self.regions.get(id).is_some_and(|record| {
+            world.try_resource::<AssetServer>().is_some_and(|server| {
+                record.leases.iter().any(|(path, lease)| {
+                    server
+                        .current_handle::<ModelAsset>(path)
+                        .is_some_and(|current| current != lease.handle())
+                })
+            })
+        });
+        let typed_dependency_generation_changed =
+            self.regions.get(id).is_some_and(|record| {
+                match (
+                    world.try_resource::<AssetServer>(),
+                    world.try_resource::<StreamingAssetAdapters>(),
+                ) {
+                    (Some(server), Some(adapters)) => {
+                        record
+                            .typed_dependency_leases
+                            .iter()
+                            .any(|((asset_type, path), lease)| {
+                                matches!(
+                                    adapters.readiness(server, asset_type, path, lease.as_ref()),
+                                    StreamingDependencyState::Stale
+                                )
+                            })
+                    }
+                    _ => false,
+                }
+            });
+        if (scene_doc_generation_changed
+            || scene_doc_revision_changed
+            || model_generation_changed
+            || typed_dependency_generation_changed)
+            && matches!(
+                &state,
+                RegionState::WarmingGpu
+                    | RegionState::Ready
+                    | RegionState::PreparingPhysics
+                    | RegionState::Activating
+                    | RegionState::Active
+                    | RegionState::Deactivating
+                    | RegionState::Dormant
+            )
+        {
+            if let Some(record) = self.regions.get_mut(id) {
+                record.reload_requested = true;
+            }
+            self.begin_unload(world, id);
+            return;
+        }
         if priority > old_priority {
             if state == RegionState::LoadingAssets {
                 self.raise_pending_asset_priority(world, id, priority);
@@ -1751,14 +1946,11 @@ impl StreamingCoordinator {
                     self.begin_unload(world, id);
                 } else {
                     self.spawn_visual_batch(world, id, entity_spawn_budget);
-                    if self.regions.get(id).is_some_and(|record| {
-                        record.state == RegionState::Activating
-                            && record.pending_visual_spawn
-                                >= record.definition.models.len()
-                                    + record.definition.point_lights.len()
-                    }) {
-                        self.set_state(id, RegionState::Active, "region content activated");
-                    }
+                    // For a logical Scene, all member Regions are committed as one visibility
+                    // group. This prevents a multi-Region Scene from appearing one chunk at a
+                    // time while its remaining chunks are still preparing. Standalone Regions
+                    // retain the same local commit behavior.
+                    let _ = self.try_commit_render_visibility_group(world, id);
                 }
             }
             RegionState::Active => {
@@ -1790,7 +1982,18 @@ impl StreamingCoordinator {
             }
             RegionState::Unloading => {
                 if self.physics_cleanup_complete(world, id) {
-                    if !beyond_unload || manual || is_neighbor_prefetch {
+                    let reload_requested = self
+                        .regions
+                        .get(id)
+                        .is_some_and(|record| record.reload_requested);
+                    if reload_requested {
+                        self.release_region_assets(world, id);
+                        self.release_dependencies(id);
+                        if let Some(record) = self.regions.get_mut(id) {
+                            record.reload_requested = false;
+                        }
+                        self.set_state(id, RegionState::Unloaded, "streamed content changed; old entities and physics ownership were retired before reload");
+                    } else if !beyond_unload || manual || is_neighbor_prefetch {
                         // A request can re-enter range while Rapier is still removing the old
                         // colliders. Retain CPU/GPU leases and return to Dormant instead of
                         // completing an obsolete unload; a later activation can reuse warm data.
@@ -1943,6 +2146,7 @@ impl StreamingCoordinator {
                                 Ok(lease) => {
                                     let old_lease = self.regions.get_mut(id).and_then(|record| {
                                         let old = record.scene_doc_lease.replace(lease);
+                                        record.scene_doc_revision = None;
                                         record.scene_doc_dependencies_resolved = false;
                                         old
                                     });
@@ -1982,10 +2186,10 @@ impl StreamingCoordinator {
                         });
                         match reacquired {
                             Ok(lease) => {
-                                let old_lease = self
-                                    .regions
-                                    .get_mut(id)
-                                    .and_then(|record| record.scene_doc_lease.replace(lease));
+                                let old_lease = self.regions.get_mut(id).and_then(|record| {
+                                    record.scene_doc_revision = None;
+                                    record.scene_doc_lease.replace(lease)
+                                });
                                 if let Some(old_lease) = old_lease {
                                     let old_handle = old_lease.handle();
                                     drop(old_lease);
@@ -2475,9 +2679,9 @@ impl StreamingCoordinator {
             return Ok(());
         }
         let handle = lease.expect("checked above");
-        let document = world
+        let (document, document_revision) = world
             .try_resource::<AssetServer>()
-            .and_then(|server| server.get(handle).cloned())
+            .and_then(|server| Some((server.get(handle).cloned()?, server.revision(handle)?)))
             .ok_or_else(|| {
                 "prepared SceneDoc disappeared before prefab instantiation".to_owned()
             })?;
@@ -2524,8 +2728,20 @@ impl StreamingCoordinator {
         }
         let entities = result
             .map_err(|error| format!("scene document prefab instantiation failed: {error}"))?;
+        let stage_until_activation = self
+            .regions
+            .get(id)
+            .is_some_and(|record| !record.definition.policy.preview_when_ready);
+        if stage_until_activation {
+            for entity in &entities {
+                // The prefab was just instantiated synchronously, so each returned entity is
+                // live here. This marker affects render extraction only, never physics.
+                let _ = world.insert(*entity, StagedRender);
+            }
+        }
         if let Some(record) = self.regions.get_mut(id) {
             record.prefab_entities = entities;
+            record.scene_doc_revision = Some(document_revision);
             record.scene_doc_instantiated = true;
         }
         Ok(())
@@ -2640,22 +2856,126 @@ impl StreamingCoordinator {
         };
 
         let batch_len = items.len();
+        let stage_until_activation = self
+            .regions
+            .get(id)
+            .is_some_and(|record| !record.definition.policy.preview_when_ready);
         let mut spawned = Vec::with_capacity(batch_len);
         for item in items {
-            match item {
+            let entity = match item {
                 VisualSpawnItem::Model(model, handle) => {
-                    spawned.push(world.spawn((model.transform, ModelInstance { model: handle })));
+                    world.spawn((model.transform, ModelInstance { model: handle }))
                 }
-                VisualSpawnItem::PointLight(light) => {
-                    spawned.push(world.spawn((light,)));
-                }
+                VisualSpawnItem::PointLight(light) => world.spawn((light,)),
+            };
+            if stage_until_activation {
+                let _ = world.insert(entity, StagedRender);
             }
+            spawned.push(entity);
         }
         if let Some(record) = self.regions.get_mut(id) {
             record.visual_entities.extend(spawned);
             record.pending_visual_spawn = end;
         }
         *budget = budget.saturating_sub(batch_len);
+    }
+
+    /// Commit visibility for the complete connected set of explicitly activating Scenes that
+    /// contain `seed`. Scenes may share Regions; closing over shared membership ensures the same
+    /// Region is never made visible early for one Scene while another Scene that owns it is still
+    /// preparing. A standalone Region (no Scene activation owner) is a one-Region group.
+    ///
+    /// Returns true once the seed Region has reached Active. No Region in the group is made Active
+    /// until every member has finished visual spawning and required Rapier collider registration.
+    fn try_commit_render_visibility_group(&mut self, world: &mut World, seed: &RegionId) -> bool {
+        let mut group = BTreeSet::from([seed.clone()]);
+        loop {
+            let scene_ids: BTreeSet<SceneId> = group
+                .iter()
+                .filter_map(|region| self.regions.get(region))
+                .flat_map(|record| record.scene_activation_users.iter().cloned())
+                .collect();
+            let mut changed = false;
+            for scene_id in scene_ids {
+                if let Some(scene) = self.scenes.get(&scene_id) {
+                    for region in &scene.definition.regions {
+                        changed |= group.insert(region.clone());
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let all_ready = group.iter().all(|region| {
+            let Some(record) = self.regions.get(region) else {
+                return false;
+            };
+            match &record.state {
+                RegionState::Active => true,
+                RegionState::Activating => {
+                    self.visual_entities_ready(region)
+                        && self.physics_entities_registered(world, region)
+                        && (record.definition.scene_doc_path.is_none()
+                            || record.scene_doc_instantiated)
+                }
+                _ => false,
+            }
+        });
+        if !all_ready {
+            return self
+                .regions
+                .get(seed)
+                .is_some_and(|record| record.state == RegionState::Active);
+        }
+
+        // Remove every marker before transitioning any member. `StreamingCoordinator` runs in
+        // Update and render extraction runs later in PostUpdate, so the renderer observes either
+        // the previous hidden group or the complete committed group, never a partial batch.
+        let activating: Vec<_> = group
+            .iter()
+            .filter(|region| {
+                self.regions
+                    .get(*region)
+                    .is_some_and(|record| record.state == RegionState::Activating)
+            })
+            .cloned()
+            .collect();
+        for region in &group {
+            self.commit_region_render_visibility(world, region);
+        }
+        for region in activating {
+            self.set_state(
+                &region,
+                RegionState::Active,
+                "scene visibility group committed after all member regions became ready",
+            );
+        }
+        self.regions
+            .get(seed)
+            .is_some_and(|record| record.state == RegionState::Active)
+    }
+
+    /// Make all region-owned render entities visible in one ECS update. A staged marker is
+    /// renderer-only, so prefabs and collider entities continue to participate in physics while
+    /// hidden. Preview regions intentionally skip staging and are unaffected by this commit.
+    fn commit_region_render_visibility(&self, world: &mut World, id: &RegionId) {
+        let Some(record) = self.regions.get(id) else {
+            return;
+        };
+        if record.definition.policy.preview_when_ready {
+            return;
+        }
+        let entities = record
+            .visual_entities
+            .iter()
+            .chain(record.prefab_entities.iter())
+            .copied()
+            .collect::<Vec<_>>();
+        for entity in entities {
+            let _ = world.remove::<StagedRender>(entity);
+        }
     }
 
     fn begin_deactivation(&mut self, world: &mut World, id: &RegionId) {
@@ -2688,7 +3008,14 @@ impl StreamingCoordinator {
         if pending_empty {
             self.release_region_assets(world, id);
             self.release_dependencies(id);
-            self.set_state(id, RegionState::Unloaded, "region unloaded");
+            if let Some(record) = self.regions.get_mut(id) {
+                record.reload_requested = false;
+            }
+            self.set_state(
+                id,
+                RegionState::Unloaded,
+                "region unloaded after entity/physics ownership cleanup",
+            );
         } else {
             self.set_state(
                 id,
@@ -2717,6 +3044,7 @@ impl StreamingCoordinator {
             let _ = world.despawn_recursive(entity);
         }
         record.scene_doc_instantiated = false;
+        record.scene_doc_revision = None;
         for entity in record.collider_entities.drain(..) {
             let _ = world.despawn(entity);
             record.pending_collider_cleanup.push(entity);
@@ -2805,6 +3133,7 @@ impl StreamingCoordinator {
             // still owns a lease for the same generation.
             record.leases.clear();
             record.scene_doc_lease = None;
+            record.scene_doc_revision = None;
             record.scene_doc_dependencies_resolved = false;
             record.scene_doc_instantiated = false;
             record.prefab_entities.clear();
@@ -2908,8 +3237,38 @@ impl StreamingCoordinator {
             .min_by_key(|(_, record)| (record.scheduling_priority, record.last_used_sequence))
             .map(|(id, _)| id.clone());
         if let Some(id) = candidate {
+            let (cpu_releasable, gpu_releasable) =
+                self.regions.get(&id).map_or((false, false), |record| {
+                    let cpu_releasable = cpu_over
+                        && world.try_resource::<AssetServer>().is_some_and(|server| {
+                            record
+                                .leases
+                                .values()
+                                .any(|lease| server.strong_ref_count(lease.handle()) == 1)
+                        });
+                    let gpu_releasable = gpu_over
+                        && record.leases.values().any(|lease| {
+                            self.warmup_users
+                                .get(&model_key(lease.handle()))
+                                .is_some_and(|(_, users)| *users == 1)
+                        });
+                    (cpu_releasable, gpu_releasable)
+                });
             self.diagnostics.memory_pressure_events =
                 self.diagnostics.memory_pressure_events.saturating_add(1);
+            if cpu_releasable {
+                self.diagnostics.cpu_region_eviction_events = self
+                    .diagnostics
+                    .cpu_region_eviction_events
+                    .saturating_add(1);
+            }
+            if gpu_releasable {
+                self.diagnostics.gpu_region_eviction_events = self
+                    .diagnostics
+                    .gpu_region_eviction_events
+                    .saturating_add(1);
+            }
+            self.diagnostics.last_memory_pressure_region = Some(id.clone());
             self.begin_unload(world, &id);
         }
     }
@@ -2934,6 +3293,7 @@ impl StreamingCoordinator {
     }
 
     fn set_state(&mut self, id: &RegionId, state: RegionState, message: &str) {
+        let now = Instant::now();
         let from = {
             let Some(record) = self.regions.get(id) else {
                 return;
@@ -2953,6 +3313,7 @@ impl StreamingCoordinator {
                 region: id.clone(),
                 from: from.clone(),
                 to: from,
+                elapsed_ns: 0,
                 message: format!(
                     "rejected invalid region-state transition to {state:?}: {message}"
                 ),
@@ -2966,13 +3327,66 @@ impl StreamingCoordinator {
         } else {
             None
         };
+        let mut elapsed_ns = 0;
         if let Some(record) = self.regions.get_mut(id) {
+            elapsed_ns = record
+                .state_entered_at
+                .elapsed()
+                .as_nanos()
+                .min(u128::from(u64::MAX)) as u64;
+            record.lifecycle_timing.add_state_time(&from, elapsed_ns);
+            record.state_entered_at = now;
+
+            // A fresh request starts a fresh attempt. Dormant reactivation is a distinct attempt
+            // even though CPU/GPU assets remain resident and therefore are not requested again.
+            if state == RegionState::Requested
+                || (from == RegionState::Dormant && state == RegionState::PreparingPhysics)
+            {
+                record.lifecycle_timing.reset_attempt();
+                record.request_started_at = Some(now);
+            }
+            if state == RegionState::Active {
+                if let Some(started) = record.request_started_at.take() {
+                    let elapsed = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+                    record.lifecycle_timing.last_request_to_active_ns = Some(elapsed);
+                    if elapsed > record.lifecycle_timing.max_request_to_active_ns {
+                        record.lifecycle_timing.max_request_to_active_ns = elapsed;
+                        record.lifecycle_timing.slowest_activation =
+                            Some(RegionActivationBreakdown {
+                                requested_ns: record.lifecycle_timing.requested_ns,
+                                cpu_loading_ns: record.lifecycle_timing.cpu_loading_ns,
+                                gpu_warmup_ns: record.lifecycle_timing.gpu_warmup_ns,
+                                ready_wait_ns: record.lifecycle_timing.ready_wait_ns,
+                                physics_preparation_ns: record
+                                    .lifecycle_timing
+                                    .physics_preparation_ns,
+                                activation_ns: record.lifecycle_timing.activation_ns,
+                                request_to_active_ns: elapsed,
+                            });
+                    }
+                    record.lifecycle_timing.activation_count =
+                        record.lifecycle_timing.activation_count.saturating_add(1);
+                }
+            }
+            if matches!(state, RegionState::Failed(_) | RegionState::Unloaded) {
+                record.request_started_at = None;
+            }
             record.state = state.clone();
             if let Some(sequence) = use_sequence {
                 record.last_used_sequence = sequence;
             }
         }
-        self.record_transition(id, from, state, message);
+        // Keep the aggregate snapshot useful even when a caller reads diagnostics between
+        // coordinator ticks. The normal tick refresh recomputes this across all regions, while
+        // this fast path publishes a newly completed lifetime maximum immediately.
+        if let Some(record) = self.regions.get(id) {
+            let latency = record.lifecycle_timing.max_request_to_active_ns;
+            if latency > self.diagnostics.max_request_to_active_ns {
+                self.diagnostics.max_request_to_active_ns = latency;
+                self.diagnostics.slowest_activation_region = Some(id.clone());
+            }
+        }
+        self.record_transition(id, from, state, elapsed_ns, message);
     }
 
     fn record_transition(
@@ -2980,6 +3394,7 @@ impl StreamingCoordinator {
         id: &RegionId,
         from: RegionState,
         to: RegionState,
+        elapsed_ns: u64,
         message: &str,
     ) {
         self.diagnostics.region_transitions = self.diagnostics.region_transitions.saturating_add(1);
@@ -2990,6 +3405,7 @@ impl StreamingCoordinator {
             region: id.clone(),
             from,
             to,
+            elapsed_ns,
             message: message.to_owned(),
         });
     }
@@ -3005,6 +3421,9 @@ impl StreamingCoordinator {
             .try_resource::<RenderDiagnostics>()
             .map(|diagnostics| diagnostics.resources.total_bytes_estimate())
             .unwrap_or(0);
+        let generic_gpu = world
+            .try_resource::<GpuResourceWarmup>()
+            .map(GpuResourceWarmup::counts);
         let mut diagnostics = StreamDiagnostics {
             region_count: self.regions.len(),
             gpu_resident_bytes_estimate: gpu,
@@ -3025,11 +3444,31 @@ impl StreamingCoordinator {
             diagnostics.active_asset_workers = stats.active_workers;
             diagnostics.asset_worker_count = stats.worker_count;
         }
+        if let Some(stats) = generic_gpu {
+            diagnostics.generic_gpu_resident_bytes_estimate = stats.resident_bytes_estimate;
+            diagnostics.generic_gpu_queued_bytes_estimate = stats.queued_bytes_estimate;
+            diagnostics.generic_gpu_budget_overage_bytes = stats.budget_overage_bytes;
+            diagnostics.generic_gpu_evictions_cumulative = stats.evicted_resources;
+            diagnostics.generic_gpu_memory_pressure_events = stats.memory_pressure_events;
+            diagnostics.generic_gpu_budget_rejections_cumulative = stats.budget_rejections;
+            diagnostics.generic_gpu_sampler_count_over_budget = stats.sampler_count_over_budget;
+        }
         diagnostics.memory_pressure_events = self.diagnostics.memory_pressure_events;
+        diagnostics.cpu_region_eviction_events = self.diagnostics.cpu_region_eviction_events;
+        diagnostics.gpu_region_eviction_events = self.diagnostics.gpu_region_eviction_events;
+        diagnostics.last_memory_pressure_region =
+            self.diagnostics.last_memory_pressure_region.clone();
         diagnostics.invalid_state_transitions = self.diagnostics.invalid_state_transitions;
         diagnostics.region_transitions = self.diagnostics.region_transitions;
         diagnostics.recent_events = self.diagnostics.recent_events.clone();
-        for record in self.regions.values() {
+        for (id, record) in &self.regions {
+            if record.lifecycle_timing.max_request_to_active_ns
+                > diagnostics.max_request_to_active_ns
+            {
+                diagnostics.max_request_to_active_ns =
+                    record.lifecycle_timing.max_request_to_active_ns;
+                diagnostics.slowest_activation_region = Some(id.clone());
+            }
             diagnostics.pending_asset_requests = diagnostics
                 .pending_asset_requests
                 .saturating_add(
@@ -3224,6 +3663,49 @@ fn publish_streaming_profile_fields(world: &mut World) {
     resources.streaming_memory_pressure_events = stream.memory_pressure_events;
     resources.streaming_cpu_budget_evictions_cumulative = stream.cpu_budget_evictions_cumulative;
     resources.streaming_invalid_state_transitions = stream.invalid_state_transitions;
+    resources.streaming_max_activation_latency_ns = stream.max_request_to_active_ns;
+    resources.streaming_slowest_region_id.clear();
+    resources.streaming_slowest_region_requested_ns = 0;
+    resources.streaming_slowest_region_cpu_loading_ns = 0;
+    resources.streaming_slowest_region_gpu_warmup_ns = 0;
+    resources.streaming_slowest_region_ready_wait_ns = 0;
+    resources.streaming_slowest_region_physics_ns = 0;
+    resources.streaming_slowest_region_activation_ns = 0;
+    resources.streaming_slowest_region_current_state_ns = 0;
+    resources.streaming_slowest_region_last_activation_ns = 0;
+    if let (Some(region_id), Some(coordinator)) = (
+        stream.slowest_activation_region.as_ref(),
+        world.try_resource::<StreamingCoordinator>(),
+    ) {
+        if let Some(region) = coordinator
+            .snapshot()
+            .regions
+            .into_iter()
+            .find(|region| &region.id == region_id)
+        {
+            let timing = region.lifecycle_timing;
+            resources.streaming_slowest_region_id = region.id.as_str().to_owned();
+            if let Some(slowest) = timing.slowest_activation {
+                resources.streaming_slowest_region_requested_ns = slowest.requested_ns;
+                resources.streaming_slowest_region_cpu_loading_ns = slowest.cpu_loading_ns;
+                resources.streaming_slowest_region_gpu_warmup_ns = slowest.gpu_warmup_ns;
+                resources.streaming_slowest_region_ready_wait_ns = slowest.ready_wait_ns;
+                resources.streaming_slowest_region_physics_ns = slowest.physics_preparation_ns;
+                resources.streaming_slowest_region_activation_ns = slowest.activation_ns;
+                resources.streaming_slowest_region_last_activation_ns =
+                    slowest.request_to_active_ns;
+            }
+            resources.streaming_slowest_region_current_state_ns = timing.current_state_elapsed_ns;
+        }
+    }
+    resources.generic_gpu_resident_bytes_estimate = stream.generic_gpu_resident_bytes_estimate;
+    resources.generic_gpu_queued_bytes_estimate = stream.generic_gpu_queued_bytes_estimate;
+    resources.generic_gpu_budget_overage_bytes = stream.generic_gpu_budget_overage_bytes;
+    resources.generic_gpu_evictions_cumulative = stream.generic_gpu_evictions_cumulative;
+    resources.generic_gpu_memory_pressure_events = stream.generic_gpu_memory_pressure_events;
+    resources.generic_gpu_budget_rejections_cumulative =
+        stream.generic_gpu_budget_rejections_cumulative;
+    resources.generic_gpu_sampler_count_over_budget = stream.generic_gpu_sampler_count_over_budget;
     world
         .resource_mut::<RenderDiagnostics>()
         .record_resources(resources);
@@ -3311,6 +3793,158 @@ mod tests {
     }
 
     #[test]
+    fn streamed_point_lights_are_staged_by_default_but_preview_policy_keeps_them_visible() {
+        use crate::RegionPointLight;
+        use ribbon_plugin_render3d::{PointLight, StagedRender};
+
+        let mut world = test_world();
+        let mut coordinator = StreamingCoordinator::default();
+        let mut staged_definition = region_with_id("staged-light-region");
+        staged_definition
+            .point_lights
+            .push(RegionPointLight::new(PointLight::default()));
+        let staged_id = staged_definition.id.clone();
+        coordinator.register_region(staged_definition).unwrap();
+        let mut budget = 4;
+        coordinator.spawn_visual_batch(&mut world, &staged_id, &mut budget);
+        let staged_entity = coordinator.regions[&staged_id].visual_entities[0];
+        assert!(world.get::<StagedRender>(staged_entity).is_some());
+
+        let mut preview_definition = region_with_id("preview-light-region");
+        preview_definition.policy.preview_when_ready = true;
+        preview_definition
+            .point_lights
+            .push(RegionPointLight::new(PointLight::default()));
+        let preview_id = preview_definition.id.clone();
+        coordinator.register_region(preview_definition).unwrap();
+        let mut preview_budget = 4;
+        coordinator.spawn_visual_batch(&mut world, &preview_id, &mut preview_budget);
+        let preview_entity = coordinator.regions[&preview_id].visual_entities[0];
+        assert!(world.get::<StagedRender>(preview_entity).is_none());
+    }
+
+    #[test]
+    fn region_visibility_commit_removes_staging_from_visual_and_prefab_entities_together() {
+        use ribbon_plugin_render3d::StagedRender;
+
+        let mut world = test_world();
+        let mut coordinator = StreamingCoordinator::default();
+        let id = RegionId::new("staged-region");
+        coordinator
+            .register_region(region_with_id("staged-region"))
+            .unwrap();
+        let visual = world.spawn((StagedRender,));
+        let prefab = world.spawn((StagedRender,));
+        coordinator
+            .regions
+            .get_mut(&id)
+            .unwrap()
+            .visual_entities
+            .push(visual);
+        coordinator
+            .regions
+            .get_mut(&id)
+            .unwrap()
+            .prefab_entities
+            .push(prefab);
+
+        assert!(world.get::<StagedRender>(visual).is_some());
+        assert!(world.get::<StagedRender>(prefab).is_some());
+        coordinator.commit_region_render_visibility(&mut world, &id);
+        assert!(world.get::<StagedRender>(visual).is_none());
+        assert!(world.get::<StagedRender>(prefab).is_none());
+    }
+
+    #[test]
+    fn multi_region_scene_visibility_commits_only_after_every_region_is_ready() {
+        use super::{RegionPointLight, RegionState, SceneDefinition, SceneId};
+        use ribbon_plugin_render3d::{PointLight, StagedRender};
+
+        let mut world = test_world();
+        let mut coordinator = StreamingCoordinator::default();
+        let first = RegionId::new("atomic-scene-first");
+        let second = RegionId::new("atomic-scene-second");
+        let mut first_definition = region_with_id(first.as_str());
+        first_definition
+            .point_lights
+            .push(RegionPointLight::new(PointLight::default()));
+        let mut second_definition = region_with_id(second.as_str());
+        second_definition
+            .point_lights
+            .push(RegionPointLight::new(PointLight::default()));
+        coordinator.register_region(first_definition).unwrap();
+        coordinator.register_region(second_definition).unwrap();
+
+        let scene = SceneId::new("atomic-multi-region-scene");
+        coordinator
+            .register_scene(SceneDefinition::new(
+                scene.clone(),
+                "Atomic Multi-Region Scene",
+                [first.clone(), second.clone()],
+            ))
+            .unwrap();
+        coordinator.activate_scene(&scene).unwrap();
+
+        let first_entity = world.spawn((StagedRender, PointLight::default()));
+        let second_entity = world.spawn((StagedRender, PointLight::default()));
+        {
+            let record = coordinator.regions.get_mut(&first).unwrap();
+            record.state = RegionState::Activating;
+            record.visual_entities.push(first_entity);
+            record.pending_visual_spawn = 1;
+        }
+        {
+            let record = coordinator.regions.get_mut(&second).unwrap();
+            record.state = RegionState::PreparingPhysics;
+            record.visual_entities.push(second_entity);
+            record.pending_visual_spawn = 1;
+        }
+
+        // The first Region is fully staged and ready, but the Scene must not partially appear.
+        assert!(!coordinator.try_commit_render_visibility_group(&mut world, &first));
+        assert!(world.get::<StagedRender>(first_entity).is_some());
+        assert!(world.get::<StagedRender>(second_entity).is_some());
+        assert_eq!(
+            coordinator.region_state(&first),
+            Some(&RegionState::Activating)
+        );
+
+        // Once the final member reaches the barrier, all markers are removed before any member
+        // transitions to Active, so PostUpdate extraction sees the complete Scene at once.
+        coordinator.regions.get_mut(&second).unwrap().state = RegionState::Activating;
+        assert!(coordinator.try_commit_render_visibility_group(&mut world, &second));
+        assert!(world.get::<StagedRender>(first_entity).is_none());
+        assert!(world.get::<StagedRender>(second_entity).is_none());
+        assert_eq!(coordinator.region_state(&first), Some(&RegionState::Active));
+        assert_eq!(
+            coordinator.region_state(&second),
+            Some(&RegionState::Active)
+        );
+    }
+
+    #[test]
+    fn preview_region_does_not_clear_application_owned_render_staging() {
+        use ribbon_plugin_render3d::StagedRender;
+
+        let mut world = test_world();
+        let mut coordinator = StreamingCoordinator::default();
+        let mut definition = region_with_id("preview-staged-region");
+        definition.policy.preview_when_ready = true;
+        let id = definition.id.clone();
+        coordinator.register_region(definition).unwrap();
+        let entity = world.spawn((StagedRender,));
+        coordinator
+            .regions
+            .get_mut(&id)
+            .unwrap()
+            .prefab_entities
+            .push(entity);
+
+        coordinator.commit_region_render_visibility(&mut world, &id);
+        assert!(world.get::<StagedRender>(entity).is_some());
+    }
+
+    #[test]
     fn scene_doc_region_loads_and_owns_prefab_entities_through_activation_and_unload() {
         use crate::SceneDocLoader;
         use ribbon_assets::{AssetServer, MemorySource};
@@ -3368,6 +4002,15 @@ mod tests {
 
         coordinator.activate_region(&id).unwrap();
         coordinator.tick(&mut world);
+        assert_eq!(
+            coordinator.region_state(&id),
+            Some(&super::RegionState::Activating)
+        );
+        let staged_entity = coordinator.regions[&id].prefab_entities[0];
+        assert!(world
+            .get::<ribbon_plugin_render3d::StagedRender>(staged_entity)
+            .is_some());
+
         coordinator.tick(&mut world);
         assert_eq!(
             coordinator.region_state(&id),
@@ -3377,6 +4020,9 @@ mod tests {
         assert_eq!(snapshot.regions[0].prefab_entity_count, 1);
         let entity = coordinator.regions[&id].prefab_entities[0];
         assert!(world.contains(entity));
+        assert!(world
+            .get::<ribbon_plugin_render3d::StagedRender>(entity)
+            .is_none());
 
         coordinator.release_region_request(&id).unwrap();
         coordinator.tick(&mut world);
@@ -4473,6 +5119,127 @@ mod tests {
         let neighbor = HashSet::from([id.clone()]);
         coordinator.apply_memory_pressure(&mut world, &neighbor);
         assert_eq!(coordinator.region_state(&id), Some(&RegionState::Dormant));
+    }
+
+    #[test]
+    fn lifecycle_timing_records_each_stage_and_request_to_active_latency() {
+        use super::{RegionState, StreamingCoordinator};
+        use std::time::{Duration, Instant};
+
+        let id = RegionId::new("timed-region");
+        let mut coordinator = StreamingCoordinator::default();
+        coordinator
+            .register_region(region_with_id(id.as_str()))
+            .unwrap();
+
+        coordinator.set_state(&id, RegionState::Requested, "test request");
+        coordinator.regions.get_mut(&id).unwrap().state_entered_at =
+            Instant::now() - Duration::from_millis(2);
+        coordinator.set_state(&id, RegionState::LoadingAssets, "test CPU load");
+        coordinator.regions.get_mut(&id).unwrap().state_entered_at =
+            Instant::now() - Duration::from_millis(3);
+        coordinator.set_state(&id, RegionState::WarmingGpu, "test GPU warmup");
+        coordinator.regions.get_mut(&id).unwrap().state_entered_at =
+            Instant::now() - Duration::from_millis(4);
+        coordinator.set_state(&id, RegionState::Ready, "test ready");
+        coordinator.regions.get_mut(&id).unwrap().state_entered_at =
+            Instant::now() - Duration::from_millis(5);
+        coordinator.set_state(&id, RegionState::PreparingPhysics, "test physics");
+        coordinator.regions.get_mut(&id).unwrap().state_entered_at =
+            Instant::now() - Duration::from_millis(6);
+        coordinator.set_state(&id, RegionState::Activating, "test activation commit");
+        coordinator.regions.get_mut(&id).unwrap().state_entered_at =
+            Instant::now() - Duration::from_millis(7);
+        coordinator.set_state(&id, RegionState::Active, "test active");
+
+        let snapshot = coordinator.snapshot();
+        let timing = snapshot
+            .regions
+            .iter()
+            .find(|region| region.id == id)
+            .unwrap()
+            .lifecycle_timing;
+        assert!(timing.requested_ns >= 1_000_000);
+        assert!(timing.cpu_loading_ns >= 2_000_000);
+        assert!(timing.gpu_warmup_ns >= 3_000_000);
+        assert!(timing.ready_wait_ns >= 4_000_000);
+        assert!(timing.physics_preparation_ns >= 5_000_000);
+        assert!(timing.activation_ns >= 6_000_000);
+        assert!(timing.last_request_to_active_ns.is_some());
+        assert_eq!(timing.activation_count, 1);
+        let activation_event = snapshot
+            .diagnostics
+            .recent_events
+            .iter()
+            .find(|event| event.region == id && event.to == RegionState::Active)
+            .expect("active transition should be present in the lifecycle trace");
+        assert!(activation_event.elapsed_ns >= 6_000_000);
+        assert_eq!(
+            snapshot.diagnostics.max_request_to_active_ns,
+            timing.max_request_to_active_ns
+        );
+        assert_eq!(
+            snapshot.diagnostics.slowest_activation_region,
+            Some(id.clone())
+        );
+        let slowest = timing
+            .slowest_activation
+            .expect("slow attempt must retain its phase breakdown");
+        assert!(slowest.activation_ns >= 6_000_000);
+
+        // A later fast reactivation must not overwrite the phase breakdown for the max latency.
+        coordinator.set_state(&id, RegionState::Deactivating, "deactivate for repeat");
+        coordinator.set_state(&id, RegionState::Dormant, "dormant for repeat");
+        coordinator.set_state(&id, RegionState::PreparingPhysics, "fast reactivation");
+        coordinator.set_state(&id, RegionState::Activating, "fast commit");
+        coordinator.set_state(&id, RegionState::Active, "fast active");
+        let repeated = coordinator
+            .snapshot()
+            .regions
+            .into_iter()
+            .find(|region| region.id == id)
+            .unwrap()
+            .lifecycle_timing;
+        assert_eq!(repeated.slowest_activation, Some(slowest));
+        assert!(repeated.last_request_to_active_ns.unwrap() < slowest.request_to_active_ns);
+    }
+
+    #[test]
+    fn dormant_reactivation_starts_a_new_activation_timing_attempt() {
+        use super::{RegionState, StreamingCoordinator};
+        use std::time::{Duration, Instant};
+
+        let id = RegionId::new("reactivated-region");
+        let mut coordinator = StreamingCoordinator::default();
+        coordinator
+            .register_region(region_with_id(id.as_str()))
+            .unwrap();
+        coordinator.set_state(&id, RegionState::Requested, "first request");
+        coordinator.set_state(&id, RegionState::LoadingAssets, "loaded");
+        coordinator.set_state(&id, RegionState::WarmingGpu, "warmed");
+        coordinator.set_state(&id, RegionState::Ready, "ready");
+        coordinator.set_state(&id, RegionState::PreparingPhysics, "physics");
+        coordinator.set_state(&id, RegionState::Activating, "activation");
+        coordinator.set_state(&id, RegionState::Active, "active");
+        coordinator.set_state(&id, RegionState::Deactivating, "deactivate");
+        coordinator.set_state(&id, RegionState::Dormant, "dormant");
+        // Model a measurable second-attempt physics preparation interval. CPU and GPU assets
+        // stay resident during dormant reactivation, but collider/activation preparation is
+        // still a real phase and must be attributed to the new attempt.
+        coordinator.regions.get_mut(&id).unwrap().state_entered_at =
+            Instant::now() - Duration::from_millis(1);
+        coordinator.set_state(&id, RegionState::PreparingPhysics, "reactivate");
+        coordinator.regions.get_mut(&id).unwrap().state_entered_at =
+            Instant::now() - Duration::from_millis(2);
+        coordinator.set_state(&id, RegionState::Activating, "reactivation commit");
+        coordinator.set_state(&id, RegionState::Active, "active again");
+
+        let timing = coordinator.snapshot().regions[0].lifecycle_timing;
+        assert_eq!(timing.activation_count, 2);
+        assert!(timing.last_request_to_active_ns.is_some());
+        assert_eq!(timing.cpu_loading_ns, 0);
+        assert_eq!(timing.gpu_warmup_ns, 0);
+        assert!(timing.physics_preparation_ns >= 1_000_000);
     }
 
     #[test]

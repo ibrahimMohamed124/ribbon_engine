@@ -6,7 +6,7 @@
 
 use crate::components::{
     Camera3D, DynamicMeshInstance3D, FogSettings, GpuMeshInstance3D, MeshInstance, ModelInstance,
-    PointLight, SpotLight, SunLight,
+    PointLight, SpotLight, StagedRender, SunLight,
 };
 use crate::gpu_streaming::GpuResourceLease;
 use crate::mesh::MeshData;
@@ -99,16 +99,22 @@ pub fn extract_scene_3d(world: &mut World) {
 
     world.resource_scope::<ExtractedScene3D, _>(|world, extracted| {
         extracted.camera = world
-            .query::<(&GlobalTransform3D, &Camera3D)>()
+            .query::<(&GlobalTransform3D, &Camera3D, Option<&StagedRender>)>()
             .iter()
-            .next()
-            .map(|(_, (transform, camera))| ExtractedCamera3D {
+            .find(|(_, (_, _, staged))| staged.is_none())
+            .map(|(_, (transform, camera, _))| ExtractedCamera3D {
                 transform: *transform,
                 camera: *camera,
             });
 
         extracted.meshes.clear();
-        for (_, (transform, mesh)) in world.query::<(&GlobalTransform3D, &MeshInstance)>().iter() {
+        for (_, (transform, mesh, staged)) in world
+            .query::<(&GlobalTransform3D, &MeshInstance, Option<&StagedRender>)>()
+            .iter()
+        {
+            if staged.is_some() {
+                continue;
+            }
             extracted.meshes.push(ExtractedMesh3D {
                 transform: transform.matrix(),
                 color: mesh.color,
@@ -116,10 +122,17 @@ pub fn extract_scene_3d(world: &mut World) {
         }
 
         extracted.dynamic_meshes.clear();
-        for (_, (transform, instance)) in world
-            .query::<(&GlobalTransform3D, &DynamicMeshInstance3D)>()
+        for (_, (transform, instance, staged)) in world
+            .query::<(
+                &GlobalTransform3D,
+                &DynamicMeshInstance3D,
+                Option<&StagedRender>,
+            )>()
             .iter()
         {
+            if staged.is_some() {
+                continue;
+            }
             extracted.dynamic_meshes.push(ExtractedDynamicMesh3D {
                 transform: transform.matrix(),
                 mesh: Arc::clone(&instance.mesh),
@@ -128,10 +141,17 @@ pub fn extract_scene_3d(world: &mut World) {
         }
 
         extracted.gpu_meshes.clear();
-        for (_, (transform, instance)) in world
-            .query::<(&GlobalTransform3D, &GpuMeshInstance3D)>()
+        for (_, (transform, instance, staged)) in world
+            .query::<(
+                &GlobalTransform3D,
+                &GpuMeshInstance3D,
+                Option<&StagedRender>,
+            )>()
             .iter()
         {
+            if staged.is_some() {
+                continue;
+            }
             extracted.gpu_meshes.push(ExtractedGpuMesh3D {
                 transform: transform.matrix(),
                 mesh: instance.mesh,
@@ -143,8 +163,13 @@ pub fn extract_scene_3d(world: &mut World) {
         }
 
         extracted.models.clear();
-        for (_, (transform, model)) in world.query::<(&GlobalTransform3D, &ModelInstance)>().iter()
+        for (_, (transform, model, staged)) in world
+            .query::<(&GlobalTransform3D, &ModelInstance, Option<&StagedRender>)>()
+            .iter()
         {
+            if staged.is_some() {
+                continue;
+            }
             extracted.models.push(ExtractedModel3D {
                 transform: transform.matrix(),
                 model: model.model,
@@ -152,13 +177,19 @@ pub fn extract_scene_3d(world: &mut World) {
         }
 
         extracted.spot_lights.clear();
-        extracted
-            .spot_lights
-            .extend(world.query::<&SpotLight>().iter().map(|(_, light)| *light));
+        extracted.spot_lights.extend(
+            world
+                .query::<(&SpotLight, Option<&StagedRender>)>()
+                .iter()
+                .filter_map(|(_, (light, staged))| staged.is_none().then_some(*light)),
+        );
         extracted.point_lights.clear();
-        extracted
-            .point_lights
-            .extend(world.query::<&PointLight>().iter().map(|(_, light)| *light));
+        extracted.point_lights.extend(
+            world
+                .query::<(&PointLight, Option<&StagedRender>)>()
+                .iter()
+                .filter_map(|(_, (light, staged))| staged.is_none().then_some(*light)),
+        );
         extracted.sun = sun;
         extracted.fog = world
             .try_resource::<FogSettings>()
@@ -288,5 +319,119 @@ mod tests {
             extracted.meshes[0].transform.w_axis.truncate(),
             Vec3::new(4.0, 5.0, 6.0)
         );
+    }
+
+    #[test]
+    fn staged_render_entities_are_excluded_from_all_render_extraction_until_committed() {
+        use crate::{DynamicMeshInstance3D, ModelInstance, StagedRender};
+        use std::sync::Arc;
+
+        let mut app = App::new();
+        app.world.insert_resource(ExtractedScene3D::default());
+
+        let staged_camera = app.world.spawn((
+            GlobalTransform3D {
+                translation: Vec3::new(100.0, 0.0, 0.0),
+                ..GlobalTransform3D::default()
+            },
+            Camera3D::default(),
+            StagedRender,
+        ));
+        let visible_camera = app.world.spawn((
+            GlobalTransform3D {
+                translation: Vec3::new(7.0, 8.0, 9.0),
+                ..GlobalTransform3D::default()
+            },
+            Camera3D::default(),
+        ));
+        let staged_mesh = app.world.spawn((
+            GlobalTransform3D::default(),
+            MeshInstance {
+                mesh: crate::BuiltinMesh::Cube,
+                color: [1.0, 1.0, 1.0],
+            },
+            StagedRender,
+        ));
+        let visible_mesh = app.world.spawn((
+            GlobalTransform3D::default(),
+            MeshInstance {
+                mesh: crate::BuiltinMesh::Cube,
+                color: [0.5, 0.5, 0.5],
+            },
+        ));
+        let mesh_data = Arc::new(crate::mesh::cube());
+        let staged_dynamic_mesh = app.world.spawn((
+            GlobalTransform3D::default(),
+            DynamicMeshInstance3D {
+                mesh: Arc::clone(&mesh_data),
+                color: [1.0, 0.0, 0.0],
+            },
+            StagedRender,
+        ));
+        let visible_dynamic_mesh = app.world.spawn((
+            GlobalTransform3D::default(),
+            DynamicMeshInstance3D {
+                mesh: mesh_data,
+                color: [0.0, 1.0, 0.0],
+            },
+        ));
+        let staged_model = app.world.spawn((
+            GlobalTransform3D::default(),
+            ModelInstance::default(),
+            StagedRender,
+        ));
+        let visible_model = app
+            .world
+            .spawn((GlobalTransform3D::default(), ModelInstance::default()));
+        let staged_spot_light = app.world.spawn((SpotLight::default(), StagedRender));
+        let visible_spot_light = app.world.spawn((SpotLight::default(),));
+        let staged_point_light = app.world.spawn((PointLight::default(), StagedRender));
+        let visible_point_light = app.world.spawn((PointLight::default(),));
+
+        extract_scene_3d(&mut app.world);
+        {
+            let extracted = app.world.resource::<ExtractedScene3D>();
+            assert_eq!(
+                extracted.camera.unwrap().transform.translation,
+                Vec3::new(7.0, 8.0, 9.0)
+            );
+            assert_eq!(extracted.meshes.len(), 1);
+            assert_eq!(extracted.meshes[0].color, [0.5, 0.5, 0.5]);
+            assert_eq!(extracted.dynamic_meshes.len(), 1);
+            assert_eq!(extracted.dynamic_meshes[0].color, [0.0, 1.0, 0.0]);
+            assert_eq!(extracted.models.len(), 1);
+            assert_eq!(extracted.spot_lights.len(), 1);
+            assert_eq!(extracted.point_lights.len(), 1);
+        }
+
+        for entity in [
+            staged_camera,
+            staged_mesh,
+            staged_dynamic_mesh,
+            staged_model,
+            staged_spot_light,
+            staged_point_light,
+        ] {
+            app.world.remove::<StagedRender>(entity).unwrap();
+        }
+        extract_scene_3d(&mut app.world);
+
+        let extracted = app.world.resource::<ExtractedScene3D>();
+        assert!(extracted.camera.is_some());
+        assert_eq!(extracted.meshes.len(), 2);
+        assert_eq!(extracted.dynamic_meshes.len(), 2);
+        assert_eq!(extracted.models.len(), 2);
+        assert_eq!(extracted.spot_lights.len(), 2);
+        assert_eq!(extracted.point_lights.len(), 2);
+        for entity in [
+            visible_camera,
+            visible_mesh,
+            visible_dynamic_mesh,
+            visible_model,
+            visible_spot_light,
+            visible_point_light,
+        ] {
+            assert!(app.world.contains(entity));
+        }
     }
 }

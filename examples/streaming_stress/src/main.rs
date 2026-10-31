@@ -26,6 +26,7 @@ pub(crate) struct Options {
     pub(crate) asset_root: PathBuf,
     pub(crate) output_dir: PathBuf,
     pub(crate) require_gpu: bool,
+    pub(crate) expect_gpu_pressure: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +51,7 @@ impl Default for Options {
             asset_root: PathBuf::from("target/streaming-stress-corpus"),
             output_dir: PathBuf::from("target/streaming-stress"),
             require_gpu: false,
+            expect_gpu_pressure: false,
         }
     }
 }
@@ -102,13 +104,14 @@ impl Options {
                     options.output_dir = PathBuf::from(value(&mut args, "--output-dir")?)
                 }
                 "--require-gpu" => options.require_gpu = true,
+                "--expect-gpu-pressure" => options.expect_gpu_pressure = true,
                 "--help" | "-h" => {
                     println!(
                         "ribbon_streaming_stress\n\n\
                          --mode headless|gpu         Run deterministic CPU streaming or real GPU window tests\n\
-                         --regions N                 Number of generated regions (2..=256)\n\
-                         --cycles N                  Number of forward/backward route cycles\n\
-                         --assets N                  Number of GLB assets in generated corpus\n\
+                         --regions N                 Number of generated regions (2..=512)\n\
+                         --cycles N                  Number of forward/backward route cycles (1..=20)\n\
+                         --assets N                  Number of GLB assets in generated corpus (2..=512)\n\
                          --asset-bytes-kib N         Headless decoded asset payload size per asset\n\
                          --frames-per-region N       GPU dwell frames for each route region\n\
                          --tail-frames N             GPU frames reserved for final unload/settle (48..=10000)\n\
@@ -117,24 +120,30 @@ impl Options {
                          --upload-budget-mib N       Estimated upload byte budget per frame\n\
                          --asset-root PATH           Generated GLB root\n\
                          --output-dir PATH           CSV/Markdown output folder\n\
-                         --require-gpu               Fail when no actual rendered GPU frames/uploads occur\n\n\
+                         --require-gpu               Fail when no actual rendered GPU frames/uploads occur\n\
+\
+                         --expect-gpu-pressure        Reject pinned overcommit and evict a READY GPU texture\n\
+\
                          Examples:\n\
                          cargo run -p ribbon_streaming_stress -- --mode headless --regions 96 --cycles 3\n\
-                         cargo run -p ribbon_streaming_stress --release -- --mode gpu --regions 48 --cycles 2 --asset-root target/streaming-stress-corpus --require-gpu"
+                         cargo run -p ribbon_streaming_stress --release -- --mode gpu --regions 48 --cycles 2 --asset-root target/streaming-stress-corpus --require-gpu --expect-gpu-pressure"
                     );
                     std::process::exit(0);
                 }
                 other => return Err(format!("unknown argument `{other}`; use --help").into()),
             }
         }
-        if !(2..=256).contains(&options.regions) {
-            return Err("--regions must be between 2 and 256".into());
+        if !(2..=512).contains(&options.regions) {
+            return Err("--regions must be between 2 and 512".into());
         }
-        if !(1..=10).contains(&options.cycles) {
-            return Err("--cycles must be between 1 and 10".into());
+        if !(1..=20).contains(&options.cycles) {
+            return Err("--cycles must be between 1 and 20".into());
         }
-        if !(2..=256).contains(&options.asset_count) {
-            return Err("--assets must be between 2 and 256".into());
+        if !(2..=512).contains(&options.asset_count) {
+            return Err("--assets must be between 2 and 512".into());
+        }
+        if options.expect_gpu_pressure && options.mode != Mode::Gpu {
+            return Err("--expect-gpu-pressure requires --mode gpu".into());
         }
         if options.asset_bytes_kib == 0 || options.asset_bytes_kib > 16 * 1024 {
             return Err("--asset-bytes-kib must be between 1 and 16384".into());

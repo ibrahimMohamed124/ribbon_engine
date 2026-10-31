@@ -12,10 +12,11 @@ mod scene_doc;
 
 pub use asset_adapters::{StreamingAssetAdapters, StreamingDependencyState};
 pub use coordinator::{
-    RegionCollider, RegionDefinition, RegionId, RegionModel, RegionPointLight, RegionPolicy,
-    RegionSnapshot, RegionState, SceneDefinition, SceneId, SceneSnapshot, SceneState,
-    StreamDiagnostics, StreamEvent, StreamObserver, StreamingConfig, StreamingCoordinator,
-    StreamingMemoryBudget, StreamingPlugin, StreamingSnapshot,
+    RegionActivationBreakdown, RegionCollider, RegionDefinition, RegionId, RegionLifecycleTiming,
+    RegionModel, RegionPointLight, RegionPolicy, RegionSnapshot, RegionState, SceneDefinition,
+    SceneId, SceneSnapshot, SceneState, StreamDiagnostics, StreamEvent, StreamObserver,
+    StreamingConfig, StreamingCoordinator, StreamingMemoryBudget, StreamingPlugin,
+    StreamingSnapshot,
 };
 pub use partition::{RegionBounds, WorldPartitionIndex};
 pub use partition_asset::{
