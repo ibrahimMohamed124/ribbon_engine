@@ -8,3 +8,7 @@ ribbon_app = { path = "../../crates/app" }
 ribbon_plugins = { path = "../../crates/plugins" }
 ribbon_ecs = { path = "../../crates/ecs" }
 ribbon_math = { path = "../../crates/math" }
+
+ribbon_assets = { path = "../../crates/assets" }
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.10"

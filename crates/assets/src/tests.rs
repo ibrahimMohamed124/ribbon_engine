@@ -72,6 +72,24 @@ fn memory_source_loads_typed_assets() {
 }
 
 #[test]
+fn aggregate_only_loaders_are_counted_as_other_cpu_memory() {
+    let source = MemorySource::default();
+    source.insert("ui/title.txt", b"Ribbon".to_vec());
+    let mut assets = AssetServer::default();
+    assets.add_source(0, source);
+    assets.register_loader(TextLoader);
+    let _handle = assets.load::<TextAsset>("ui/title.txt").unwrap();
+    let stats = assets.cpu_memory_stats();
+    assert_eq!(stats.loaded_assets, 1);
+    assert_eq!(stats.other_bytes_estimate, stats.resident_bytes_estimate);
+    assert_eq!(stats.geometry_bytes_estimate, 0);
+    assert_eq!(stats.texture_bytes_estimate, 0);
+    assert_eq!(stats.material_bytes_estimate, 0);
+    assert_eq!(stats.animation_bytes_estimate, 0);
+    assert_eq!(stats.scene_metadata_bytes_estimate, 0);
+}
+
+#[test]
 fn extensions_route_to_the_registered_loader() {
     let source = MemorySource::default();
     source.insert("data/level.bytes", vec![1, 2, 3]);
@@ -80,6 +98,32 @@ fn extensions_route_to_the_registered_loader() {
     assets.register_loader(BytesLoader);
     let handle = assets.load::<BytesAsset>("data/level.bytes").unwrap();
     assert_eq!(assets.get(handle), Some(&BytesAsset(vec![1, 2, 3])));
+}
+
+#[test]
+fn asynchronous_completion_preserves_memory_breakdown_from_the_loader() {
+    let source = MemorySource::default();
+    source.insert("streamed/title.txt", b"Ribbon async".to_vec());
+    let mut assets = AssetServer::default();
+    assets.add_source(0, source);
+    assets.register_loader(TextLoader);
+    let handle = assets.request::<TextAsset>("streamed/title.txt").unwrap();
+
+    for _ in 0..100_000 {
+        let _ = assets.poll_pending_loads();
+        if assets.get(handle).is_some() {
+            break;
+        }
+        std::thread::yield_now();
+    }
+
+    assert_eq!(
+        assets.get(handle),
+        Some(&TextAsset("Ribbon async".to_owned()))
+    );
+    let stats = assets.cpu_memory_stats();
+    assert_eq!(stats.loaded_assets, 1);
+    assert_eq!(stats.other_bytes_estimate, stats.resident_bytes_estimate);
 }
 
 #[test]

@@ -107,6 +107,7 @@ impl AssetServer {
                 let mut context = LoadContext { path: path.clone() };
                 let value = loader.load(&bytes, &mut context)?;
                 let estimated_size_bytes = loader.estimated_size_bytes(value.as_ref());
+                let memory_breakdown = loader.memory_breakdown(value.as_ref());
                 let value = value.downcast::<T>().map_err(|_| {
                     LoadError::new(
                         LoadErrorKind::TypeMismatch,
@@ -124,6 +125,7 @@ impl AssetServer {
                     entry.state = LoadState::Loaded;
                     entry.reload_pending = false;
                     entry.estimated_size_bytes = estimated_size_bytes;
+                    entry.memory_breakdown = memory_breakdown;
                     entry.load_sequence = load_sequence;
                 }
                 self.last_reload_errors.remove(&(id, generation));
@@ -287,12 +289,14 @@ impl AssetServer {
                         .map(|value| {
                             let estimated_size_bytes =
                                 request_loader.estimated_size_bytes(value.as_ref());
+                            let memory_breakdown = request_loader.memory_breakdown(value.as_ref());
                             DecodedAsset {
                                 loader: Arc::clone(&request_loader),
                                 value,
                                 source_id,
                                 modified,
                                 estimated_size_bytes,
+                                memory_breakdown,
                             }
                         });
                     decode_time_ns =
@@ -393,6 +397,7 @@ impl AssetServer {
                 entry.state = LoadState::Unloaded;
                 entry.reload_pending = false;
                 entry.estimated_size_bytes = 0;
+                entry.memory_breakdown = AssetMemoryBreakdown::default();
                 entry.load_sequence = 0;
             }
         }
@@ -521,12 +526,17 @@ impl AssetServer {
                 {
                     return handle;
                 }
-                let estimated_size_bytes = self
+                let fallback = &default as &(dyn Any + Send + Sync);
+                let loader = self
                     .loaders
                     .get(&extension_for(&path))
-                    .filter(|loader| loader.asset_type() == TypeId::of::<T>())
-                    .map(|loader| loader.estimated_size_bytes(&default as &(dyn Any + Send + Sync)))
+                    .filter(|loader| loader.asset_type() == TypeId::of::<T>());
+                let estimated_size_bytes = loader
+                    .map(|loader| loader.estimated_size_bytes(fallback))
                     .unwrap_or(std::mem::size_of_val(&default) as u64);
+                let memory_breakdown = loader
+                    .map(|loader| loader.memory_breakdown(fallback))
+                    .unwrap_or_else(|| AssetMemoryBreakdown::other(estimated_size_bytes));
                 self.storage_mut::<T>().insert(handle, default);
                 self.revisions.insert((id, generation), 1);
                 let load_sequence = self.allocate_load_sequence();
@@ -534,6 +544,7 @@ impl AssetServer {
                     entry.state = LoadState::Loaded;
                     entry.reload_pending = false;
                     entry.estimated_size_bytes = estimated_size_bytes;
+                    entry.memory_breakdown = memory_breakdown;
                     entry.load_sequence = load_sequence;
                 }
                 self.last_reload_errors.remove(&(id, generation));

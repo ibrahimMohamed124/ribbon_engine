@@ -6,7 +6,7 @@
 //! or embed the data.
 
 use glam::{Mat4, Vec3};
-use ribbon_assets::{AssetLoader, LoadContext, LoadError, LoadErrorKind};
+use ribbon_assets::{AssetLoader, AssetMemoryBreakdown, LoadContext, LoadError, LoadErrorKind};
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
@@ -127,6 +127,49 @@ impl ModelAsset {
             }
         }
         bytes
+    }
+
+    /// Categorize this model's decoded CPU residency using vector capacities. These are cache
+    /// estimates rather than allocator telemetry. The loader currently does not retain animation
+    /// clips, so animation residency is zero for this asset type.
+    pub fn memory_breakdown(&self) -> AssetMemoryBreakdown {
+        let mut breakdown = AssetMemoryBreakdown {
+            scene_metadata_bytes: (std::mem::size_of::<Self>() as u64)
+                .saturating_add(allocated_vec_bytes::<ModelNode>(self.nodes.capacity())),
+            ..AssetMemoryBreakdown::default()
+        };
+        breakdown.geometry_bytes = allocated_vec_bytes::<PrimitiveData>(self.primitives.capacity());
+        for primitive in &self.primitives {
+            breakdown.geometry_bytes = breakdown
+                .geometry_bytes
+                .saturating_add(allocated_vec_bytes::<[f32; 3]>(
+                    primitive.positions.capacity(),
+                ))
+                .saturating_add(allocated_vec_bytes::<[f32; 3]>(
+                    primitive.normals.capacity(),
+                ))
+                .saturating_add(allocated_vec_bytes::<[f32; 2]>(primitive.uvs.capacity()))
+                .saturating_add(allocated_vec_bytes::<u32>(primitive.indices.capacity()));
+        }
+        breakdown.material_bytes = allocated_vec_bytes::<MaterialData>(self.materials.capacity());
+        breakdown.texture_bytes = allocated_vec_bytes::<ImageData>(self.images.capacity());
+        for image in &self.images {
+            breakdown.texture_bytes = breakdown
+                .texture_bytes
+                .saturating_add(image.rgba8.capacity() as u64);
+            for levels in [&image.srgb_mips, &image.linear_mips].into_iter().flatten() {
+                breakdown.texture_bytes = breakdown.texture_bytes.saturating_add(
+                    (levels.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<(u32, u32, Vec<u8>)>() as u64),
+                );
+                for (_, _, pixels) in levels {
+                    breakdown.texture_bytes = breakdown
+                        .texture_bytes
+                        .saturating_add(pixels.capacity() as u64);
+                }
+            }
+        }
+        breakdown
     }
 
     /// Estimate bytes the current renderer upload path will submit for this model. This is a
@@ -276,6 +319,10 @@ impl AssetLoader for GltfLoader {
 
     fn estimated_size_bytes(&self, asset: &Self::Asset) -> u64 {
         asset.estimated_size_bytes()
+    }
+
+    fn memory_breakdown(&self, asset: &Self::Asset) -> AssetMemoryBreakdown {
+        asset.memory_breakdown()
     }
 }
 
@@ -656,6 +703,19 @@ mod tests {
         let (min, max) = model.bounds().expect("bounds");
         assert!(min.abs_diff_eq(Vec3::new(1.1, 0.1, -0.4), 1e-5), "{min}");
         assert!(max.abs_diff_eq(Vec3::new(1.9, 0.9, 0.4), 1e-5), "{max}");
+    }
+
+    #[test]
+    fn model_cpu_memory_breakdown_matches_total_capacity_estimate() {
+        let model = parse(CUBE).expect("cube parses");
+        let breakdown = model.memory_breakdown();
+        assert!(breakdown.geometry_bytes > 0);
+        assert!(breakdown.texture_bytes > 0);
+        assert!(breakdown.material_bytes > 0);
+        assert!(breakdown.scene_metadata_bytes > 0);
+        assert_eq!(breakdown.animation_bytes, 0);
+        assert_eq!(breakdown.other_bytes, 0);
+        assert_eq!(breakdown.total_bytes(), model.estimated_size_bytes());
     }
 
     #[test]

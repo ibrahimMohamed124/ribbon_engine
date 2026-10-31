@@ -106,6 +106,24 @@ impl AssetServer {
             stats.resident_bytes_estimate = stats
                 .resident_bytes_estimate
                 .saturating_add(entry.estimated_size_bytes);
+            stats.geometry_bytes_estimate = stats
+                .geometry_bytes_estimate
+                .saturating_add(entry.memory_breakdown.geometry_bytes);
+            stats.texture_bytes_estimate = stats
+                .texture_bytes_estimate
+                .saturating_add(entry.memory_breakdown.texture_bytes);
+            stats.material_bytes_estimate = stats
+                .material_bytes_estimate
+                .saturating_add(entry.memory_breakdown.material_bytes);
+            stats.animation_bytes_estimate = stats
+                .animation_bytes_estimate
+                .saturating_add(entry.memory_breakdown.animation_bytes);
+            stats.scene_metadata_bytes_estimate = stats
+                .scene_metadata_bytes_estimate
+                .saturating_add(entry.memory_breakdown.scene_metadata_bytes);
+            stats.other_bytes_estimate = stats
+                .other_bytes_estimate
+                .saturating_add(entry.memory_breakdown.other_bytes);
             // If lease accounting is poisoned, conservatively classify the value as pinned.
             let lease_count = counts
                 .and_then(|counts| counts.get(&(entry.id, entry.generation)).copied())

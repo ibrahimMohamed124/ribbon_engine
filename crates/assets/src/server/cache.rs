@@ -86,6 +86,7 @@ impl AssetServer {
                     source_id,
                     modified,
                     estimated_size_bytes,
+                    memory_breakdown,
                 } = decoded;
                 if loader.asset_type() != completion.type_id {
                     return Err(LoadError::new(
@@ -101,11 +102,11 @@ impl AssetServer {
                         completion.generation,
                         value,
                     )
-                    .map(|()| (source_id, modified, estimated_size_bytes))
+                    .map(|()| (source_id, modified, estimated_size_bytes, memory_breakdown))
             });
 
             match result {
-                Ok((source_id, modified, estimated_size_bytes)) => {
+                Ok((source_id, modified, estimated_size_bytes, memory_breakdown)) => {
                     let load_sequence = self.allocate_load_sequence();
                     if let Some(entry) = self.paths.get_mut(&key) {
                         entry.source_id = Some(source_id);
@@ -113,6 +114,7 @@ impl AssetServer {
                         entry.state = LoadState::Loaded;
                         entry.reload_pending = false;
                         entry.estimated_size_bytes = estimated_size_bytes;
+                        entry.memory_breakdown = memory_breakdown;
                         entry.load_sequence = load_sequence;
                     }
                     let revision = self
@@ -205,6 +207,7 @@ impl AssetServer {
                     entry.modified = None;
                     entry.reload_pending = false;
                     entry.estimated_size_bytes = 0;
+                    entry.memory_breakdown = AssetMemoryBreakdown::default();
                     entry.load_sequence = 0;
                     self.revisions.remove(&(id, generation));
                     self.pending_events.push(AssetEvent::Unloaded {
@@ -294,6 +297,7 @@ impl AssetServer {
                 entry.modified = None;
                 entry.reload_pending = false;
                 entry.estimated_size_bytes = 0;
+                entry.memory_breakdown = AssetMemoryBreakdown::default();
                 entry.load_sequence = 0;
             }
             self.revisions.remove(&(id, generation));

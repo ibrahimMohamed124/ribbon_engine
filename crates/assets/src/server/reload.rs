@@ -69,31 +69,34 @@ impl AssetServer {
                             loader.load(&bytes, &mut context).map(|asset| {
                                 let estimated_size_bytes =
                                     loader.estimated_size_bytes(asset.as_ref());
-                                (loader, asset, estimated_size_bytes)
+                                let memory_breakdown = loader.memory_breakdown(asset.as_ref());
+                                (loader, asset, estimated_size_bytes, memory_breakdown)
                             })
                         }),
                     Err(error) => Err(LoadError::new(LoadErrorKind::Io, &path, error.to_string())),
                 };
-                let result = decoded.and_then(|(loader, asset, estimated_size_bytes)| {
-                    if loader.asset_type() != type_id {
-                        return Err(LoadError::new(
-                            LoadErrorKind::TypeMismatch,
-                            &path,
-                            "reloaded value has a different asset type",
-                        ));
-                    }
-                    loader
-                        .store(&mut self.assets, id, generation, asset)
-                        .map(|()| estimated_size_bytes)
-                });
+                let result =
+                    decoded.and_then(|(loader, asset, estimated_size_bytes, memory_breakdown)| {
+                        if loader.asset_type() != type_id {
+                            return Err(LoadError::new(
+                                LoadErrorKind::TypeMismatch,
+                                &path,
+                                "reloaded value has a different asset type",
+                            ));
+                        }
+                        loader
+                            .store(&mut self.assets, id, generation, asset)
+                            .map(|()| (estimated_size_bytes, memory_breakdown))
+                    });
                 match result {
-                    Ok(estimated_size_bytes) => {
+                    Ok((estimated_size_bytes, memory_breakdown)) => {
                         let load_sequence = self.allocate_load_sequence();
                         if let Some(entry) = self.paths.get_mut(&(type_id, path.clone())) {
                             entry.modified = modified;
                             entry.state = LoadState::Loaded;
                             entry.reload_pending = false;
                             entry.estimated_size_bytes = estimated_size_bytes;
+                            entry.memory_breakdown = memory_breakdown;
                             entry.load_sequence = load_sequence;
                         }
                         let revision = self.revisions.entry((id, generation)).or_insert(1);
@@ -300,12 +303,15 @@ impl AssetServer {
                                 .map(|value| {
                                     let estimated_size_bytes =
                                         request_loader.estimated_size_bytes(value.as_ref());
+                                    let memory_breakdown =
+                                        request_loader.memory_breakdown(value.as_ref());
                                     DecodedAsset {
                                         loader: Arc::clone(&request_loader),
                                         value,
                                         source_id: request_source.id,
                                         modified: modified_after,
                                         estimated_size_bytes,
+                                        memory_breakdown,
                                     }
                                 });
                             decode_time_ns =

@@ -23,6 +23,7 @@ impl AssetServer {
                 entry.state = LoadState::Loading;
                 entry.reload_pending = false;
                 entry.estimated_size_bytes = 0;
+                entry.memory_breakdown = AssetMemoryBreakdown::default();
                 entry.load_sequence = 0;
                 entry.cancellation = CancellationToken::default();
             }
@@ -47,6 +48,7 @@ impl AssetServer {
                 reload_pending: false,
                 reload_token: 0,
                 estimated_size_bytes: 0,
+                memory_breakdown: AssetMemoryBreakdown::default(),
                 load_sequence: 0,
                 priority: 0,
                 cancellation: CancellationToken::default(),

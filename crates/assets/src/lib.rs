@@ -360,6 +360,44 @@ pub struct LoadContext {
     pub path: String,
 }
 
+/// Estimated decoded CPU residency split into content categories understood by the engine.
+/// These values are estimates supplied by loaders, not allocator or operating-system telemetry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AssetMemoryBreakdown {
+    /// CPU bytes retained by vertex/index/geometry payloads.
+    pub geometry_bytes: u64,
+    /// CPU bytes retained by decoded image pixels and mip payloads.
+    pub texture_bytes: u64,
+    /// CPU bytes retained by material records and material-specific data.
+    pub material_bytes: u64,
+    /// CPU bytes retained by animation clips, tracks, and frame data.
+    pub animation_bytes: u64,
+    /// CPU bytes retained by scene descriptions, node hierarchy, and metadata.
+    pub scene_metadata_bytes: u64,
+    /// CPU bytes not classified into a more specific category.
+    pub other_bytes: u64,
+}
+
+impl AssetMemoryBreakdown {
+    /// Total estimate across all categories.
+    pub fn total_bytes(self) -> u64 {
+        self.geometry_bytes
+            .saturating_add(self.texture_bytes)
+            .saturating_add(self.material_bytes)
+            .saturating_add(self.animation_bytes)
+            .saturating_add(self.scene_metadata_bytes)
+            .saturating_add(self.other_bytes)
+    }
+
+    /// Put an aggregate-only loader estimate into the miscellaneous category.
+    pub fn other(bytes: u64) -> Self {
+        Self {
+            other_bytes: bytes,
+            ..Self::default()
+        }
+    }
+}
+
 /// Extension-based asset decoder. Implementations should perform CPU decoding only; GPU device
 /// resources must be created later on the owning renderer thread.
 pub trait AssetLoader: Send + Sync + 'static {
@@ -390,6 +428,13 @@ pub trait AssetLoader: Send + Sync + 'static {
     fn estimated_size_bytes(&self, _asset: &Self::Asset) -> u64 {
         std::mem::size_of::<Self::Asset>() as u64
     }
+    /// Categorize the decoded bytes used by this asset. Aggregate-only loaders remain compatible
+    /// and are counted as `other`; specialized loaders can report geometry, texture, material,
+    /// animation, and scene metadata separately. The categories must sum to the same or a more
+    /// complete estimate than `estimated_size_bytes`.
+    fn memory_breakdown(&self, asset: &Self::Asset) -> AssetMemoryBreakdown {
+        AssetMemoryBreakdown::other(self.estimated_size_bytes(asset))
+    }
 }
 
 type ErasedAssetMap = HashMap<TypeId, Box<dyn Any + Send + Sync>>;
@@ -409,6 +454,7 @@ trait ErasedLoader: Send + Sync {
         cancellation: &CancellationToken,
     ) -> Result<Box<dyn Any + Send + Sync>, LoadError>;
     fn estimated_size_bytes(&self, value: &(dyn Any + Send + Sync)) -> u64;
+    fn memory_breakdown(&self, value: &(dyn Any + Send + Sync)) -> AssetMemoryBreakdown;
     fn store(
         &self,
         assets: &mut ErasedAssetMap,
@@ -451,6 +497,21 @@ impl<L: AssetLoader> ErasedLoader for LoaderAdapter<L> {
             .downcast_ref::<L::Asset>()
             .map(|asset| self.0.estimated_size_bytes(asset))
             .unwrap_or(std::mem::size_of::<L::Asset>() as u64)
+    }
+
+    fn memory_breakdown(&self, value: &(dyn Any + Send + Sync)) -> AssetMemoryBreakdown {
+        let Some(asset) = value.downcast_ref::<L::Asset>() else {
+            return AssetMemoryBreakdown::other(std::mem::size_of::<L::Asset>() as u64);
+        };
+        let mut breakdown = self.0.memory_breakdown(asset);
+        let estimated = self.0.estimated_size_bytes(asset);
+        let classified = breakdown.total_bytes();
+        if classified < estimated {
+            breakdown.other_bytes = breakdown
+                .other_bytes
+                .saturating_add(estimated.saturating_sub(classified));
+        }
+        breakdown
     }
 
     fn store(
@@ -504,6 +565,7 @@ struct PathEntry {
     reload_pending: bool,
     reload_token: u64,
     estimated_size_bytes: u64,
+    memory_breakdown: AssetMemoryBreakdown,
     load_sequence: u64,
     priority: i32,
     cancellation: CancellationToken,
@@ -520,6 +582,19 @@ pub struct AssetMemoryStats {
     pub loaded_assets: usize,
     /// Resident CPU bytes across both leased and unleased values.
     pub resident_bytes_estimate: u64,
+    /// Categorized resident CPU estimates across the current cache.
+    /// Estimated geometry bytes across resident cache entries.
+    pub geometry_bytes_estimate: u64,
+    /// Estimated decoded texture bytes across resident cache entries.
+    pub texture_bytes_estimate: u64,
+    /// Estimated material bytes across resident cache entries.
+    pub material_bytes_estimate: u64,
+    /// Estimated animation bytes across resident cache entries.
+    pub animation_bytes_estimate: u64,
+    /// Estimated scene metadata bytes across resident cache entries.
+    pub scene_metadata_bytes_estimate: u64,
+    /// Estimated unclassified bytes across resident cache entries.
+    pub other_bytes_estimate: u64,
     /// Resident CPU bytes protected by at least one strong lease.
     pub pinned_bytes_estimate: u64,
     /// Resident CPU bytes that are eligible for cache eviction.
@@ -605,6 +680,7 @@ struct DecodedAsset {
     source_id: u64,
     modified: Option<SystemTime>,
     estimated_size_bytes: u64,
+    memory_breakdown: AssetMemoryBreakdown,
 }
 
 #[derive(Clone)]
