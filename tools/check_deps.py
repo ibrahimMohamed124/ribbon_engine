@@ -29,18 +29,41 @@ def package_layer(manifest_path: str) -> str | None:
     return None
 
 
-def layer_edge_error(source_layer: str, dependency_layer: str) -> str | None:
+def package_owner(manifest_path: str) -> str | None:
+    """Return the game owner for packages under games/<game>/... ."""
+    try:
+        relative = Path(manifest_path).resolve().relative_to(ROOT)
+    except ValueError:
+        return None
+    if len(relative.parts) >= 2 and relative.parts[0] == "games":
+        return relative.parts[1]
+    return None
+
+
+def layer_edge_error(
+    source_layer: str,
+    dependency_layer: str,
+    source_owner: str | None = None,
+    dependency_owner: str | None = None,
+) -> str | None:
     """Return a reason when a workspace dependency points upward or sideways illegally."""
     if dependency_layer == "games":
-        return "engine packages, plugins, examples, and games may not depend on game packages"
+        same_game = (
+            source_layer == "games"
+            and source_owner is not None
+            and source_owner == dependency_owner
+        )
+        if same_game:
+            return None
+        return "engine/example packages and other games may not depend on game-owned packages"
     if source_layer == "crates" and dependency_layer != "crates":
         return "engine crates may depend only on other engine crates"
     if source_layer == "plugins" and dependency_layer not in {"crates", "plugins"}:
         return "plugins may depend only on engine crates or other plugins"
     if source_layer == "examples" and dependency_layer not in {"crates", "plugins"}:
         return "examples may depend only on engine crates or reusable plugins"
-    if source_layer == "games" and dependency_layer not in {"crates", "plugins"}:
-        return "games may depend only on engine crates or reusable plugins"
+    if source_layer == "games" and dependency_layer not in {"crates", "plugins", "games"}:
+        return "game packages may depend only on engine APIs and packages owned by the same game"
     return None
 
 
@@ -61,6 +84,7 @@ def main() -> int:
 
     names = {package["name"] for package in packages}
     layers = {package["name"]: package_layer(package["manifest_path"]) for package in packages}
+    owners = {package["name"]: package_owner(package["manifest_path"]) for package in packages}
     failed = False
     for package in packages:
         name = package["name"]
@@ -92,7 +116,9 @@ def main() -> int:
             if package_name in names:
                 dependency_layer = layers.get(package_name)
                 if source_layer is not None and dependency_layer is not None:
-                    reason = layer_edge_error(source_layer, dependency_layer)
+                    reason = layer_edge_error(
+                        source_layer, dependency_layer, owners.get(name), owners.get(package_name)
+                    )
                     if reason is not None:
                         print(f"forbidden layer edge: {name} -> {package_name}: {reason}")
                         failed = True
