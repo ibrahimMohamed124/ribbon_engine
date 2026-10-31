@@ -4,7 +4,7 @@
 > descriptions into new code. The temporary `studs_cpu_renderer::gpu::voxel` renderer and its
 > CPU/GPU parity test documented later in this file have since been deleted; those old hashes and
 > commands are historical only and do not describe the current mesh renderer. The supported architecture
-> is documented in [`ARCHITECTURE.md`](../../ARCHITECTURE.md).
+> is documented in [`ARCHITECTURE.md`](../architecture/ARCHITECTURE.md).
 
 # Legacy architecture (pre-Phase 9)
 

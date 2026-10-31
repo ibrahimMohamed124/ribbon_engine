@@ -1,7 +1,7 @@
 # Contributing
 
 Keep reusable engine code and game-specific code in their respective layers.
-[ARCHITECTURE.md](ARCHITECTURE.md) describes the layers; the rules below are the short form.
+[architecture guide](../architecture/ARCHITECTURE.md) describes the layers; the rules below are the short form.
 
 ## Where code goes
 

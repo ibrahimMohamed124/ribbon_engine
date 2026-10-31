@@ -54,7 +54,7 @@ This is a targeted, screenshot-driven correction, not a visual acceptance claim.
 - `tools/horror_room_assets.py`, `tools/make_test_models.py`, `tools/fetch_horror_textures.py`.
 - `plugins/render3d/src/components.rs`, `extract.rs`, `renderer.rs`, `model.rs`, `post.rs`, `lib.rs`, `offscreen.rs`, and WGSL mesh/shadow/bloom/tone-map shaders.
 - `plugins/gltf/src/lib.rs` (normal, occlusion and emissive material map extraction).
-- `tools/allowed_deps.toml`, `ARCHITECTURE.md`, `README.md`, `docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md` and this report.
+- `tools/allowed_deps.toml`, `../architecture/ARCHITECTURE.md`, `../guides/PROJECT_OVERVIEW.md`, `docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md` and this report.
 
 No code was added under the legacy `engine/` directory and no Engine crate depends on the example or a game. STUDS golden constants and golden expectations were not altered by this pass.
 

@@ -134,7 +134,7 @@ workspace.
 See `docs/decisions/0000-legacy-decision-log.md` for legacy choices retained where the refactor plan left behavior unspecified,
 `docs/architecture/SCALABILITY_ROADMAP.md` for future scaling work, `docs/history/ARCHITECTURE_REFACTOR_CLOSEOUT.md`
 for the cleanup/verification record, `docs/history/PHASE9.md` for the legacy-tree retirement record, and
-`docs/history/LEGACY_ARCHITECTURE.md` for historical renderer-migration verification results.
+[`LEGACY_ARCHITECTURE.md`](../history/LEGACY_ARCHITECTURE.md) for historical renderer-migration verification results.
 
 
 ## 3D Rendering
@@ -142,3 +142,4 @@ for the cleanup/verification record, `docs/history/PHASE9.md` for the legacy-tre
 - The mesh renderer uses `GpuWindowPlugin` for direct native wgpu-surface presentation. The GPU window builds a `RenderGraph` chain for surface clearing, registered `FramePass` instances, and final presentation ordering. `Render3dPlugin` extracts camera, global mesh/model transforms, and sunlight into `ExtractedScene3D` during `PostUpdate`; its frame pass consumes that snapshot during GPU submission.
 - `ribbon_plugin_render3d` currently includes a first Cook-Torrance/GGX metallic-roughness shader, a directional shadow-depth pass, a `Rgba16Float` HDR target and Reinhard tone mapping. It samples glTF base-color and packed metallic-roughness textures. Frustum culling applies to the color pass while off-screen models remain eligible for shadow casting. Cascaded/soft shadows, normal/occlusion/emissive maps, alpha modes, AO, bloom, fog, IBL and GPU culling remain unimplemented.
 - `studs_voxel::greedy_mesh_chunk` in the STUDS-owned crate creates material-grouped surface meshes with cross-chunk face culling and converts Z-up voxel coordinates to Y-up mesh coordinates. `games/studs/showcases/voxel_mesh_showcase` proves this path through the public mesh renderer; STUDS GPU mode uses the game-owned `studs_voxel_gpu::OffscreenVoxelRenderer`; its CPU raycaster remains a reference/fallback.
+
