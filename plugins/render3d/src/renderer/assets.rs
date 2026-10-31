@@ -100,7 +100,7 @@ impl MeshRenderer {
         label: &'static str,
         srgb: bool,
     ) -> TextureId {
-        let texture = self.upload_cached_texture(device, queue, source, label, srgb);
+        let texture = self.upload_cached_texture(device, queue, source, label, srgb, None);
         let id = if let Some(index) = self.free_texture_slots.pop() {
             let slot = &mut self.textures[index];
             slot.generation = slot.generation.wrapping_add(1).max(1);
@@ -410,6 +410,7 @@ impl MeshRenderer {
         source: TextureData<'_>,
         label: &'static str,
         srgb: bool,
+        prepared_mips: Option<&[(u32, u32, Vec<u8>)]>,
     ) -> Arc<GpuTexture> {
         let key = texture_cache_key(source, srgb);
         if let Some(texture) = self.texture_cache.get(&key).and_then(Weak::upgrade) {
@@ -423,7 +424,8 @@ impl MeshRenderer {
             self.texture_cache
                 .retain(|_, texture| texture.strong_count() > 0);
         }
-        let (texture, view) = upload_rgba_texture(device, queue, source, label, srgb);
+        let (texture, view) =
+            upload_rgba_texture(device, queue, source, label, srgb, prepared_mips);
         let shared = Arc::new(GpuTexture {
             _texture: texture,
             view,
@@ -439,6 +441,21 @@ impl MeshRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         material: PbrMaterialDesc<'_>,
+    ) -> MaterialId {
+        self.upload_pbr_material_with_precomputed_mips(
+            device,
+            queue,
+            material,
+            PbrMaterialMipmaps::default(),
+        )
+    }
+
+    pub(crate) fn upload_pbr_material_with_precomputed_mips(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        material: PbrMaterialDesc<'_>,
+        mipmaps: PbrMaterialMipmaps<'_>,
     ) -> MaterialId {
         let PbrMaterialDesc {
             base_color,
@@ -461,6 +478,7 @@ impl MeshRenderer {
             base_source,
             "material sRGB base color",
             true,
+            mipmaps.base_color,
         );
         // Metallic and roughness values are linear data, not sRGB colors.
         let surface_texture = self.upload_cached_texture(
@@ -469,6 +487,7 @@ impl MeshRenderer {
             surface_source,
             "material metallic roughness map",
             false,
+            mipmaps.metallic_roughness,
         );
         let flat_normal = [128_u8, 128, 255, 255];
         let white_occlusion = [255_u8; 4];
@@ -477,14 +496,21 @@ impl MeshRenderer {
         let normal_source = valid_texture(normal_texture, &flat_normal);
         let occlusion_source = valid_texture(occlusion_texture, &white_occlusion);
         let emissive_source = valid_texture(emissive_texture, &white_emissive);
-        let normal_gpu_texture =
-            self.upload_cached_texture(device, queue, normal_source, "material normal map", false);
+        let normal_gpu_texture = self.upload_cached_texture(
+            device,
+            queue,
+            normal_source,
+            "material normal map",
+            false,
+            mipmaps.normal,
+        );
         let occlusion_gpu_texture = self.upload_cached_texture(
             device,
             queue,
             occlusion_source,
             "material ambient occlusion map",
             false,
+            mipmaps.occlusion,
         );
         let emissive_gpu_texture = self.upload_cached_texture(
             device,
@@ -492,6 +518,7 @@ impl MeshRenderer {
             emissive_source,
             "material emissive map",
             true,
+            mipmaps.emissive,
         );
         let factors = MaterialUniform {
             base_color,

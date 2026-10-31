@@ -36,6 +36,7 @@ members = [
   "examples/gpu_window",
   "examples/cube_spin",
   "examples/model_viewer",
+  "examples/streaming_stress",
   "games/athar",
   "games/studs",
   "games/studs/tools/bake_sprites",

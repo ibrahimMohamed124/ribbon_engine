@@ -9,7 +9,7 @@ use ribbon_render::profiling::RenderPassTiming;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Instant;
 use wgpu::util::DeviceExt;
 
@@ -113,7 +113,15 @@ pub struct TextureData<'a> {
 }
 
 /// Parameters and optional texture maps for a metallic-roughness material.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PbrMaterialMipmaps<'a> {
+    pub(crate) base_color: Option<&'a [(u32, u32, Vec<u8>)]>,
+    pub(crate) metallic_roughness: Option<&'a [(u32, u32, Vec<u8>)]>,
+    pub(crate) normal: Option<&'a [(u32, u32, Vec<u8>)]>,
+    pub(crate) occlusion: Option<&'a [(u32, u32, Vec<u8>)]>,
+    pub(crate) emissive: Option<&'a [(u32, u32, Vec<u8>)]>,
+}
+
 pub struct PbrMaterialDesc<'a> {
     /// Linear RGBA base-color factor.
     pub base_color: [f32; 4],
@@ -446,8 +454,33 @@ fn linear_to_srgb(value: f32) -> u8 {
     (s * 255.0).round() as u8
 }
 
+const SRGB_MIP_LUT_STEPS: usize = 16_384;
+
+struct SrgbMipLookup {
+    to_linear: [f32; 256],
+    to_srgb: Box<[u8]>,
+}
+
+fn srgb_mip_lookup() -> &'static SrgbMipLookup {
+    static LOOKUP: OnceLock<SrgbMipLookup> = OnceLock::new();
+    LOOKUP.get_or_init(|| SrgbMipLookup {
+        to_linear: std::array::from_fn(|value| srgb_to_linear(value as u8)),
+        // Quantizing linear values to 1/16384 keeps the encoded result within a fraction of
+        // one 8-bit sRGB step while avoiding hundreds of thousands of powf calls per mip chain.
+        to_srgb: (0..=SRGB_MIP_LUT_STEPS)
+            .map(|value| linear_to_srgb(value as f32 / SRGB_MIP_LUT_STEPS as f32))
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    })
+}
+
 /// Box-filter mip chain (level 0 first). Color is averaged in linear light.
+///
+/// The conversion tables are initialized once and then reused by all texture uploads. This
+/// keeps expensive transfer-function exponentials out of the render-thread hot path while
+/// preserving linear-light filtering and 8-bit output precision.
 pub fn build_mips(width: u32, height: u32, rgba8: &[u8]) -> Vec<(u32, u32, Vec<u8>)> {
+    let lookup = srgb_mip_lookup();
     let mut levels = vec![(width, height, rgba8.to_vec())];
     while let Some((w, h, previous)) = levels.last() {
         if *w == 1 && *h == 1 {
@@ -459,18 +492,23 @@ pub fn build_mips(width: u32, height: u32, rgba8: &[u8]) -> Vec<(u32, u32, Vec<u
         for y in 0..nh {
             for x in 0..nw {
                 let mut color = [0.0_f32; 3];
-                let mut alpha = 0.0_f32;
+                let mut alpha = 0_u32;
                 for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                     let sx = (x * 2 + dx).min(w - 1);
                     let sy = (y * 2 + dy).min(h - 1);
                     let at = ((sy * w + sx) * 4) as usize;
                     for (channel, sum) in color.iter_mut().enumerate() {
-                        *sum += srgb_to_linear(previous[at + channel]);
+                        *sum += lookup.to_linear[previous[at + channel] as usize];
                     }
-                    alpha += f32::from(previous[at + 3]);
+                    alpha += u32::from(previous[at + 3]);
                 }
-                next.extend(color.map(|sum| linear_to_srgb(sum / 4.0)));
-                next.push((alpha / 4.0).round() as u8);
+                for linear_sum in color {
+                    let linear_average = (linear_sum * 0.25).clamp(0.0, 1.0);
+                    let lookup_index =
+                        (linear_average * SRGB_MIP_LUT_STEPS as f32).round() as usize;
+                    next.push(lookup.to_srgb[lookup_index.min(SRGB_MIP_LUT_STEPS)]);
+                }
+                next.push(((alpha + 2) / 4) as u8);
             }
         }
         levels.push((nw, nh, next));
@@ -523,9 +561,9 @@ fn texture_cache_key(source: TextureData<'_>, srgb: bool) -> TextureCacheKey {
     source.height.hash(&mut second);
     srgb.hash(&mut second);
     source.rgba8.len().hash(&mut second);
-    for byte in source.rgba8.iter().rev() {
-        byte.hash(&mut second);
-    }
+    // `Hasher::write` processes the slice in bulk. Hashing every byte as a separate `Hash`
+    // invocation caused a million tiny hasher calls for a 512x512 RGBA texture.
+    second.write(source.rgba8);
 
     TextureCacheKey {
         width: source.width,
@@ -541,12 +579,23 @@ fn upload_rgba_texture(
     source: TextureData<'_>,
     label: &'static str,
     srgb: bool,
+    prepared_mips: Option<&[(u32, u32, Vec<u8>)]>,
 ) -> (wgpu::Texture, wgpu::TextureView) {
-    let levels = if srgb {
-        build_mips(source.width, source.height, source.rgba8)
-    } else {
-        build_data_mips(source.width, source.height, source.rgba8)
-    };
+    // glTF texture mip levels are prepared by the AssetServer decode worker. Standalone callers
+    // retain the compatibility path that builds their mip chain here on the render thread.
+    let generated_mips = prepared_mips.is_none().then(|| {
+        if srgb {
+            build_mips(source.width, source.height, source.rgba8)
+        } else {
+            build_data_mips(source.width, source.height, source.rgba8)
+        }
+    });
+    let mipmaps = prepared_mips.unwrap_or_else(|| {
+        generated_mips
+            .as_deref()
+            .and_then(|levels| levels.get(1..))
+            .unwrap_or(&[])
+    });
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -554,7 +603,7 @@ fn upload_rgba_texture(
             height: source.height,
             depth_or_array_layers: 1,
         },
-        mip_level_count: levels.len() as u32,
+        mip_level_count: (mipmaps.len() + 1) as u32,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: if srgb {
@@ -565,11 +614,30 @@ fn upload_rgba_texture(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    for (level, (width, height, pixels)) in levels.iter().enumerate() {
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        source.rgba8,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(source.width * 4),
+            rows_per_image: Some(source.height),
+        },
+        wgpu::Extent3d {
+            width: source.width,
+            height: source.height,
+            depth_or_array_layers: 1,
+        },
+    );
+    for (index, (width, height, pixels)) in mipmaps.iter().enumerate() {
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
-                mip_level: level as u32,
+                mip_level: index as u32 + 1,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },

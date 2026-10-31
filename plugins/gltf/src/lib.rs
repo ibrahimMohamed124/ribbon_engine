@@ -7,7 +7,8 @@
 
 use glam::{Mat4, Vec3};
 use ribbon_assets::{AssetLoader, LoadContext, LoadError, LoadErrorKind};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 /// Indexed triangle geometry with per-vertex normals and first UV set.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,6 +59,12 @@ pub struct ImageData {
     pub height: u32,
     /// Tightly packed RGBA8 pixels, row-major from the top-left.
     pub rgba8: Vec<u8>,
+    /// Mip levels prepared during AssetServer decoding for sRGB material roles.
+    /// Level zero is omitted because it is already stored in `rgba8`.
+    pub srgb_mips: Option<Vec<(u32, u32, Vec<u8>)>>,
+    /// Mip levels prepared during AssetServer decoding for linear-data material roles.
+    /// Level zero is omitted because it is already stored in `rgba8`.
+    pub linear_mips: Option<Vec<(u32, u32, Vec<u8>)>>,
 }
 
 /// One primitive placed in model space by the node hierarchy.
@@ -109,14 +116,23 @@ impl ModelAsset {
         }
         for image in &self.images {
             bytes = bytes.saturating_add(image.rgba8.capacity() as u64);
+            for levels in [&image.srgb_mips, &image.linear_mips].into_iter().flatten() {
+                bytes = bytes.saturating_add(
+                    (levels.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<(u32, u32, Vec<u8>)>() as u64),
+                );
+                for (_, _, pixels) in levels {
+                    bytes = bytes.saturating_add(pixels.capacity() as u64);
+                }
+            }
         }
         bytes
     }
 
     /// Estimate bytes the current renderer upload path will submit for this model. This is a
     /// pacing estimate, not driver VRAM telemetry. It includes unique placed primitive vertex/
-    /// index buffers, referenced material records, and referenced image base levels plus a
-    /// conservative one-third allowance for generated mip levels.
+    /// index buffers, referenced material records, and each unique image transfer-function
+    /// variant with its actual prepared mip byte count when available.
     pub fn estimated_gpu_upload_bytes(&self) -> u64 {
         let mut bytes = 0_u64;
         let used_primitives: std::collections::HashSet<usize> =
@@ -133,8 +149,9 @@ impl ModelAsset {
                 (primitive.indices.len() as u64).saturating_mul(std::mem::size_of::<u32>() as u64),
             );
         }
+
         let mut used_materials = std::collections::HashSet::new();
-        let mut used_images = std::collections::HashSet::new();
+        let mut used_images: HashMap<usize, (bool, bool)> = HashMap::new();
         for node in &self.nodes {
             let Some(primitive) = self.primitives.get(node.primitive) else {
                 continue;
@@ -148,30 +165,48 @@ impl ModelAsset {
             let Some(material) = self.materials.get(material_index) else {
                 continue;
             };
-            // The current renderer creates one compact uniform per used material. Its texture
-            // cache key includes the transfer function, so a source image used both as sRGB and
-            // linear data can consume two GPU allocations and is counted twice here.
+            // The renderer creates one compact uniform per used material. Its texture cache key
+            // includes the transfer function, so a source image used both as sRGB and linear data
+            // may consume two GPU allocations, while repeated uses within one role are shared.
             bytes = bytes.saturating_add(256);
-            for image_index in material
-                .base_color_texture
+            for image_index in [material.base_color_texture, material.emissive_texture]
                 .into_iter()
-                .chain(material.emissive_texture)
+                .flatten()
             {
-                used_images.insert((image_index, true));
+                used_images.entry(image_index).or_default().0 = true;
             }
-            for image_index in material
-                .metallic_roughness_texture
-                .into_iter()
-                .chain(material.normal_texture)
-                .chain(material.occlusion_texture)
+            for image_index in [
+                material.metallic_roughness_texture,
+                material.normal_texture,
+                material.occlusion_texture,
+            ]
+            .into_iter()
+            .flatten()
             {
-                used_images.insert((image_index, false));
+                used_images.entry(image_index).or_default().1 = true;
             }
         }
-        for (index, _is_srgb) in used_images {
-            if let Some(image) = self.images.get(index) {
-                let base = image.rgba8.len() as u64;
-                bytes = bytes.saturating_add(base.saturating_add(base / 3));
+
+        for (index, (uses_srgb, uses_linear)) in used_images {
+            let Some(image) = self.images.get(index) else {
+                continue;
+            };
+            let base_bytes = image.rgba8.len() as u64;
+            if uses_srgb {
+                bytes = bytes.saturating_add(base_bytes);
+                bytes = bytes.saturating_add(estimated_mip_upload_bytes(
+                    image.width,
+                    image.height,
+                    image.srgb_mips.as_deref(),
+                ));
+            }
+            if uses_linear {
+                bytes = bytes.saturating_add(base_bytes);
+                bytes = bytes.saturating_add(estimated_mip_upload_bytes(
+                    image.width,
+                    image.height,
+                    image.linear_mips.as_deref(),
+                ));
             }
         }
         bytes
@@ -190,6 +225,34 @@ impl ModelAsset {
         }
         (min.x <= max.x).then_some((min, max))
     }
+}
+
+fn estimated_mip_upload_bytes(
+    base_width: u32,
+    base_height: u32,
+    levels: Option<&[(u32, u32, Vec<u8>)]>,
+) -> u64 {
+    if let Some(levels) = levels {
+        return levels.iter().fold(0_u64, |total, (_, _, pixels)| {
+            total.saturating_add(pixels.len() as u64)
+        });
+    }
+
+    // A caller-created ModelAsset can omit precomputed levels; match the renderer compatibility
+    // path exactly rather than charging a blanket one-third for 1x1 or odd-sized textures.
+    let mut width = base_width;
+    let mut height = base_height;
+    let mut bytes = 0_u64;
+    while width > 1 || height > 1 {
+        width = (width / 2).max(1);
+        height = (height / 2).max(1);
+        bytes = bytes.saturating_add(
+            u64::from(width)
+                .saturating_mul(u64::from(height))
+                .saturating_mul(4),
+        );
+    }
+    bytes
 }
 
 fn allocated_vec_bytes<T>(capacity: usize) -> u64 {
@@ -258,7 +321,157 @@ pub fn parse(bytes: &[u8]) -> Result<ModelAsset, String> {
     for node in scene.nodes() {
         visit(&node, Mat4::IDENTITY, &buffers, &mut model, &mut cache)?;
     }
+    prepare_material_image_mips(&mut model);
     Ok(model)
+}
+
+const IMAGE_MIP_LUT_STEPS: usize = 16_384;
+
+struct ImageMipLookup {
+    srgb_to_linear: [f32; 256],
+    linear_to_srgb: Box<[u8]>,
+}
+
+fn image_mip_lookup() -> &'static ImageMipLookup {
+    static LOOKUP: OnceLock<ImageMipLookup> = OnceLock::new();
+    LOOKUP.get_or_init(|| {
+        let srgb_to_linear = std::array::from_fn(|index| {
+            let value = index as f32 / 255.0;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        });
+        let linear_to_srgb = (0..=IMAGE_MIP_LUT_STEPS)
+            .map(|index| {
+                let value = index as f32 / IMAGE_MIP_LUT_STEPS as f32;
+                let encoded = if value <= 0.003_130_8 {
+                    value * 12.92
+                } else {
+                    1.055 * value.powf(1.0 / 2.4) - 0.055
+                };
+                (encoded.clamp(0.0, 1.0) * 255.0).round() as u8
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        ImageMipLookup {
+            srgb_to_linear,
+            linear_to_srgb,
+        }
+    })
+}
+
+/// Prepare only image color-space variants referenced by the model's materials.
+/// When called through `GltfLoader`, this runs in the AssetServer decode worker, not the renderer.
+fn prepare_material_image_mips(model: &mut ModelAsset) {
+    let used_materials: HashSet<usize> = model
+        .nodes
+        .iter()
+        .filter_map(|node| model.primitives.get(node.primitive)?.material)
+        .collect();
+    let mut srgb_used = vec![false; model.images.len()];
+    let mut linear_used = vec![false; model.images.len()];
+    for material_index in used_materials {
+        let Some(material) = model.materials.get(material_index) else {
+            continue;
+        };
+        for index in [material.base_color_texture, material.emissive_texture]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(used) = srgb_used.get_mut(index) {
+                *used = true;
+            }
+        }
+        for index in [
+            material.metallic_roughness_texture,
+            material.normal_texture,
+            material.occlusion_texture,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(used) = linear_used.get_mut(index) {
+                *used = true;
+            }
+        }
+    }
+
+    for (index, image) in model.images.iter_mut().enumerate() {
+        if srgb_used[index] && (image.width > 1 || image.height > 1) {
+            image.srgb_mips = Some(build_image_mips(
+                image.width,
+                image.height,
+                &image.rgba8,
+                true,
+            ));
+        }
+        if linear_used[index] && (image.width > 1 || image.height > 1) {
+            image.linear_mips = Some(build_image_mips(
+                image.width,
+                image.height,
+                &image.rgba8,
+                false,
+            ));
+        }
+    }
+}
+
+/// Return generated levels after level zero. Color textures are filtered in linear light;
+/// data textures are averaged directly in their stored linear channel values.
+fn build_image_mips(width: u32, height: u32, rgba8: &[u8], srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
+    let lookup = srgb.then(image_mip_lookup);
+    let mut previous_width = width;
+    let mut previous_height = height;
+    let mut levels: Vec<(u32, u32, Vec<u8>)> = Vec::new();
+
+    while previous_width > 1 || previous_height > 1 {
+        let previous = levels
+            .last()
+            .map_or(rgba8, |(_, _, pixels)| pixels.as_slice());
+        let next_width = (previous_width / 2).max(1);
+        let next_height = (previous_height / 2).max(1);
+        let mut next = Vec::with_capacity((next_width * next_height * 4) as usize);
+        for y in 0..next_height {
+            for x in 0..next_width {
+                let mut color = [0.0_f32; 3];
+                let mut channels = [0_u32; 4];
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let sx = (x * 2 + dx).min(previous_width - 1);
+                    let sy = (y * 2 + dy).min(previous_height - 1);
+                    let offset = ((sy * previous_width + sx) * 4) as usize;
+                    if let Some(lookup) = lookup {
+                        for channel in 0..3 {
+                            color[channel] +=
+                                lookup.srgb_to_linear[previous[offset + channel] as usize];
+                        }
+                    } else {
+                        for channel in 0..3 {
+                            channels[channel] += u32::from(previous[offset + channel]);
+                        }
+                    }
+                    channels[3] += u32::from(previous[offset + 3]);
+                }
+                if let Some(lookup) = lookup {
+                    for linear_sum in color {
+                        let average = (linear_sum * 0.25).clamp(0.0, 1.0);
+                        let lut_index = (average * IMAGE_MIP_LUT_STEPS as f32).round() as usize;
+                        next.push(lookup.linear_to_srgb[lut_index.min(IMAGE_MIP_LUT_STEPS)]);
+                    }
+                } else {
+                    for sum in channels.iter().take(3) {
+                        next.push(((sum + 2) / 4) as u8);
+                    }
+                }
+                next.push(((channels[3] + 2) / 4) as u8);
+            }
+        }
+        levels.push((next_width, next_height, next));
+        previous_width = next_width;
+        previous_height = next_height;
+    }
+    levels
 }
 
 fn visit(
@@ -393,6 +606,8 @@ fn to_rgba8(image: &gltf::image::Data) -> Result<ImageData, String> {
         width: image.width,
         height: image.height,
         rgba8: out,
+        srgb_mips: None,
+        linear_mips: None,
     })
 }
 
@@ -420,6 +635,18 @@ mod tests {
         assert_eq!(model.materials[0].metallic_roughness_texture, None);
         assert_eq!((model.images[0].width, model.images[0].height), (8, 8));
         assert_eq!(model.images[0].rgba8.len(), 8 * 8 * 4);
+        let prepared_mips = model.images[0]
+            .srgb_mips
+            .as_ref()
+            .expect("worker-prepared sRGB mips");
+        assert_eq!(
+            prepared_mips
+                .iter()
+                .map(|(width, height, _)| (*width, *height))
+                .collect::<Vec<_>>(),
+            vec![(4, 4), (2, 2), (1, 1)],
+        );
+        assert!(model.images[0].linear_mips.is_none());
         // Parent translation (0, 0.5, 0) times child translation (1.5, 0, 0) and scale 0.8.
         let expected = Mat4::from_translation(Vec3::new(0.0, 0.5, 0.0))
             * Mat4::from_translation(Vec3::new(1.5, 0.0, 0.0))
@@ -429,6 +656,157 @@ mod tests {
         let (min, max) = model.bounds().expect("bounds");
         assert!(min.abs_diff_eq(Vec3::new(1.1, 0.1, -0.4), 1e-5), "{min}");
         assert!(max.abs_diff_eq(Vec3::new(1.9, 0.9, 0.4), 1e-5), "{max}");
+    }
+
+    #[test]
+    fn material_images_prepare_only_required_color_space_mips_and_account_for_them() {
+        use super::{
+            prepare_material_image_mips, ImageData, MaterialData, ModelAsset, ModelNode,
+            PrimitiveData,
+        };
+
+        let image = |value: u8| ImageData {
+            width: 2,
+            height: 2,
+            rgba8: vec![value; 16],
+            srgb_mips: None,
+            linear_mips: None,
+        };
+        let mut model = ModelAsset {
+            images: vec![
+                image(96),
+                image(128),
+                image(180),
+                ImageData {
+                    width: 1,
+                    height: 1,
+                    rgba8: vec![255; 4],
+                    srgb_mips: None,
+                    linear_mips: None,
+                },
+            ],
+            materials: vec![
+                MaterialData {
+                    base_color: [1.0; 4],
+                    metallic_factor: 0.0,
+                    roughness_factor: 1.0,
+                    base_color_texture: Some(0),
+                    metallic_roughness_texture: None,
+                    normal_texture: Some(1),
+                    occlusion_texture: None,
+                    occlusion_strength: 1.0,
+                    emissive_texture: Some(2),
+                    emissive_factor: [0.0; 3],
+                },
+                MaterialData {
+                    base_color: [1.0; 4],
+                    metallic_factor: 0.0,
+                    roughness_factor: 1.0,
+                    base_color_texture: None,
+                    metallic_roughness_texture: Some(2),
+                    normal_texture: None,
+                    occlusion_texture: None,
+                    occlusion_strength: 1.0,
+                    emissive_texture: None,
+                    emissive_factor: [0.0; 3],
+                },
+                MaterialData {
+                    base_color: [1.0; 4],
+                    metallic_factor: 0.0,
+                    roughness_factor: 1.0,
+                    base_color_texture: Some(3),
+                    metallic_roughness_texture: None,
+                    normal_texture: None,
+                    occlusion_texture: None,
+                    occlusion_strength: 1.0,
+                    emissive_texture: None,
+                    emissive_factor: [0.0; 3],
+                },
+            ],
+            primitives: vec![
+                PrimitiveData {
+                    positions: vec![[0.0; 3]; 3],
+                    normals: vec![[0.0, 0.0, 1.0]; 3],
+                    uvs: vec![[0.0; 2]; 3],
+                    indices: vec![0, 1, 2],
+                    material: Some(0),
+                },
+                PrimitiveData {
+                    positions: vec![[0.0; 3]; 3],
+                    normals: vec![[0.0, 0.0, 1.0]; 3],
+                    uvs: vec![[0.0; 2]; 3],
+                    indices: vec![0, 1, 2],
+                    material: Some(1),
+                },
+            ],
+            nodes: vec![
+                ModelNode {
+                    primitive: 0,
+                    transform: Mat4::IDENTITY,
+                },
+                ModelNode {
+                    primitive: 1,
+                    transform: Mat4::IDENTITY,
+                },
+            ],
+        };
+        let decoded_bytes = model.estimated_size_bytes();
+        prepare_material_image_mips(&mut model);
+
+        assert_eq!(model.images[0].srgb_mips.as_ref().map(Vec::len), Some(1));
+        assert!(model.images[0].linear_mips.is_none());
+        assert_eq!(model.images[1].linear_mips.as_ref().map(Vec::len), Some(1));
+        assert!(model.images[1].srgb_mips.is_none());
+        assert_eq!(model.images[2].srgb_mips.as_ref().map(Vec::len), Some(1));
+        assert_eq!(model.images[2].linear_mips.as_ref().map(Vec::len), Some(1));
+        assert!(model.images[3].srgb_mips.is_none());
+        assert!(model.images[3].linear_mips.is_none());
+        assert!(model.estimated_size_bytes() > decoded_bytes);
+    }
+
+    #[test]
+    fn gpu_upload_estimate_counts_shared_image_base_once_per_transfer_function() {
+        use super::{ImageData, MaterialData, ModelAsset, ModelNode, PrimitiveData};
+
+        let model = ModelAsset {
+            primitives: vec![PrimitiveData {
+                positions: vec![[0.0; 3]; 3],
+                normals: vec![[0.0, 0.0, 1.0]; 3],
+                uvs: vec![[0.0; 2]; 3],
+                indices: vec![0, 1, 2],
+                material: Some(0),
+            }],
+            materials: vec![MaterialData {
+                base_color: [1.0; 4],
+                metallic_factor: 0.0,
+                roughness_factor: 1.0,
+                base_color_texture: Some(0),
+                metallic_roughness_texture: None,
+                normal_texture: Some(0),
+                occlusion_texture: None,
+                occlusion_strength: 1.0,
+                emissive_texture: None,
+                emissive_factor: [0.0; 3],
+            }],
+            images: vec![ImageData {
+                width: 2,
+                height: 2,
+                rgba8: vec![128; 16],
+                srgb_mips: Some(vec![(1, 1, vec![128; 4])]),
+                linear_mips: Some(vec![(1, 1, vec![128; 4])]),
+            }],
+            nodes: vec![ModelNode {
+                primitive: 0,
+                transform: Mat4::IDENTITY,
+            }],
+        };
+
+        // 3 vertices * 32 bytes + 3 indices * 4 bytes + one 256-byte material uniform,
+        // plus two transfer-function-specific texture allocations (base + 1x1 mip each).
+        assert_eq!(
+            model.estimated_gpu_upload_bytes(),
+            96 + 12 + 256 + (16 + 4) * 2
+        );
     }
 
     #[test]

@@ -1,7 +1,9 @@
 //! Uploads CPU-side glTF models to the GPU as meshes and materials.
 
 use crate::mesh::Vertex;
-use crate::renderer::{MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, TextureData};
+use crate::renderer::{
+    MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, PbrMaterialMipmaps, TextureData,
+};
 use glam::Mat4;
 use ribbon_plugin_gltf::ModelAsset;
 use std::collections::HashSet;
@@ -76,47 +78,47 @@ pub(crate) fn upload_validated_model(
             if !used_materials.contains(&index) {
                 return None;
             }
-            let texture = material
+            let base_image = material
                 .base_color_texture
-                .and_then(|index| model.images.get(index))
-                .map(|image| TextureData {
-                    width: image.width,
-                    height: image.height,
-                    rgba8: &image.rgba8,
-                });
-            let metallic_roughness_texture = material
+                .and_then(|index| model.images.get(index));
+            let surface_image = material
                 .metallic_roughness_texture
-                .and_then(|index| model.images.get(index))
-                .map(|image| TextureData {
-                    width: image.width,
-                    height: image.height,
-                    rgba8: &image.rgba8,
-                });
-            let normal_texture = material
+                .and_then(|index| model.images.get(index));
+            let normal_image = material
                 .normal_texture
-                .and_then(|index| model.images.get(index))
-                .map(|image| TextureData {
-                    width: image.width,
-                    height: image.height,
-                    rgba8: &image.rgba8,
-                });
-            let occlusion_texture = material
+                .and_then(|index| model.images.get(index));
+            let occlusion_image = material
                 .occlusion_texture
-                .and_then(|index| model.images.get(index))
-                .map(|image| TextureData {
-                    width: image.width,
-                    height: image.height,
-                    rgba8: &image.rgba8,
-                });
-            let emissive_texture = material
+                .and_then(|index| model.images.get(index));
+            let emissive_image = material
                 .emissive_texture
-                .and_then(|index| model.images.get(index))
-                .map(|image| TextureData {
-                    width: image.width,
-                    height: image.height,
-                    rgba8: &image.rgba8,
-                });
-            Some(renderer.upload_pbr_material_with_maps(
+                .and_then(|index| model.images.get(index));
+            let texture = base_image.map(|image| TextureData {
+                width: image.width,
+                height: image.height,
+                rgba8: &image.rgba8,
+            });
+            let metallic_roughness_texture = surface_image.map(|image| TextureData {
+                width: image.width,
+                height: image.height,
+                rgba8: &image.rgba8,
+            });
+            let normal_texture = normal_image.map(|image| TextureData {
+                width: image.width,
+                height: image.height,
+                rgba8: &image.rgba8,
+            });
+            let occlusion_texture = occlusion_image.map(|image| TextureData {
+                width: image.width,
+                height: image.height,
+                rgba8: &image.rgba8,
+            });
+            let emissive_texture = emissive_image.map(|image| TextureData {
+                width: image.width,
+                height: image.height,
+                rgba8: &image.rgba8,
+            });
+            Some(renderer.upload_pbr_material_with_precomputed_mips(
                 device,
                 queue,
                 PbrMaterialDesc {
@@ -130,6 +132,14 @@ pub(crate) fn upload_validated_model(
                     occlusion_strength: material.occlusion_strength,
                     emissive_texture,
                     emissive_factor: material.emissive_factor,
+                },
+                PbrMaterialMipmaps {
+                    base_color: base_image.and_then(|image| image.srgb_mips.as_deref()),
+                    metallic_roughness:
+                        surface_image.and_then(|image| image.linear_mips.as_deref()),
+                    normal: normal_image.and_then(|image| image.linear_mips.as_deref()),
+                    occlusion: occlusion_image.and_then(|image| image.linear_mips.as_deref()),
+                    emissive: emissive_image.and_then(|image| image.srgb_mips.as_deref()),
                 },
             ))
         })
@@ -251,6 +261,20 @@ pub fn validate_model_for_upload(model: &ModelAsset) -> Result<(), String> {
                 "image {index} has invalid RGBA8 dimensions/data length"
             ));
         }
+        validate_prepared_mip_chain(
+            index,
+            "sRGB",
+            image.width,
+            image.height,
+            image.srgb_mips.as_deref(),
+        )?;
+        validate_prepared_mip_chain(
+            index,
+            "linear",
+            image.width,
+            image.height,
+            image.linear_mips.as_deref(),
+        )?;
     }
     for (index, material) in model.materials.iter().enumerate() {
         if material.base_color.iter().any(|value| !value.is_finite())
@@ -284,6 +308,54 @@ pub fn validate_model_for_upload(model: &ModelAsset) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_prepared_mip_chain(
+    image_index: usize,
+    role: &str,
+    base_width: u32,
+    base_height: u32,
+    levels: Option<&[(u32, u32, Vec<u8>)]>,
+) -> Result<(), String> {
+    let Some(levels) = levels else {
+        // User-created ModelAssets can still use the renderer's compatibility mip generator.
+        return Ok(());
+    };
+
+    let mut previous_width = base_width;
+    let mut previous_height = base_height;
+    for (level_index, (width, height, pixels)) in levels.iter().enumerate() {
+        if previous_width == 1 && previous_height == 1 {
+            return Err(format!(
+                "image {image_index} {role} mip chain contains levels after reaching 1x1"
+            ));
+        }
+        let expected_width = (previous_width / 2).max(1);
+        let expected_height = (previous_height / 2).max(1);
+        let expected_bytes = u64::from(expected_width)
+            .saturating_mul(u64::from(expected_height))
+            .saturating_mul(4);
+        if *width != expected_width || *height != expected_height {
+            return Err(format!(
+                "image {image_index} {role} mip {level_index} has dimensions {width}x{height}; expected {expected_width}x{expected_height}"
+            ));
+        }
+        if pixels.len() as u64 != expected_bytes {
+            return Err(format!(
+                "image {image_index} {role} mip {level_index} has {} bytes; expected {expected_bytes}",
+                pixels.len()
+            ));
+        }
+        previous_width = *width;
+        previous_height = *height;
+    }
+
+    if (base_width > 1 || base_height > 1) && (previous_width != 1 || previous_height != 1) {
+        return Err(format!(
+            "image {image_index} {role} mip chain is incomplete; it ends at {previous_width}x{previous_height} instead of 1x1"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{upload_model, validate_model_for_upload};
@@ -301,6 +373,30 @@ mod tests {
         assert!(validate_model_for_upload(&empty).is_err());
         let model = ribbon_plugin_gltf::parse(CUBE).expect("packaged model parses");
         validate_model_for_upload(&model).expect("packaged model is uploadable");
+    }
+
+    #[test]
+    fn worker_prepared_color_mips_match_the_renderer_compatibility_filter() {
+        let model = ribbon_plugin_gltf::parse(CUBE).expect("packaged model parses");
+        let image = &model.images[0];
+        let renderer_levels = crate::renderer::build_mips(image.width, image.height, &image.rgba8);
+        assert_eq!(
+            image.srgb_mips.as_deref(),
+            Some(&renderer_levels[1..]),
+            "worker-prepared levels must preserve renderer color filtering",
+        );
+    }
+
+    #[test]
+    fn model_upload_validation_rejects_malformed_prepared_mips() {
+        let mut model = ribbon_plugin_gltf::parse(CUBE).expect("packaged model parses");
+        let levels = model.images[0]
+            .srgb_mips
+            .as_mut()
+            .expect("parser prepares mipmaps");
+        levels[0].0 = 3;
+        let error = validate_model_for_upload(&model).expect_err("bad mip width must fail");
+        assert!(error.contains("sRGB mip 0 has dimensions 3x4"), "{error}");
     }
 
     #[test]

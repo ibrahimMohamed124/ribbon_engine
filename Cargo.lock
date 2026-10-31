@@ -2628,6 +2628,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ribbon_streaming_stress"
+version = "0.1.0"
+dependencies = [
+ "glam 0.30.10",
+ "ribbon_app",
+ "ribbon_assets",
+ "ribbon_events",
+ "ribbon_platform",
+ "ribbon_plugin_gltf",
+ "ribbon_plugin_physics",
+ "ribbon_plugin_render3d",
+ "ribbon_plugin_streaming",
+ "ribbon_plugins",
+ "ribbon_render",
+ "ribbon_scene",
+]
+
+[[package]]
 name = "robust"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

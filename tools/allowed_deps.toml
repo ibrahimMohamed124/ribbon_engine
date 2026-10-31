@@ -156,3 +156,7 @@ external = ["glam"]
 [allowed."studs_voxel_gpu"]
 workspace = ["ribbon_plugin_render3d", "studs_voxel"]
 external = []
+
+[allowed."ribbon_streaming_stress"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_gltf", "ribbon_plugin_physics", "ribbon_plugin_render3d", "ribbon_plugin_streaming"]
+external = ["glam"]
