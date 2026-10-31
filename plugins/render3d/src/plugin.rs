@@ -1,4 +1,5 @@
 use super::*;
+use crate::GpuResourceWarmup;
 use ribbon_app::App;
 use ribbon_plugins::Plugin;
 use ribbon_reflect::TypeRegistry;
@@ -25,10 +26,18 @@ impl Plugin for Render3dPlugin {
         if app.world.try_resource::<ModelWarmup>().is_none() {
             app.insert_resource(ModelWarmup::default());
         }
+        if app.world.try_resource::<GpuResourceWarmup>().is_none() {
+            app.insert_resource(GpuResourceWarmup::default());
+        }
         if app.world.try_resource::<GpuUploadBudget>().is_none() {
             app.insert_resource(GpuUploadBudget::default());
         }
-        let mut prefab_codecs = PrefabCodecRegistry::default();
+        // Compose codecs with physics and any other scene-aware plugins; do not replace an
+        // existing registry as plugin build order is not otherwise constrained between peers.
+        let mut prefab_codecs = app
+            .world
+            .remove_resource::<PrefabCodecRegistry>()
+            .unwrap_or_default();
         let registration = crate::prefab::register_prefab_components(
             app.world.resource_mut::<TypeRegistry>(),
             &mut prefab_codecs,
@@ -38,6 +47,7 @@ impl Plugin for Render3dPlugin {
                 app.insert_resource(prefab_codecs);
             }
             Err(error) => {
+                app.insert_resource(prefab_codecs);
                 app.world.resource_mut::<ribbon_app::LogBuffer>().push(
                     ribbon_app::LogLevel::Error,
                     format!("render3d prefab reflection registration failed: {error}"),

@@ -7,9 +7,10 @@
 use ribbon_assets::Handle;
 use ribbon_plugin_gltf::ModelAsset;
 
-/// Renderer-owned GPU upload pacing policy. One oversized model is admitted when the frame has
-/// not uploaded any model yet, avoiding starvation for assets larger than the configured byte
-/// budget. The byte count is estimated from the CPU model and is not driver VRAM accounting.
+/// Renderer-owned GPU upload pacing policy. `max_models_per_frame` retains its compatibility
+/// name, but is an operation cap shared by glTF model uploads and generic mesh/material uploads.
+/// One oversized first operation is admitted to avoid starvation for assets larger than the byte
+/// budget. Byte counts are CPU-payload estimates, not driver VRAM accounting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GpuUploadBudget {
     pub max_models_per_frame: usize,
@@ -33,8 +34,9 @@ impl GpuUploadBudget {
         }
     }
 
-    /// Whether the next model may be submitted in this frame. A single oversized first model is
-    /// admitted to avoid permanent starvation; later models must fit both configured limits.
+    /// Whether the next GPU upload operation may be submitted in this frame. A single oversized
+    /// first operation is admitted to avoid permanent starvation; later uploads must fit both
+    /// configured limits.
     pub fn allows_upload(
         self,
         uploads_this_frame: usize,

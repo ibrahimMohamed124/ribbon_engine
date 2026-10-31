@@ -88,6 +88,131 @@ impl MeshRenderer {
         true
     }
 
+    /// Upload an independently leased RGBA8 texture using the renderer's shared content cache.
+    ///
+    /// The returned generation-checked handle owns a strong reference independently of PBR
+    /// materials. The caller must retain the handle until every consumer has finished using it.
+    pub fn upload_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        source: TextureData<'_>,
+        label: &'static str,
+        srgb: bool,
+    ) -> TextureId {
+        let texture = self.upload_cached_texture(device, queue, source, label, srgb);
+        let id = if let Some(index) = self.free_texture_slots.pop() {
+            let slot = &mut self.textures[index];
+            slot.generation = slot.generation.wrapping_add(1).max(1);
+            slot.texture = Some(texture);
+            TextureId {
+                slot: index,
+                generation: slot.generation,
+            }
+        } else {
+            let index = self.textures.len();
+            self.textures.push(TextureSlot {
+                generation: 0,
+                texture: Some(texture),
+            });
+            TextureId {
+                slot: index,
+                generation: 0,
+            }
+        };
+        self.update_peak_resource_estimate();
+        id
+    }
+
+    /// Resolve a live standalone texture handle to its GPU view on the renderer-owning thread.
+    /// A stale or released generation returns `None`.
+    pub fn texture_view(&self, texture: TextureId) -> Option<&wgpu::TextureView> {
+        let slot = self.textures.get(texture.slot)?;
+        if slot.generation != texture.generation {
+            return None;
+        }
+        slot.texture.as_ref().map(|texture| &texture.view)
+    }
+
+    /// Release an independently uploaded texture. Stale generation handles are rejected.
+    pub fn release_texture(&mut self, texture: TextureId) -> bool {
+        let Some(slot) = self.textures.get_mut(texture.slot) else {
+            return false;
+        };
+        if slot.generation != texture.generation || slot.texture.is_none() {
+            return false;
+        }
+        slot.texture = None;
+        self.free_texture_slots.push(texture.slot);
+        true
+    }
+
+    /// Create a standalone sampler on the renderer-owning thread.
+    pub fn upload_sampler(&mut self, device: &wgpu::Device, desc: GpuSamplerDesc) -> SamplerId {
+        let address_mode = |mode| match mode {
+            GpuSamplerAddressMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+            GpuSamplerAddressMode::Repeat => wgpu::AddressMode::Repeat,
+            GpuSamplerAddressMode::MirrorRepeat => wgpu::AddressMode::MirrorRepeat,
+        };
+        let filter = |mode| match mode {
+            GpuSamplerFilter::Nearest => wgpu::FilterMode::Nearest,
+            GpuSamplerFilter::Linear => wgpu::FilterMode::Linear,
+        };
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("streamed standalone sampler"),
+            address_mode_u: address_mode(desc.address_mode_u),
+            address_mode_v: address_mode(desc.address_mode_v),
+            address_mode_w: address_mode(desc.address_mode_w),
+            mag_filter: filter(desc.mag_filter),
+            min_filter: filter(desc.min_filter),
+            mipmap_filter: filter(desc.mipmap_filter),
+            lod_min_clamp: desc.lod_min_clamp,
+            lod_max_clamp: desc.lod_max_clamp,
+            ..wgpu::SamplerDescriptor::default()
+        });
+        if let Some(index) = self.free_sampler_slots.pop() {
+            let slot = &mut self.samplers[index];
+            slot.generation = slot.generation.wrapping_add(1).max(1);
+            slot.sampler = Some(sampler);
+            SamplerId {
+                slot: index,
+                generation: slot.generation,
+            }
+        } else {
+            let index = self.samplers.len();
+            self.samplers.push(SamplerSlot {
+                generation: 0,
+                sampler: Some(sampler),
+            });
+            SamplerId {
+                slot: index,
+                generation: 0,
+            }
+        }
+    }
+
+    /// Resolve a live standalone sampler handle to its GPU sampler. Stale handles return `None`.
+    pub fn sampler(&self, sampler: SamplerId) -> Option<&wgpu::Sampler> {
+        let slot = self.samplers.get(sampler.slot)?;
+        if slot.generation != sampler.generation {
+            return None;
+        }
+        slot.sampler.as_ref()
+    }
+
+    /// Release a standalone sampler. Stale generation handles are rejected.
+    pub fn release_sampler(&mut self, sampler: SamplerId) -> bool {
+        let Some(slot) = self.samplers.get_mut(sampler.slot) else {
+            return false;
+        };
+        if slot.generation != sampler.generation || slot.sampler.is_none() {
+            return false;
+        }
+        slot.sampler = None;
+        self.free_sampler_slots.push(sampler.slot);
+        true
+    }
+
     /// Release a dynamic material and allow its slot to be reused with a new generation.
     ///
     /// The built-in white material is permanent. Callers must first remove every future draw that
@@ -131,14 +256,43 @@ impl MeshRenderer {
                 .material_uniform_bytes_estimate
                 .saturating_add(material.uniform_bytes_estimate);
         }
-        // The cache stores weak references only, so this counts each unique live texture exactly
-        // once without keeping textures alive after the last material releases them.
-        for texture in self.texture_cache.values().filter_map(Weak::upgrade) {
-            stats.live_material_textures = stats.live_material_textures.saturating_add(1);
-            stats.material_texture_bytes_estimate = stats
-                .material_texture_bytes_estimate
-                .saturating_add(texture.estimated_bytes);
+        // Classify every unique live cached image once. Standalone texture leases may share the
+        // same content-addressed Arc with a material; in that case the allocation is attributed
+        // to the material category only, never counted twice in total residency.
+        let mut material_texture_ids = std::collections::HashSet::new();
+        for material in self
+            .materials
+            .iter()
+            .filter_map(|slot| slot.material.as_ref())
+        {
+            for texture in [
+                &material._base_texture,
+                &material._metallic_roughness_texture,
+                &material._normal_texture,
+                &material._occlusion_texture,
+                &material._emissive_texture,
+            ] {
+                material_texture_ids.insert(Arc::as_ptr(texture) as usize);
+            }
         }
+        for texture in self.texture_cache.values().filter_map(Weak::upgrade) {
+            if material_texture_ids.contains(&(Arc::as_ptr(&texture) as usize)) {
+                stats.live_material_textures = stats.live_material_textures.saturating_add(1);
+                stats.material_texture_bytes_estimate = stats
+                    .material_texture_bytes_estimate
+                    .saturating_add(texture.estimated_bytes);
+            } else {
+                stats.live_standalone_textures = stats.live_standalone_textures.saturating_add(1);
+                stats.standalone_texture_bytes_estimate = stats
+                    .standalone_texture_bytes_estimate
+                    .saturating_add(texture.estimated_bytes);
+            }
+        }
+        stats.live_samplers = self
+            .samplers
+            .iter()
+            .filter(|slot| slot.sampler.is_some())
+            .count();
         stats.material_bytes_estimate = stats
             .material_texture_bytes_estimate
             .saturating_add(stats.material_uniform_bytes_estimate);

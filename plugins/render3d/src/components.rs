@@ -1,6 +1,10 @@
 //! Compatibility module preserving the public renderer component paths.
 
+use crate::gpu_streaming::{
+    GpuResourceHandle, GpuResourceLease, GpuResourceWarmup, GpuResourceWarmupStatus,
+};
 use crate::mesh::MeshData;
+use crate::renderer::{MaterialId, MeshId};
 use ribbon_assets::Handle;
 use ribbon_plugin_gltf::ModelAsset;
 pub use ribbon_render_contracts::{
@@ -19,6 +23,58 @@ pub struct DynamicMeshInstance3D {
     pub mesh: Arc<MeshData>,
     /// Linear RGB tint multiplier.
     pub color: [f32; 3],
+}
+
+/// Instance of independently warmed GPU mesh/material resources.
+///
+/// The component owns both warmup leases. Despawning the entity releases those claims, and the
+/// renderer drops the GPU objects on its owning thread after the final extracted-frame lease is
+/// gone. `Transform3D` remains a separate ECS component, just like other 3D render instances.
+#[derive(Clone, Debug)]
+pub struct GpuMeshInstance3D {
+    /// Renderer-owned mesh handle.
+    pub mesh: MeshId,
+    /// Renderer-owned PBR material handle.
+    pub material: MaterialId,
+    /// Linear RGB tint multiplier.
+    pub color: [f32; 3],
+    pub(crate) _mesh_lease: GpuResourceLease,
+    pub(crate) _material_lease: GpuResourceLease,
+}
+
+impl GpuMeshInstance3D {
+    /// Build an ECS instance only after both generic GPU warmup requests passed asynchronous
+    /// renderer validation. The instance clones the leases so caller-side handles may be dropped.
+    pub fn from_ready_leases(
+        warmup: &GpuResourceWarmup,
+        mesh_lease: &GpuResourceLease,
+        material_lease: &GpuResourceLease,
+        color: [f32; 3],
+    ) -> Result<Self, String> {
+        let mesh = match warmup.status(mesh_lease) {
+            Some(GpuResourceWarmupStatus::Ready(GpuResourceHandle::Mesh(mesh))) => mesh,
+            Some(GpuResourceWarmupStatus::Failed(error)) => {
+                return Err(format!("mesh GPU warmup failed: {error}"));
+            }
+            Some(status) => return Err(format!("mesh GPU resource is not ready: {status:?}")),
+            None => return Err("mesh GPU warmup lease is no longer registered".to_owned()),
+        };
+        let material = match warmup.status(material_lease) {
+            Some(GpuResourceWarmupStatus::Ready(GpuResourceHandle::Material(material))) => material,
+            Some(GpuResourceWarmupStatus::Failed(error)) => {
+                return Err(format!("material GPU warmup failed: {error}"));
+            }
+            Some(status) => return Err(format!("material GPU resource is not ready: {status:?}")),
+            None => return Err("material GPU warmup lease is no longer registered".to_owned()),
+        };
+        Ok(Self {
+            mesh,
+            material,
+            color,
+            _mesh_lease: mesh_lease.clone(),
+            _material_lease: material_lease.clone(),
+        })
+    }
 }
 
 /// Draw every primitive of a loaded glTF model at the entity's transform.

@@ -60,6 +60,12 @@ pub struct RenderResourceStats {
     pub live_meshes: usize,
     /// Live uploaded materials.
     pub live_materials: usize,
+    /// Unique standalone GPU textures not already attributed to a material.
+    pub live_streamed_textures: usize,
+    /// Unique renderer-owned standalone samplers; samplers do not expose reliable byte sizes.
+    pub live_streamed_samplers: usize,
+    /// Estimated bytes for unique standalone GPU textures, included in total GPU residency.
+    pub streamed_texture_bytes_estimate: u64,
     /// Camera-visible mesh instances prepared for the main color pass.
     pub visible_mesh_instances: usize,
     /// Grouped indexed draw calls issued by the main color pass.
@@ -207,6 +213,24 @@ pub struct RenderResourceStats {
     pub streaming_cpu_budget_evictions_cumulative: u64,
     /// Invalid region-state transitions rejected by the coordinator.
     pub streaming_invalid_state_transitions: u64,
+    /// Standalone mesh/material uploads queued for the renderer-owned generic warmup path.
+    pub generic_gpu_warmup_queued: usize,
+    /// Generic resource uploads submitted but awaiting asynchronous wgpu validation.
+    pub generic_gpu_warmup_preparing: usize,
+    /// Generic resource uploads whose GPU validation completed successfully.
+    pub generic_gpu_warmup_ready: usize,
+    /// Generic resource warmup requests that failed payload or GPU validation.
+    pub generic_gpu_warmup_failed: usize,
+    /// Cumulative standalone mesh/material GPU uploads that passed validation.
+    pub generic_gpu_uploads_cumulative: u64,
+    /// Cumulative standalone mesh/material GPU upload validation failures.
+    pub generic_gpu_upload_failures_cumulative: u64,
+    /// Cumulative generic GPU resources released after their final lease was dropped.
+    pub generic_gpu_releases_cumulative: u64,
+    /// Generic standalone GPU resource uploads started in the latest frame.
+    pub generic_gpu_uploads_this_frame: usize,
+    /// Estimated generic GPU upload traffic submitted in the latest frame.
+    pub generic_gpu_upload_bytes_this_frame: u64,
 }
 
 impl RenderResourceStats {
@@ -214,6 +238,7 @@ impl RenderResourceStats {
     pub fn total_bytes_estimate(&self) -> u64 {
         self.mesh_bytes_estimate
             .saturating_add(self.material_bytes_estimate)
+            .saturating_add(self.streamed_texture_bytes_estimate)
             .saturating_add(self.buffer_bytes_estimate)
             .saturating_add(self.depth_target_bytes_estimate)
             .saturating_add(self.active_transient_bytes_estimate)

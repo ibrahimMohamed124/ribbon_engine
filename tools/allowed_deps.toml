@@ -58,12 +58,12 @@ workspace = ["ribbon_math"]
 external = []
 
 [allowed."ribbon_plugin_physics"]
-workspace = ["ribbon_app", "ribbon_ecs", "ribbon_events", "ribbon_plugins", "ribbon_scene"]
+workspace = ["ribbon_reflect", "ribbon_app", "ribbon_ecs", "ribbon_events", "ribbon_plugins", "ribbon_scene"]
 external = ["glam", "rapier3d", "crossbeam-channel"]
 
 [allowed."ribbon_plugin_streaming"]
-workspace = ["ribbon_app", "ribbon_assets", "ribbon_ecs", "ribbon_plugins", "ribbon_scene", "ribbon_render", "ribbon_plugin_gltf", "ribbon_plugin_render3d", "ribbon_plugin_physics"]
-external = ["glam"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_ecs", "ribbon_plugins", "ribbon_scene", "ribbon_reflect", "ribbon_render", "ribbon_plugin_gltf", "ribbon_plugin_render3d", "ribbon_plugin_physics"]
+external = ["glam", "ron", "serde"]
 
 [allowed."studs_cpu_renderer"]
 workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_events", "ribbon_assets", "ribbon_platform", "ribbon_render", "ribbon_scene", "ribbon_math", "studs_voxel"]

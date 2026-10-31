@@ -5,10 +5,12 @@
 //! instead of querying gameplay ECS data while recording GPU commands.
 
 use crate::components::{
-    Camera3D, DynamicMeshInstance3D, FogSettings, MeshInstance, ModelInstance, PointLight,
-    SpotLight, SunLight,
+    Camera3D, DynamicMeshInstance3D, FogSettings, GpuMeshInstance3D, MeshInstance, ModelInstance,
+    PointLight, SpotLight, SunLight,
 };
+use crate::gpu_streaming::GpuResourceLease;
 use crate::mesh::MeshData;
+use crate::renderer::{MaterialId, MeshId};
 use glam::Mat4;
 use ribbon_app::{App, Stage, World};
 use ribbon_assets::Handle;
@@ -41,6 +43,18 @@ pub struct ExtractedDynamicMesh3D {
     pub color: [f32; 3],
 }
 
+/// Standalone GPU mesh/material placement. The extracted leases keep both resources alive until
+/// this frame has finished consuming the snapshot.
+#[derive(Clone)]
+pub struct ExtractedGpuMesh3D {
+    pub transform: Mat4,
+    pub mesh: MeshId,
+    pub material: MaterialId,
+    pub color: [f32; 3],
+    _mesh_lease: GpuResourceLease,
+    _material_lease: GpuResourceLease,
+}
+
 /// Compact render-facing scene snapshot produced from the ECS each frame.
 ///
 /// This contains copied transforms, shared mesh geometry, and asset handles rather than ECS
@@ -53,6 +67,8 @@ pub struct ExtractedScene3D {
     pub meshes: Vec<ExtractedMesh3D>,
     /// Arbitrary indexed mesh instances with shared CPU geometry.
     pub dynamic_meshes: Vec<ExtractedDynamicMesh3D>,
+    /// Independently warmed GPU mesh/material instances.
+    pub gpu_meshes: Vec<ExtractedGpuMesh3D>,
     /// Loaded or pending glTF model instances.
     pub models: Vec<ExtractedModel3D>,
     /// Directional sunlight and ambient contribution for this frame.
@@ -108,6 +124,21 @@ pub fn extract_scene_3d(world: &mut World) {
                 transform: transform.matrix(),
                 mesh: Arc::clone(&instance.mesh),
                 color: instance.color,
+            });
+        }
+
+        extracted.gpu_meshes.clear();
+        for (_, (transform, instance)) in world
+            .query::<(&GlobalTransform3D, &GpuMeshInstance3D)>()
+            .iter()
+        {
+            extracted.gpu_meshes.push(ExtractedGpuMesh3D {
+                transform: transform.matrix(),
+                mesh: instance.mesh,
+                material: instance.material,
+                color: instance.color,
+                _mesh_lease: instance._mesh_lease.clone(),
+                _material_lease: instance._material_lease.clone(),
             });
         }
 

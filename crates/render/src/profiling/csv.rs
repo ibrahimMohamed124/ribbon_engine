@@ -109,6 +109,18 @@ impl RenderProfileRecorder {
             "asset_worker_decode_ns_last_poll",
             "asset_worker_completions_processed_last_poll",
             "asset_worker_pending_completions",
+            "generic_gpu_warmup_queued",
+            "generic_gpu_warmup_preparing",
+            "generic_gpu_warmup_ready",
+            "generic_gpu_warmup_failed",
+            "generic_gpu_uploads_cumulative",
+            "generic_gpu_upload_failures_cumulative",
+            "generic_gpu_releases_cumulative",
+            "generic_gpu_uploads_this_frame",
+            "generic_gpu_upload_bytes_this_frame",
+            "live_streamed_textures",
+            "live_streamed_samplers",
+            "streamed_texture_bytes_estimate",
         ];
         write_csv_record(&mut writer, HEADER.iter().map(|field| (*field).to_owned()))?;
         for sample in &self.samples {
@@ -171,6 +183,18 @@ impl RenderProfileRecorder {
                 .asset_worker_completions_processed_last_poll
                 .to_string();
             row[105] = resources.asset_worker_pending_completions.to_string();
+            row[106] = resources.generic_gpu_warmup_queued.to_string();
+            row[107] = resources.generic_gpu_warmup_preparing.to_string();
+            row[108] = resources.generic_gpu_warmup_ready.to_string();
+            row[109] = resources.generic_gpu_warmup_failed.to_string();
+            row[110] = resources.generic_gpu_uploads_cumulative.to_string();
+            row[111] = resources.generic_gpu_upload_failures_cumulative.to_string();
+            row[112] = resources.generic_gpu_releases_cumulative.to_string();
+            row[113] = resources.generic_gpu_uploads_this_frame.to_string();
+            row[114] = resources.generic_gpu_upload_bytes_this_frame.to_string();
+            row[115] = resources.live_streamed_textures.to_string();
+            row[116] = resources.live_streamed_samplers.to_string();
+            row[117] = resources.streamed_texture_bytes_estimate.to_string();
             row[12] = resources.live_meshes.to_string();
             row[13] = resources.live_materials.to_string();
             row[14] = resources.mesh_bytes_estimate.to_string();
@@ -331,6 +355,18 @@ mod tests {
             .streaming_cpu_resident_over_budget_bytes = 128;
         diagnostics.resources.streaming_cpu_cache_budget_bytes = 1024;
         diagnostics.resources.streaming_cpu_cache_over_budget_bytes = 64;
+        diagnostics.resources.generic_gpu_warmup_queued = 6;
+        diagnostics.resources.generic_gpu_warmup_preparing = 5;
+        diagnostics.resources.generic_gpu_warmup_ready = 4;
+        diagnostics.resources.generic_gpu_warmup_failed = 3;
+        diagnostics.resources.generic_gpu_uploads_cumulative = 12;
+        diagnostics.resources.generic_gpu_upload_failures_cumulative = 2;
+        diagnostics.resources.generic_gpu_releases_cumulative = 7;
+        diagnostics.resources.generic_gpu_uploads_this_frame = 2;
+        diagnostics.resources.generic_gpu_upload_bytes_this_frame = 16 * 1024 * 1024;
+        diagnostics.resources.live_streamed_textures = 3;
+        diagnostics.resources.live_streamed_samplers = 2;
+        diagnostics.resources.streamed_texture_bytes_estimate = 4096;
         recorder.record_diagnostics(&diagnostics);
 
         let mut output = Vec::new();
@@ -342,7 +378,7 @@ mod tests {
         let header: Vec<_> = rows.next().expect("header row").split(',').collect();
         let frame: Vec<_> = rows.next().expect("frame row").split(',').collect();
 
-        assert_eq!(header.len(), 106);
+        assert_eq!(header.len(), 118);
         assert_eq!(frame.len(), header.len());
         assert_eq!(header[75], "model_warmup_requested");
         assert_eq!(header[80], "model_gpu_uploads_this_frame");
@@ -361,6 +397,21 @@ mod tests {
         assert_eq!(header[103], "asset_worker_decode_ns_last_poll");
         assert_eq!(header[104], "asset_worker_completions_processed_last_poll");
         assert_eq!(header[105], "asset_worker_pending_completions");
+        assert_eq!(header[106], "generic_gpu_warmup_queued");
+        assert_eq!(header[107], "generic_gpu_warmup_preparing");
+        assert_eq!(header[108], "generic_gpu_warmup_ready");
+        assert_eq!(header[109], "generic_gpu_warmup_failed");
+        assert_eq!(header[110], "generic_gpu_uploads_cumulative");
+        assert_eq!(header[111], "generic_gpu_upload_failures_cumulative");
+        assert_eq!(header[112], "generic_gpu_releases_cumulative");
+        assert_eq!(header[113], "generic_gpu_uploads_this_frame");
+        assert_eq!(header[114], "generic_gpu_upload_bytes_this_frame");
+        assert_eq!(header[115], "live_streamed_textures");
+        assert_eq!(header[116], "live_streamed_samplers");
+        assert_eq!(header[117], "streamed_texture_bytes_estimate");
+        assert_eq!(frame[115], "3");
+        assert_eq!(frame[116], "2");
+        assert_eq!(frame[117], "4096");
         assert_eq!(frame[75], "7");
         assert_eq!(frame[80], "2");
         assert_eq!(frame[81], "3");
@@ -369,6 +420,15 @@ mod tests {
         assert_eq!(frame[103], "22");
         assert_eq!(frame[104], "3");
         assert_eq!(frame[105], "4");
+        assert_eq!(frame[106], "6");
+        assert_eq!(frame[107], "5");
+        assert_eq!(frame[108], "4");
+        assert_eq!(frame[109], "3");
+        assert_eq!(frame[110], "12");
+        assert_eq!(frame[111], "2");
+        assert_eq!(frame[112], "7");
+        assert_eq!(frame[113], "2");
+        assert_eq!(frame[114], (16 * 1024 * 1024).to_string());
         assert_eq!(frame[82], "1");
         assert_eq!(frame[90], "4096");
         assert_eq!(frame[93], "2");

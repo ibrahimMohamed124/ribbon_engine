@@ -7,7 +7,7 @@ use ribbon_assets::AssetServer;
 use ribbon_commands::{CommandStack, SetField};
 use ribbon_ecs::{Entity, World};
 use ribbon_editor::{EditorShell, Panel, Selection, Ui};
-use ribbon_plugin_render3d::GpuUploadBudget;
+use ribbon_plugin_render3d::{GpuResourceWarmup, GpuUploadBudget};
 use ribbon_plugin_streaming::StreamingCoordinator;
 use ribbon_plugins::Plugin;
 use ribbon_reflect::{TypeRegistry, Value};
@@ -179,6 +179,20 @@ impl Panel for StreamingPanel {
                 diagnostics.failed_regions
             ));
             ui.label(&format!(
+                "Pending requests: {} | memory pressure: {} | invalid transitions: {}",
+                diagnostics.pending_asset_requests,
+                diagnostics.memory_pressure_events,
+                diagnostics.invalid_state_transitions
+            ));
+            ui.label(&format!(
+                "CPU: {} MiB resident ({} MiB pinned, {} MiB over budget) | GPU est: {} MiB ({} MiB over)",
+                diagnostics.cpu_resident_bytes_estimate / (1024 * 1024),
+                diagnostics.cpu_pinned_bytes_estimate / (1024 * 1024),
+                diagnostics.cpu_resident_over_budget_bytes / (1024 * 1024),
+                diagnostics.gpu_resident_bytes_estimate / (1024 * 1024),
+                diagnostics.gpu_memory_over_budget_bytes / (1024 * 1024),
+            ));
+            ui.label(&format!(
                 "Asset queue: {}/{} | workers: {} | staged commits: {}",
                 diagnostics.queued_asset_jobs,
                 diagnostics.asset_queue_capacity,
@@ -192,7 +206,7 @@ impl Panel for StreamingPanel {
             regions.sort_by(|left, right| left.id.cmp(&right.id));
             for region in regions {
                 ui.label(&format!(
-                    "{}: {:?} | {:.1}m | CPU {}/{} GPU {}/{} | entities {}",
+                    "{}: {:?} | {:.1}m | model CPU {}/{} GPU {}/{} | SceneDoc {} | typed deps {} | prefab entities {} | entities {}",
                     region.name,
                     region.state,
                     region.distance_to_nearest_observer.unwrap_or(f32::INFINITY),
@@ -200,11 +214,26 @@ impl Panel for StreamingPanel {
                     region.model_count,
                     region.gpu_ready_models,
                     region.model_count,
+                    if region.has_scene_doc { "yes" } else { "no" },
+                    region.typed_dependency_count,
+                    region.prefab_entity_count,
                     region.active_entity_count
                 ));
                 if let Some(error) = region.last_error {
                     ui.label(&format!("  error: {error}"));
                 }
+            }
+            for observer in snapshot.observers {
+                ui.label(&format!(
+                    "Observer {}: position ({:.1}, {:.1}, {:.1}) velocity ({:.1}, {:.1}, {:.1})",
+                    observer.id,
+                    observer.position.x,
+                    observer.position.y,
+                    observer.position.z,
+                    observer.velocity.x,
+                    observer.velocity.y,
+                    observer.velocity.z
+                ));
             }
         } else {
             ui.label("StreamingPlugin is not installed");
@@ -237,14 +266,40 @@ impl Panel for StreamingPanel {
         }
         if let Some(diagnostics) = world.try_resource::<RenderDiagnostics>() {
             ui.label(&format!(
-                "GPU upload last frame: {} models | {:.2} MiB estimated",
+                "GPU upload last frame: {} operations | {:.2} MiB estimated",
                 diagnostics.resources.model_gpu_uploads_this_frame,
                 diagnostics.resources.model_gpu_upload_bytes_this_frame as f64 / (1024.0 * 1024.0)
             ));
         }
+        if let Some(warmup) = world.try_resource::<GpuResourceWarmup>() {
+            let counts = warmup.counts();
+            ui.label(&format!(
+                "Generic GPU resources: queued {} | preparing {} | ready {} | failed {}",
+                counts.queued, counts.preparing, counts.ready, counts.failed
+            ));
+        }
+        if let Some(render) = world.try_resource::<RenderDiagnostics>() {
+            ui.label(&format!(
+                "Standalone GPU residency: textures {} ({} MiB est) | samplers {}",
+                render.resources.live_streamed_textures,
+                render.resources.streamed_texture_bytes_estimate / (1024 * 1024),
+                render.resources.live_streamed_samplers
+            ));
+        }
+        if let Some(render) = world.try_resource::<RenderDiagnostics>() {
+            ui.label(&format!(
+                "Generic GPU uploads: {} this frame ({} MiB est) | cumulative {} | failures {} | releases {}",
+                render.resources.generic_gpu_uploads_this_frame,
+                render.resources.generic_gpu_upload_bytes_this_frame / (1024 * 1024),
+                render.resources.generic_gpu_uploads_cumulative,
+                render.resources.generic_gpu_upload_failures_cumulative,
+                render.resources.generic_gpu_releases_cumulative
+            ));
+        }
+
         if let Some(budget) = world.try_resource::<GpuUploadBudget>() {
             ui.label(&format!(
-                "GPU warmup: max {} models/frame | byte budget: {}",
+                "GPU warmup: max {} upload operations/frame | byte budget: {}",
                 budget.max_models_per_frame,
                 budget
                     .max_bytes_per_frame

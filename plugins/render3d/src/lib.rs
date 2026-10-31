@@ -6,6 +6,7 @@
 
 pub mod components;
 pub mod extract;
+pub mod gpu_streaming;
 pub mod mesh;
 pub mod model;
 pub mod post;
@@ -15,19 +16,27 @@ pub mod profiling;
 pub mod renderer;
 
 pub use components::{
-    BuiltinMesh, Camera3D, DynamicMeshInstance3D, FogSettings, MeshInstance, ModelInstance,
-    PointLight, SpotLight, SunLight, Transform3D,
+    BuiltinMesh, Camera3D, DynamicMeshInstance3D, FogSettings, GpuMeshInstance3D, MeshInstance,
+    ModelInstance, PointLight, SpotLight, SunLight, Transform3D,
 };
 pub use extract::{
     extract_scene_3d, ExtractedCamera3D, ExtractedDynamicMesh3D, ExtractedMesh3D, ExtractedModel3D,
     ExtractedScene3D, RenderExtraction3DPlugin,
 };
 pub use glam;
+pub use gpu_streaming::{
+    GpuResourceData, GpuResourceHandle, GpuResourceKey, GpuResourceLease, GpuResourceRequestError,
+    GpuResourceWarmup, GpuResourceWarmupCounts, GpuResourceWarmupStatus, OwnedPbrMaterialData,
+    OwnedTextureData,
+};
 pub use model::{try_upload_model, upload_model, validate_model_for_upload, GpuModelPart};
 pub use pollster;
 pub use prefab::register_prefab_components;
 pub use preload::{GpuUploadBudget, ModelWarmup, ModelWarmupStatus};
-pub use renderer::{Draw, MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, Scene, TextureData};
+pub use renderer::{
+    Draw, GpuSamplerAddressMode, GpuSamplerDesc, GpuSamplerFilter, MaterialId, MeshId,
+    MeshRenderer, PbrMaterialDesc, SamplerId, Scene, TextureData, TextureId,
+};
 pub use ribbon_render::gpu::{
     GpuContext, TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool,
 };
@@ -60,9 +69,24 @@ type ModelAssetKey = (u64, u32);
 type ModelAssetRevision = (ModelAssetKey, u64);
 type GpuValidationFuture = Pin<Box<dyn Future<Output = Option<wgpu::Error>> + Send + 'static>>;
 
+fn borrow_owned_texture<'a>(
+    source: &'a Option<crate::OwnedTextureData>,
+) -> Option<TextureData<'a>> {
+    source.as_ref().map(|image| TextureData {
+        width: image.width,
+        height: image.height,
+        rgba8: image.rgba8.as_slice(),
+    })
+}
+
 struct PendingModelValidation {
     handle: ribbon_assets::Handle<ribbon_plugin_gltf::ModelAsset>,
     path: Option<String>,
+    future: GpuValidationFuture,
+}
+
+struct PendingGpuResourceValidation {
+    handle: GpuResourceHandle,
     future: GpuValidationFuture,
 }
 
@@ -116,8 +140,11 @@ struct MeshPass {
     model_gpu_releases_cumulative: u64,
     model_gpu_uploads_this_frame: usize,
     model_gpu_upload_bytes_this_frame: u64,
+    generic_gpu_uploads_this_frame: usize,
+    generic_gpu_upload_bytes_this_frame: u64,
     // Pop-error-scope futures are Send but not guaranteed Sync; the mutex keeps FramePass Sync.
     pending_model_validations: Mutex<HashMap<ModelAssetRevision, PendingModelValidation>>,
+    pending_gpu_resource_validations: Mutex<HashMap<GpuResourceKey, PendingGpuResourceValidation>>,
     failed_model_uploads: HashMap<ModelAssetRevision, String>,
     cpu_phases: Vec<RenderPassTiming>,
 }
@@ -252,7 +279,8 @@ impl MeshPass {
             resources.scene_mesh_instances = extracted
                 .meshes
                 .len()
-                .saturating_add(extracted.dynamic_meshes.len());
+                .saturating_add(extracted.dynamic_meshes.len())
+                .saturating_add(extracted.gpu_meshes.len());
             resources.scene_model_placements = extracted.models.len();
         }
         resources.gpu_model_cache_entries = self.models.len();
@@ -268,9 +296,24 @@ impl MeshPass {
             resources.model_warmup_ready = counts.ready;
             resources.model_warmup_failed = counts.failed;
         }
+        if let Some(warmup) = world.try_resource::<GpuResourceWarmup>() {
+            let counts = warmup.counts();
+            resources.generic_gpu_warmup_queued = counts.queued;
+            resources.generic_gpu_warmup_preparing = counts.preparing;
+            resources.generic_gpu_warmup_ready = counts.ready;
+            resources.generic_gpu_warmup_failed = counts.failed;
+            resources.generic_gpu_uploads_cumulative = counts.completed_uploads;
+            resources.generic_gpu_upload_failures_cumulative = counts.failed_uploads;
+            resources.generic_gpu_releases_cumulative = counts.released_resources;
+        }
+        resources.generic_gpu_uploads_this_frame = self.generic_gpu_uploads_this_frame;
+        resources.generic_gpu_upload_bytes_this_frame = self.generic_gpu_upload_bytes_this_frame;
         if let Some(stats) = renderer_stats {
             resources.live_meshes = stats.live_meshes;
             resources.live_materials = stats.live_materials;
+            resources.live_streamed_textures = stats.live_standalone_textures;
+            resources.live_streamed_samplers = stats.live_samplers;
+            resources.streamed_texture_bytes_estimate = stats.standalone_texture_bytes_estimate;
             resources.visible_mesh_instances = stats.visible_mesh_instances;
             resources.visible_draw_calls = stats.visible_draw_calls;
             resources.shadow_draw_calls = stats.shadow_draw_calls;
@@ -437,6 +480,199 @@ impl MeshPass {
         }
     }
 
+    fn poll_pending_gpu_resource_validations(&mut self, world: &mut World, device: &wgpu::Device) {
+        let has_pending = !self
+            .pending_gpu_resource_validations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty();
+        if has_pending {
+            let _ = device.poll(wgpu::PollType::Poll);
+        }
+        let waker = Waker::noop();
+        let mut completed = Vec::new();
+        {
+            let mut pending = self
+                .pending_gpu_resource_validations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for (key, entry) in pending.iter_mut() {
+                let mut context = Context::from_waker(waker);
+                if let Poll::Ready(error) = entry.future.as_mut().poll(&mut context) {
+                    completed.push((*key, entry.handle, error.map(|value| value.to_string())));
+                }
+            }
+            for (key, _, _) in &completed {
+                pending.remove(key);
+            }
+        }
+        for (key, handle, error) in completed {
+            if let Some(error) = error {
+                if let Some(renderer) = self.renderer.as_mut() {
+                    match handle {
+                        GpuResourceHandle::Mesh(mesh) => {
+                            renderer.release_mesh(mesh);
+                        }
+                        GpuResourceHandle::Texture(texture) => {
+                            renderer.release_texture(texture);
+                        }
+                        GpuResourceHandle::Sampler(sampler) => {
+                            renderer.release_sampler(sampler);
+                        }
+                        GpuResourceHandle::Material(material) => {
+                            renderer.release_material(material);
+                        }
+                    }
+                }
+                if world.try_resource::<GpuResourceWarmup>().is_some() {
+                    world
+                        .resource_mut::<GpuResourceWarmup>()
+                        .fail(key, format!("GPU resource validation failed: {error}"));
+                }
+            } else if world.try_resource::<GpuResourceWarmup>().is_some() {
+                world
+                    .resource_mut::<GpuResourceWarmup>()
+                    .complete(key, handle);
+            }
+        }
+
+        // Lease expiry is observed on the render thread so GPU destruction stays with its owner.
+        let orphaned = if world.try_resource::<GpuResourceWarmup>().is_some() {
+            world.resource_mut::<GpuResourceWarmup>().collect_orphans()
+        } else {
+            Vec::new()
+        };
+        if let Some(renderer) = self.renderer.as_mut() {
+            for handle in orphaned {
+                match handle {
+                    GpuResourceHandle::Mesh(mesh) => {
+                        renderer.release_mesh(mesh);
+                    }
+                    GpuResourceHandle::Texture(texture) => {
+                        renderer.release_texture(texture);
+                    }
+                    GpuResourceHandle::Sampler(sampler) => {
+                        renderer.release_sampler(sampler);
+                    }
+                    GpuResourceHandle::Material(material) => {
+                        renderer.release_material(material);
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_generic_gpu_warmups(
+        &mut self,
+        world: &mut World,
+        target: &FrameTarget<'_>,
+        frame_budget: &mut ModelUploadFrameBudget,
+        profile_cpu: bool,
+    ) {
+        while let Some(next_bytes) = world
+            .try_resource::<GpuResourceWarmup>()
+            .and_then(GpuResourceWarmup::next_upload_bytes)
+        {
+            if !frame_budget.limits.allows_upload(
+                frame_budget.uploads,
+                frame_budget.uploaded_bytes,
+                next_bytes,
+            ) {
+                break;
+            }
+            let job = if world.try_resource::<GpuResourceWarmup>().is_some() {
+                world.resource_mut::<GpuResourceWarmup>().take_next_job()
+            } else {
+                None
+            };
+            let Some(job) = job else { break };
+            let started = profile_cpu.then(Instant::now);
+            if self.renderer.is_none() {
+                self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
+            }
+            let Some(renderer) = self.renderer.as_mut() else {
+                if world.try_resource::<GpuResourceWarmup>().is_some() {
+                    world
+                        .resource_mut::<GpuResourceWarmup>()
+                        .fail(job.key, "renderer could not be initialized".to_owned());
+                }
+                continue;
+            };
+            target
+                .device
+                .push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+            target
+                .device
+                .push_error_scope(wgpu::ErrorFilter::Validation);
+            let handle = match job.payload.as_ref() {
+                GpuResourceData::Mesh { vertices, indices } => {
+                    GpuResourceHandle::Mesh(renderer.upload_mesh(target.device, vertices, indices))
+                }
+                GpuResourceData::Texture { image, srgb } => {
+                    GpuResourceHandle::Texture(renderer.upload_texture(
+                        target.device,
+                        target.queue,
+                        TextureData {
+                            width: image.width,
+                            height: image.height,
+                            rgba8: image.rgba8.as_slice(),
+                        },
+                        "streamed standalone texture",
+                        *srgb,
+                    ))
+                }
+                GpuResourceData::Sampler(sampler) => {
+                    GpuResourceHandle::Sampler(renderer.upload_sampler(target.device, *sampler))
+                }
+                GpuResourceData::PbrMaterial(material) => {
+                    GpuResourceHandle::Material(renderer.upload_pbr_material_with_maps(
+                        target.device,
+                        target.queue,
+                        PbrMaterialDesc {
+                            base_color: material.base_color,
+                            metallic: material.metallic,
+                            roughness: material.roughness,
+                            base_color_texture: borrow_owned_texture(&material.base_color_texture),
+                            metallic_roughness_texture: borrow_owned_texture(
+                                &material.metallic_roughness_texture,
+                            ),
+                            normal_texture: borrow_owned_texture(&material.normal_texture),
+                            occlusion_texture: borrow_owned_texture(&material.occlusion_texture),
+                            occlusion_strength: material.occlusion_strength,
+                            emissive_texture: borrow_owned_texture(&material.emissive_texture),
+                            emissive_factor: material.emissive_factor,
+                        },
+                    ))
+                }
+            };
+            let validation_result = target.device.pop_error_scope();
+            let out_of_memory_result = target.device.pop_error_scope();
+            let future: GpuValidationFuture = Box::pin(async move {
+                let validation_error = validation_result.await;
+                let out_of_memory_error = out_of_memory_result.await;
+                validation_error.or(out_of_memory_error)
+            });
+            self.pending_gpu_resource_validations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert(job.key, PendingGpuResourceValidation { handle, future });
+            frame_budget.uploads = frame_budget.uploads.saturating_add(1);
+            frame_budget.uploaded_bytes = frame_budget
+                .uploaded_bytes
+                .saturating_add(job.estimated_bytes);
+            self.generic_gpu_uploads_this_frame =
+                self.generic_gpu_uploads_this_frame.saturating_add(1);
+            self.generic_gpu_upload_bytes_this_frame = self
+                .generic_gpu_upload_bytes_this_frame
+                .saturating_add(job.estimated_bytes);
+            record_cpu_phase(
+                &mut self.cpu_phases,
+                "generic GPU resource upload submission",
+                started,
+            );
+        }
+    }
+
     fn model_upload_pending(&self, revision: ModelAssetRevision) -> bool {
         self.pending_model_validations
             .lock()
@@ -557,6 +793,8 @@ impl MeshPass {
         // upload count into the current profile row.
         self.model_gpu_uploads_this_frame = 0;
         self.model_gpu_upload_bytes_this_frame = 0;
+        self.generic_gpu_uploads_this_frame = 0;
+        self.generic_gpu_upload_bytes_this_frame = 0;
         let (width, height) = target.size;
         if let Some(cpu_time_ns) = extracted.extraction_cpu_time_ns {
             self.cpu_phases.push(RenderPassTiming {
@@ -566,6 +804,7 @@ impl MeshPass {
         }
         let cache_started = profile_cpu.then(Instant::now);
         self.poll_pending_model_validations(world, target.device);
+        self.poll_pending_gpu_resource_validations(world, target.device);
         let mut warmup_snapshots = world
             .try_resource::<ModelWarmup>()
             .map(ModelWarmup::snapshots)
@@ -604,15 +843,29 @@ impl MeshPass {
             self.model_gpu_releases_cumulative = self
                 .model_gpu_releases_cumulative
                 .saturating_add(self.models.len() as u64);
-            self.models.clear();
+            // A model hot reload invalidates model-derived buffers, not unrelated generic GPU
+            // resources. Keep the MeshRenderer (and its independent mesh/material handles) alive
+            // while releasing every old model/dynamic-mesh allocation on the renderer thread.
+            if let Some(renderer) = self.renderer.as_mut() {
+                for (_, parts) in self.models.drain() {
+                    for part in parts {
+                        renderer.release_mesh(part.mesh);
+                        renderer.release_material(part.material);
+                    }
+                }
+                for (_, cached) in self.dynamic_meshes.drain() {
+                    renderer.release_mesh(cached.mesh);
+                }
+            } else {
+                self.models.clear();
+                self.dynamic_meshes.clear();
+            }
             self.asset_revisions.clear();
-            self.dynamic_meshes.clear();
             self.pending_model_validations
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clear();
             self.failed_model_uploads.clear();
-            self.renderer = None;
             self.release_hdr_target();
             // A hot-reloaded model revision invalidates derived GPU state for the pass. Any other
             // still-requested, resident warmup must return to GPU-pending rather than falsely
@@ -712,12 +965,25 @@ impl MeshPass {
         );
 
         if width == 0 || height == 0 {
-            // A minimized/zero-sized target must not postpone asset-cache cleanup. Release any
-            // size-specific HDR view only after its tone-mapper bindings are dropped. Keep instance
-            // capacity while placements remain live; empty stress-cycle intervals may shrink it.
+            // A minimized target cannot render visible placements, but GPU resource preparation
+            // must continue: scene readiness must not deadlock waiting for a window resize.
+            let mut background_budget = ModelUploadFrameBudget {
+                uploads: 0,
+                uploaded_bytes: 0,
+                limits: world
+                    .try_resource::<GpuUploadBudget>()
+                    .copied()
+                    .unwrap_or_default()
+                    .normalized(),
+            };
+            self.process_generic_gpu_warmups(world, target, &mut background_budget, profile_cpu);
+            self.generic_gpu_uploads_this_frame = background_budget.uploads;
+            self.generic_gpu_upload_bytes_this_frame = background_budget.uploaded_bytes;
+            // Release any size-specific HDR view only after its tone-mapper bindings are dropped.
             if extracted.meshes.is_empty()
                 && extracted.dynamic_meshes.is_empty()
                 && extracted.models.is_empty()
+                && extracted.gpu_meshes.is_empty()
             {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.maintain_instance_buffers(target.device, 0);
@@ -730,6 +996,20 @@ impl MeshPass {
         }
 
         let Some(camera) = extracted.camera else {
+            // The renderer may be waiting for the very region that creates its first camera. Keep
+            // bounded background GPU uploads progressing even while no scene camera is active.
+            let mut background_budget = ModelUploadFrameBudget {
+                uploads: 0,
+                uploaded_bytes: 0,
+                limits: world
+                    .try_resource::<GpuUploadBudget>()
+                    .copied()
+                    .unwrap_or_default()
+                    .normalized(),
+            };
+            self.process_generic_gpu_warmups(world, target, &mut background_budget, profile_cpu);
+            self.generic_gpu_uploads_this_frame = background_budget.uploads;
+            self.generic_gpu_upload_bytes_this_frame = background_budget.uploaded_bytes;
             if let Some(renderer) = self.renderer.as_mut() {
                 renderer.maintain_instance_buffers(target.device, 0);
             }
@@ -808,6 +1088,12 @@ impl MeshPass {
             })
             .collect();
         draws.extend(dynamic_draws);
+        draws.extend(extracted.gpu_meshes.iter().map(|placement| Draw {
+            mesh: placement.mesh,
+            material: placement.material,
+            model: placement.transform,
+            tint: placement.color,
+        }));
         record_cpu_phase(
             &mut self.cpu_phases,
             "built-in scene conversion",
@@ -873,6 +1159,10 @@ impl MeshPass {
                     tint: [1.0; 3],
                 }));
             }
+
+            // Standalone meshes/materials use the same count/byte admission budget as model
+            // uploads. Visible placements above remain the highest-priority work in this pass.
+            self.process_generic_gpu_warmups(world, target, &mut upload_frame_budget, profile_cpu);
 
             for request in &warmup_snapshots {
                 if matches!(&request.status, ModelWarmupStatus::Failed(_)) {
@@ -964,8 +1254,12 @@ impl MeshPass {
                 );
             }
         });
-        self.model_gpu_uploads_this_frame = upload_frame_budget.uploads;
-        self.model_gpu_upload_bytes_this_frame = upload_frame_budget.uploaded_bytes;
+        self.model_gpu_uploads_this_frame = upload_frame_budget
+            .uploads
+            .saturating_sub(self.generic_gpu_uploads_this_frame);
+        self.model_gpu_upload_bytes_this_frame = upload_frame_budget
+            .uploaded_bytes
+            .saturating_sub(self.generic_gpu_upload_bytes_this_frame);
 
         record_cpu_phase(
             &mut self.cpu_phases,

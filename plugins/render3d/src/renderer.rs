@@ -32,6 +32,75 @@ pub struct MaterialId {
     generation: u32,
 }
 
+/// Generation-checked handle to a standalone uploaded texture retained by the renderer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TextureId {
+    slot: usize,
+    generation: u32,
+}
+
+/// Generation-checked handle to a standalone uploaded sampler.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SamplerId {
+    slot: usize,
+    generation: u32,
+}
+
+/// Addressing mode for one axis of a standalone GPU sampler.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuSamplerAddressMode {
+    ClampToEdge,
+    Repeat,
+    MirrorRepeat,
+}
+
+/// Filtering mode for a standalone GPU sampler.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuSamplerFilter {
+    Nearest,
+    Linear,
+}
+
+/// Renderer-independent sampler descriptor accepted by generic GPU warmup.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GpuSamplerDesc {
+    pub address_mode_u: GpuSamplerAddressMode,
+    pub address_mode_v: GpuSamplerAddressMode,
+    pub address_mode_w: GpuSamplerAddressMode,
+    pub mag_filter: GpuSamplerFilter,
+    pub min_filter: GpuSamplerFilter,
+    pub mipmap_filter: GpuSamplerFilter,
+    pub lod_min_clamp: f32,
+    pub lod_max_clamp: f32,
+}
+
+impl Default for GpuSamplerDesc {
+    fn default() -> Self {
+        Self {
+            address_mode_u: GpuSamplerAddressMode::Repeat,
+            address_mode_v: GpuSamplerAddressMode::Repeat,
+            address_mode_w: GpuSamplerAddressMode::Repeat,
+            mag_filter: GpuSamplerFilter::Linear,
+            min_filter: GpuSamplerFilter::Linear,
+            mipmap_filter: GpuSamplerFilter::Linear,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 32.0,
+        }
+    }
+}
+
+impl GpuSamplerDesc {
+    pub fn validate(self) -> Result<(), String> {
+        if !self.lod_min_clamp.is_finite() || !self.lod_max_clamp.is_finite() {
+            return Err("sampler LOD clamps must be finite".to_owned());
+        }
+        if self.lod_min_clamp < 0.0 || self.lod_max_clamp < self.lod_min_clamp {
+            return Err("sampler LOD range must satisfy 0 <= min <= max".to_owned());
+        }
+        Ok(())
+    }
+}
+
 /// RGBA8 pixels in sRGB encoding, row-major from the top-left.
 #[derive(Clone, Copy, Debug)]
 pub struct TextureData<'a> {
@@ -198,6 +267,16 @@ struct MaterialSlot {
     material: Option<GpuMaterial>,
 }
 
+struct TextureSlot {
+    generation: u32,
+    texture: Option<Arc<GpuTexture>>,
+}
+
+struct SamplerSlot {
+    generation: u32,
+    sampler: Option<wgpu::Sampler>,
+}
+
 /// Estimated live resource usage for one [`MeshRenderer`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MeshRendererResourceStats {
@@ -205,6 +284,12 @@ pub struct MeshRendererResourceStats {
     pub live_meshes: usize,
     /// Number of currently live materials, including the built-in white material.
     pub live_materials: usize,
+    /// Unique cached textures retained only by standalone texture leases rather than materials.
+    pub live_standalone_textures: usize,
+    /// Estimated bytes for standalone-only textures, included in total residency estimates.
+    pub standalone_texture_bytes_estimate: u64,
+    /// Number of live standalone sampler objects. Driver memory is not reported for samplers.
+    pub live_samplers: usize,
     /// Number of camera-visible mesh instances prepared for the main color pass.
     pub visible_mesh_instances: usize,
     /// Number of grouped indexed draw calls issued by the main color pass.
@@ -245,6 +330,7 @@ impl MeshRendererResourceStats {
     pub fn total_bytes_estimate(self) -> u64 {
         self.mesh_bytes_estimate
             .saturating_add(self.material_bytes_estimate)
+            .saturating_add(self.standalone_texture_bytes_estimate)
             .saturating_add(self.buffer_bytes_estimate)
             .saturating_add(self.depth_target_bytes_estimate)
     }
@@ -270,6 +356,11 @@ pub struct MeshRenderer {
     free_mesh_slots: Vec<usize>,
     materials: Vec<MaterialSlot>,
     free_material_slots: Vec<usize>,
+    // Standalone texture leases keep the Arc alive independently of any material bind group.
+    textures: Vec<TextureSlot>,
+    free_texture_slots: Vec<usize>,
+    samplers: Vec<SamplerSlot>,
+    free_sampler_slots: Vec<usize>,
     /// Weak content-addressed texture entries: live materials own shared textures, and released
     /// materials allow unreferenced GPU textures to be dropped immediately.
     texture_cache: HashMap<TextureCacheKey, Weak<GpuTexture>>,
