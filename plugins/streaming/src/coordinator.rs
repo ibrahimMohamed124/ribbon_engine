@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
@@ -9,10 +10,17 @@ use ribbon_plugin_gltf::ModelAsset;
 use ribbon_plugin_physics::{Collider, PhysicsDebugData};
 use ribbon_plugin_render3d::{ModelInstance, ModelWarmup, ModelWarmupStatus, PointLight};
 use ribbon_plugins::Plugin;
+use ribbon_reflect::TypeRegistry;
 use ribbon_render::profiling::{RenderDiagnostics, RenderProfileRecorder};
-use ribbon_scene::Transform3D;
+use ribbon_scene::{
+    instantiate_with_context, HierarchyExt, PrefabCodecRegistry, PrefabLoadContext, SceneDoc,
+    Transform3D,
+};
 
-use crate::{RegionBounds, WorldPartitionIndex};
+use crate::{
+    RegionBounds, StreamingAssetAdapters, StreamingDependencyState, WorldPartitionAsset,
+    WorldPartitionIndex,
+};
 
 const RECENT_EVENT_CAPACITY: usize = 128;
 
@@ -114,6 +122,7 @@ pub struct SceneSnapshot {
     pub region_count: usize,
     pub ready_region_count: usize,
     pub active_region_count: usize,
+    pub prefab_entity_count: usize,
     pub failures: Vec<(RegionId, String)>,
 }
 
@@ -202,6 +211,9 @@ pub struct RegionDefinition {
     pub name: String,
     pub bounds: RegionBounds,
     pub models: Vec<RegionModel>,
+    /// Optional asynchronously loaded `.scenedoc` whose prefab entities are owned by this region.
+    /// Its required typed asset dependencies are discovered through registered prefab codecs.
+    pub scene_doc_path: Option<String>,
     pub colliders: Vec<RegionCollider>,
     pub point_lights: Vec<RegionPointLight>,
     pub dependencies: Vec<RegionId>,
@@ -216,6 +228,7 @@ impl RegionDefinition {
             name: name.into(),
             bounds,
             models: Vec::new(),
+            scene_doc_path: None,
             colliders: Vec::new(),
             point_lights: Vec::new(),
             dependencies: Vec::new(),
@@ -226,6 +239,13 @@ impl RegionDefinition {
 
     pub fn with_model(mut self, model: RegionModel) -> Self {
         self.models.push(model);
+        self
+    }
+
+    /// Attach a serialized scene document. Decoding and declared dependencies remain asynchronous;
+    /// the prefab is instantiated only after its required resources are ready.
+    pub fn with_scene_doc(mut self, path: impl Into<String>) -> Self {
+        self.scene_doc_path = Some(path.into());
         self
     }
 
@@ -370,6 +390,10 @@ pub struct RegionSnapshot {
     pub distance_to_nearest_observer: Option<f32>,
     pub scheduling_priority: i32,
     pub model_count: usize,
+    pub has_scene_doc: bool,
+    pub prefab_entity_count: usize,
+    /// Number of additional typed CPU dependencies retained from the SceneDoc codecs.
+    pub typed_dependency_count: usize,
     pub point_light_count: usize,
     pub collider_count: usize,
     /// Number of ECS entities currently owned by the region (including render-only previews).
@@ -447,6 +471,14 @@ struct RegionRecord {
     definition: RegionDefinition,
     state: RegionState,
     leases: BTreeMap<String, AssetRef<ModelAsset>>,
+    scene_doc_lease: Option<AssetRef<SceneDoc>>,
+    scene_doc_dependencies_resolved: bool,
+    scene_doc_instantiated: bool,
+    prefab_entities: Vec<Entity>,
+    /// Type-erased strong leases for required non-ModelAsset dependencies declared by SceneDoc codecs.
+    typed_dependency_leases: BTreeMap<(String, String), Box<dyn Any + Send + Sync>>,
+    pending_typed_dependency_paths: Vec<(String, String)>,
+    next_typed_dependency_request: usize,
     pending_asset_paths: Vec<String>,
     next_asset_request: usize,
     visual_entities: Vec<Entity>,
@@ -555,6 +587,13 @@ impl StreamingCoordinator {
         if definition.name.trim().is_empty() {
             return Err("region name must not be empty".to_owned());
         }
+        if definition
+            .scene_doc_path
+            .as_ref()
+            .is_some_and(|path| path.trim().is_empty())
+        {
+            return Err("region scene document path must not be empty".to_owned());
+        }
         if !definition.bounds.min.is_finite()
             || !definition.bounds.max.is_finite()
             || definition.bounds.min.x > definition.bounds.max.x
@@ -634,6 +673,13 @@ impl StreamingCoordinator {
                 definition,
                 state: RegionState::Unloaded,
                 leases: BTreeMap::new(),
+                scene_doc_lease: None,
+                scene_doc_dependencies_resolved: false,
+                scene_doc_instantiated: false,
+                prefab_entities: Vec::new(),
+                typed_dependency_leases: BTreeMap::new(),
+                pending_typed_dependency_paths: Vec::new(),
+                next_typed_dependency_request: 0,
                 pending_asset_paths: Vec::new(),
                 next_asset_request: 0,
                 visual_entities: Vec::new(),
@@ -656,6 +702,105 @@ impl StreamingCoordinator {
             },
         );
         Ok(())
+    }
+
+    /// Register all regions from an authored partition. Region dependencies are topologically
+    /// ordered; unknown references and cycles are rejected before mutating the coordinator.
+    pub fn register_partition(
+        &mut self,
+        partition: &WorldPartitionAsset,
+    ) -> Result<Vec<RegionId>, String> {
+        let definitions = partition.region_definitions()?;
+        let partition_ids: HashSet<_> = definitions
+            .iter()
+            .map(|definition| definition.id.clone())
+            .collect();
+        for definition in &definitions {
+            if self.regions.contains_key(&definition.id) {
+                return Err(format!(
+                    "world partition `{}` contains region `{}` which is already registered",
+                    partition.id,
+                    definition.id.as_str()
+                ));
+            }
+            validate_policy(definition.policy)?;
+            let mut unique_dependencies = HashSet::new();
+            for dependency in &definition.dependencies {
+                if dependency == &definition.id {
+                    return Err(format!(
+                        "region `{}` cannot depend on itself",
+                        definition.id.as_str()
+                    ));
+                }
+                if !unique_dependencies.insert(dependency) {
+                    return Err(format!(
+                        "region `{}` contains duplicate dependency `{}`",
+                        definition.id.as_str(),
+                        dependency.as_str()
+                    ));
+                }
+                if !partition_ids.contains(dependency) && !self.regions.contains_key(dependency) {
+                    return Err(format!(
+                        "region `{}` depends on unknown region `{}`",
+                        definition.id.as_str(),
+                        dependency.as_str()
+                    ));
+                }
+            }
+            let mut unique_neighbors = HashSet::new();
+            for neighbor in &definition.neighbors {
+                if !unique_neighbors.insert(neighbor) {
+                    return Err(format!(
+                        "region `{}` contains duplicate neighbor `{}`",
+                        definition.id.as_str(),
+                        neighbor.as_str()
+                    ));
+                }
+                if !partition_ids.contains(neighbor) && !self.regions.contains_key(neighbor) {
+                    return Err(format!(
+                        "region `{}` names unknown neighbor `{}`",
+                        definition.id.as_str(),
+                        neighbor.as_str()
+                    ));
+                }
+            }
+        }
+
+        let mut pending: BTreeMap<RegionId, RegionDefinition> = definitions
+            .into_iter()
+            .map(|definition| (definition.id.clone(), definition))
+            .collect();
+        let mut registered: HashSet<_> = self.regions.keys().cloned().collect();
+        let mut order = Vec::with_capacity(pending.len());
+        while !pending.is_empty() {
+            let next = pending
+                .iter()
+                .find(|(_, definition)| {
+                    definition
+                        .dependencies
+                        .iter()
+                        .all(|dependency| registered.contains(dependency))
+                })
+                .map(|(id, _)| id.clone());
+            let Some(id) = next else {
+                let blocked = pending
+                    .values()
+                    .map(|definition| definition.id.as_str().to_owned())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(format!(
+                    "world partition `{}` contains a region dependency cycle among: {blocked}",
+                    partition.id
+                ));
+            };
+            let definition = pending.remove(&id).expect("topological candidate exists");
+            // All validation and reference resolution was performed above, so this registration
+            // cannot leave a partially accepted partition for malformed authored input.
+            self.register_region(definition)?;
+            registered.insert(id.clone());
+            order.push(id);
+        }
+        Ok(order)
     }
 
     /// Register a logical scene composed from regions already registered with this coordinator.
@@ -874,9 +1019,12 @@ impl StreamingCoordinator {
             .map(|scene| {
                 let mut ready_region_count = 0;
                 let mut active_region_count = 0;
+                let mut prefab_entity_count: usize = 0;
                 let mut failures = Vec::new();
                 for id in &scene.definition.regions {
                     if let Some(record) = self.regions.get(id) {
+                        prefab_entity_count =
+                            prefab_entity_count.saturating_add(record.prefab_entities.len());
                         if record.state == RegionState::Ready || record.state == RegionState::Active
                         {
                             ready_region_count += 1;
@@ -898,6 +1046,7 @@ impl StreamingCoordinator {
                     region_count: scene.definition.regions.len(),
                     ready_region_count,
                     active_region_count,
+                    prefab_entity_count,
                     failures,
                 }
             })
@@ -1027,10 +1176,14 @@ impl StreamingCoordinator {
                     distance_to_nearest_observer: record.last_distance,
                     scheduling_priority: record.scheduling_priority,
                     model_count: record.definition.models.len(),
+                    has_scene_doc: record.definition.scene_doc_path.is_some(),
+                    prefab_entity_count: record.prefab_entities.len(),
+                    typed_dependency_count: record.typed_dependency_leases.len(),
                     point_light_count: record.definition.point_lights.len(),
                     collider_count: record.definition.colliders.len(),
                     active_entity_count: record.visual_entities.len()
-                        + record.collider_entities.len(),
+                        + record.collider_entities.len()
+                        + record.prefab_entities.len(),
                     visual_entity_count: record.visual_entities.len(),
                     spawned_model_instances: record
                         .pending_visual_spawn
@@ -1261,6 +1414,12 @@ impl StreamingCoordinator {
         self.next_use_sequence = self.next_use_sequence.saturating_add(1);
         if let Some(record) = self.regions.get_mut(id) {
             record.leases.clear();
+            record.scene_doc_lease = None;
+            record.scene_doc_dependencies_resolved = false;
+            record.scene_doc_instantiated = false;
+            record.pending_typed_dependency_paths.clear();
+            record.next_typed_dependency_request = 0;
+            record.prefab_entities.clear();
             record.pending_asset_paths = pending_asset_paths;
             record.next_asset_request = 0;
             record.last_used_sequence = use_sequence;
@@ -1285,6 +1444,49 @@ impl StreamingCoordinator {
     }
 
     fn queue_asset_request_batch(&mut self, world: &mut World, id: &RegionId, budget: &mut usize) {
+        if *budget == 0 {
+            return;
+        }
+        let Some((scene_doc_path, has_scene_doc_lease, priority)) =
+            self.regions.get(id).map(|record| {
+                (
+                    record.definition.scene_doc_path.clone(),
+                    record.scene_doc_lease.is_some(),
+                    record.scheduling_priority,
+                )
+            })
+        else {
+            return;
+        };
+
+        // Serialized scene descriptions use the exact same bounded AssetServer worker queue as
+        // all other CPU assets. A full queue is backpressure, not a terminal region failure.
+        if let Some(path) = scene_doc_path.filter(|_| !has_scene_doc_lease) {
+            let result = world.resource_scope::<AssetServer, _>(|_, server| {
+                server.retry_ref_with_priority::<SceneDoc>(&path, priority)
+            });
+            match result {
+                Ok(lease) => {
+                    if let Some(record) = self.regions.get_mut(id) {
+                        record.scene_doc_lease = Some(lease);
+                    }
+                    *budget = budget.saturating_sub(1);
+                }
+                Err(error) if error.kind == LoadErrorKind::QueueFull => {
+                    *budget = 0;
+                    return;
+                }
+                Err(error) => {
+                    self.fail_region(
+                        world,
+                        id,
+                        format!("scene document request `{path}` failed: {error}"),
+                    );
+                    return;
+                }
+            }
+        }
+
         if *budget == 0 {
             return;
         }
@@ -1318,13 +1520,61 @@ impl StreamingCoordinator {
                 Err(error) if error.kind == LoadErrorKind::QueueFull => {
                     // Queue saturation is backpressure, not a broken asset. The failed path is
                     // retried on the next Update after AssetServer has committed completions.
-                    // Stop this frame's submissions so lower-priority regions do not probe the
-                    // same full queue repeatedly.
                     *budget = 0;
                     break;
                 }
                 Err(error) => {
                     self.fail_region(world, id, format!("asset request `{path}` failed: {error}"));
+                    return;
+                }
+            }
+        }
+        if *budget == 0 {
+            return;
+        }
+        loop {
+            let next = self.regions.get(id).and_then(|record| {
+                record
+                    .pending_typed_dependency_paths
+                    .get(record.next_typed_dependency_request)
+                    .cloned()
+                    .map(|(asset_type, path)| (asset_type, path, record.scheduling_priority))
+            });
+            let Some((asset_type, path, priority)) = next else {
+                break;
+            };
+            let result = world.resource_scope::<AssetServer, _>(|world, server| {
+                world.resource::<StreamingAssetAdapters>().request(
+                    server,
+                    &asset_type,
+                    &path,
+                    priority,
+                )
+            });
+            match result {
+                Ok(lease) => {
+                    if let Some(record) = self.regions.get_mut(id) {
+                        record
+                            .typed_dependency_leases
+                            .insert((asset_type, path), lease);
+                        record.next_typed_dependency_request =
+                            record.next_typed_dependency_request.saturating_add(1);
+                    }
+                    *budget = budget.saturating_sub(1);
+                    if *budget == 0 {
+                        break;
+                    }
+                }
+                Err(error) if error.kind == LoadErrorKind::QueueFull => {
+                    *budget = 0;
+                    break;
+                }
+                Err(error) => {
+                    self.fail_region(
+                        world,
+                        id,
+                        format!("typed asset dependency request `{path}` failed: {error}"),
+                    );
                     return;
                 }
             }
@@ -1634,22 +1884,301 @@ impl StreamingCoordinator {
     }
 
     fn check_cpu_readiness(&mut self, world: &mut World, id: &RegionId) {
-        let Some((leases, all_requests_submitted, priority)) = self.regions.get(id).map(|record| {
+        let Some((
+            document_path,
+            document_lease,
+            dependencies_resolved,
+            all_requests_submitted,
+            priority,
+        )) = self.regions.get(id).map(|record| {
             (
-                record
-                    .leases
-                    .iter()
-                    .map(|(path, lease)| (path.clone(), lease.handle()))
-                    .collect::<Vec<_>>(),
-                record.next_asset_request >= record.pending_asset_paths.len(),
+                record.definition.scene_doc_path.clone(),
+                record.scene_doc_lease.as_ref().map(AssetRef::handle),
+                record.scene_doc_dependencies_resolved,
+                record.next_asset_request >= record.pending_asset_paths.len()
+                    && record.next_typed_dependency_request
+                        >= record.pending_typed_dependency_paths.len()
+                    && (record.definition.scene_doc_path.is_none()
+                        || record.scene_doc_lease.is_some()),
                 record.scheduling_priority,
             )
-        }) else {
+        })
+        else {
             return;
         };
         if !all_requests_submitted {
             return;
         }
+
+        // Resolve typed resources declared by SceneDoc component codecs before considering CPU
+        // readiness. The document and every required ModelAsset remain strongly leased until the
+        // region is explicitly unloaded; AssetServer still deduplicates shared typed paths.
+        if let (Some(path), Some(handle)) = (document_path.as_ref(), document_lease) {
+            let (document, document_state, current_handle) = {
+                let server = world.resource::<AssetServer>();
+                (
+                    server.get(handle).cloned(),
+                    server.state::<SceneDoc>(path).cloned(),
+                    server.current_handle::<SceneDoc>(path),
+                )
+            };
+            let Some(document) = document else {
+                if current_handle.is_some() && current_handle != Some(handle) {
+                    // SceneDoc hot reload is generation-aware just like model hot reload. Keep
+                    // the previous document lease until the replacement generation is pinned.
+                    match document_state {
+                        Some(LoadState::Failed(error)) => {
+                            self.fail_region(
+                                world,
+                                id,
+                                format!("reloaded scene document `{path}` failed: {error}"),
+                            );
+                            return;
+                        }
+                        Some(LoadState::Loading | LoadState::Loaded | LoadState::Unloaded) => {
+                            let reacquired = world.resource_scope::<AssetServer, _>(|_, server| {
+                                server.request_ref_with_priority::<SceneDoc>(path, priority)
+                            });
+                            match reacquired {
+                                Ok(lease) => {
+                                    let old_lease = self.regions.get_mut(id).and_then(|record| {
+                                        let old = record.scene_doc_lease.replace(lease);
+                                        record.scene_doc_dependencies_resolved = false;
+                                        old
+                                    });
+                                    if let Some(old_lease) = old_lease {
+                                        let old_handle = old_lease.handle();
+                                        drop(old_lease);
+                                        world.resource_scope::<AssetServer, _>(|_, server| {
+                                            let _ = server.cancel_if_unleased(old_handle);
+                                        });
+                                    }
+                                }
+                                Err(error) if error.kind == LoadErrorKind::QueueFull => return,
+                                Err(error) => self.fail_region(
+                                    world,
+                                    id,
+                                    format!("could not reacquire reloaded scene document `{path}`: {error}"),
+                                ),
+                            }
+                            return;
+                        }
+                        None => {}
+                    }
+                }
+                match document_state {
+                    Some(LoadState::Loading) => return,
+                    Some(LoadState::Failed(error)) => {
+                        self.fail_region(
+                            world,
+                            id,
+                            format!("required scene document `{path}` failed: {error}"),
+                        );
+                        return;
+                    }
+                    Some(LoadState::Unloaded) => {
+                        let reacquired = world.resource_scope::<AssetServer, _>(|_, server| {
+                            server.request_ref_with_priority::<SceneDoc>(path, priority)
+                        });
+                        match reacquired {
+                            Ok(lease) => {
+                                let old_lease = self
+                                    .regions
+                                    .get_mut(id)
+                                    .and_then(|record| record.scene_doc_lease.replace(lease));
+                                if let Some(old_lease) = old_lease {
+                                    let old_handle = old_lease.handle();
+                                    drop(old_lease);
+                                    world.resource_scope::<AssetServer, _>(|_, server| {
+                                        let _ = server.cancel_if_unleased(old_handle);
+                                    });
+                                }
+                            }
+                            Err(error) if error.kind == LoadErrorKind::QueueFull => return,
+                            Err(error) => self.fail_region(
+                                world,
+                                id,
+                                format!("could not reacquire scene document `{path}`: {error}"),
+                            ),
+                        }
+                        return;
+                    }
+                    Some(LoadState::Loaded) => {
+                        self.fail_region(world, id, format!("scene document `{path}` is marked Loaded but has no resident CPU value"));
+                        return;
+                    }
+                    None => {
+                        self.fail_region(
+                            world,
+                            id,
+                            format!("scene document `{path}` disappeared from AssetServer"),
+                        );
+                        return;
+                    }
+                }
+            };
+
+            if !dependencies_resolved {
+                let dependency_result = world
+                    .try_resource::<PrefabCodecRegistry>()
+                    .map(|codecs| document.asset_dependencies(codecs));
+                let dependencies = match dependency_result {
+                    Some(Ok(dependencies)) => dependencies,
+                    Some(Err(error)) => {
+                        self.fail_region(
+                            world,
+                            id,
+                            format!("scene document `{path}` dependency discovery failed: {error}"),
+                        );
+                        return;
+                    }
+                    None => {
+                        self.fail_region(world, id, "SceneDoc preparation requires PrefabCodecRegistry; ensure Render3dPlugin is installed before StreamingPlugin".to_owned());
+                        return;
+                    }
+                };
+                let model_type = std::any::type_name::<ModelAsset>();
+                let mut discovered_models = Vec::new();
+                let mut discovered_typed = Vec::new();
+                for dependency in dependencies {
+                    if !dependency.required {
+                        // Optional resources are deliberately not readiness blockers. Their codec
+                        // must implement a fallback when the optional handle is not resident.
+                        continue;
+                    }
+                    if dependency.asset_type == model_type {
+                        discovered_models.push(dependency.path);
+                    } else {
+                        let adapter_registered = world
+                            .try_resource::<StreamingAssetAdapters>()
+                            .is_some_and(|adapters| adapters.contains(&dependency.asset_type));
+                        if !adapter_registered {
+                            self.fail_region(
+                                world,
+                                id,
+                                format!(
+                                    "scene document `{path}` declares required asset type `{}` for component `{}`, but no StreamingAssetAdapters entry is registered",
+                                    dependency.asset_type, dependency.component
+                                ),
+                            );
+                            return;
+                        }
+                        discovered_typed.push((dependency.asset_type, dependency.path));
+                    }
+                }
+                discovered_models.sort();
+                discovered_models.dedup();
+                discovered_typed.sort();
+                discovered_typed.dedup();
+                let mut obsolete_model_paths = Vec::new();
+                let mut obsolete_typed_leases = Vec::new();
+                if let Some(record) = self.regions.get_mut(id) {
+                    // SceneDoc generations may declare a different dependency graph. Keep the
+                    // region's authored model placements, but discard dependencies that belonged
+                    // only to the previous document generation before evaluating readiness.
+                    let mut desired_model_paths: BTreeSet<String> = record
+                        .definition
+                        .models
+                        .iter()
+                        .map(|model| model.asset_path.clone())
+                        .collect();
+                    desired_model_paths.extend(discovered_models);
+                    obsolete_model_paths = record
+                        .leases
+                        .keys()
+                        .filter(|path| !desired_model_paths.contains(*path))
+                        .cloned()
+                        .collect();
+                    // Keep obsolete lease removal outside this borrow so its GPU warmup user
+                    // count and AssetServer pin are released through the normal ownership path.
+
+                    // Put already-pinned assets first and not-yet-requested assets last. The
+                    // request cursor can then resume safely without re-requesting an existing
+                    // lease or skipping a new dependency after a document hot reload.
+                    let mut leased_model_paths: Vec<String> = desired_model_paths
+                        .iter()
+                        .filter(|path| record.leases.contains_key(*path))
+                        .cloned()
+                        .collect();
+                    let leased_model_count = leased_model_paths.len();
+                    leased_model_paths.extend(
+                        desired_model_paths
+                            .iter()
+                            .filter(|path| !record.leases.contains_key(*path))
+                            .cloned(),
+                    );
+                    record.pending_asset_paths = leased_model_paths;
+                    record.next_asset_request = leased_model_count;
+
+                    let desired_typed: BTreeSet<(String, String)> =
+                        discovered_typed.into_iter().collect();
+                    let obsolete_keys: Vec<_> = record
+                        .typed_dependency_leases
+                        .keys()
+                        .filter(|key| !desired_typed.contains(*key))
+                        .cloned()
+                        .collect();
+                    for key in obsolete_keys {
+                        if let Some(lease) = record.typed_dependency_leases.remove(&key) {
+                            obsolete_typed_leases.push((key.0, lease));
+                        }
+                    }
+                    let mut typed_paths: Vec<_> = desired_typed
+                        .iter()
+                        .filter(|key| record.typed_dependency_leases.contains_key(*key))
+                        .cloned()
+                        .collect();
+                    let leased_typed_count = typed_paths.len();
+                    typed_paths.extend(
+                        desired_typed
+                            .iter()
+                            .filter(|key| !record.typed_dependency_leases.contains_key(*key))
+                            .cloned(),
+                    );
+                    record.pending_typed_dependency_paths = typed_paths;
+                    record.next_typed_dependency_request = leased_typed_count;
+                    record.scene_doc_dependencies_resolved = true;
+                }
+
+                // Release obsolete document-owned leases only after dropping the RegionRecord
+                // borrow. Shared AssetServer consumers and ModelWarmup users remain pinned.
+                for path in obsolete_model_paths {
+                    self.release_region_model_lease(world, id, &path);
+                }
+                if !obsolete_typed_leases.is_empty() {
+                    world.resource_scope::<AssetServer, _>(|world, server| {
+                        if let Some(adapters) = world.try_resource::<StreamingAssetAdapters>() {
+                            for (asset_type, lease) in obsolete_typed_leases {
+                                adapters.release(server, &asset_type, lease);
+                            }
+                        }
+                    });
+                }
+                if let Some(record) = self.regions.get(id) {
+                    if record.next_asset_request < record.pending_asset_paths.len()
+                        || record.next_typed_dependency_request
+                            < record.pending_typed_dependency_paths.len()
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Dependency discovery can prune resources from a superseded SceneDoc generation.
+        // Refresh the model lease snapshot before readiness and GPU warmup accounting so an
+        // obsolete dependency cannot be warmed for one extra frame.
+        let leases: Vec<(String, ribbon_assets::Handle<ModelAsset>)> = self
+            .regions
+            .get(id)
+            .map(|record| {
+                record
+                    .leases
+                    .iter()
+                    .map(|(path, lease)| (path.clone(), lease.handle()))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let mut waiting = false;
         let mut failure = None;
@@ -1716,6 +2245,81 @@ impl StreamingCoordinator {
         if let Some(message) = failure {
             self.fail_region(world, id, message);
             return;
+        }
+
+        let typed_dependency_states: Vec<_> = {
+            let Some(record) = self.regions.get(id) else {
+                return;
+            };
+            let server = world.resource::<AssetServer>();
+            let adapters = world.resource::<StreamingAssetAdapters>();
+            record
+                .typed_dependency_leases
+                .iter()
+                .map(|((asset_type, path), lease)| {
+                    (
+                        asset_type.clone(),
+                        path.clone(),
+                        adapters.readiness(server, asset_type, path, lease.as_ref()),
+                    )
+                })
+                .collect()
+        };
+        let mut stale_typed_dependencies = Vec::new();
+        for (asset_type, path, state) in typed_dependency_states {
+            match state {
+                StreamingDependencyState::Ready { estimated_bytes } => {
+                    resident_bytes = resident_bytes.saturating_add(estimated_bytes);
+                }
+                StreamingDependencyState::Loading => waiting = true,
+                StreamingDependencyState::Stale => {
+                    stale_typed_dependencies.push((asset_type, path));
+                }
+                StreamingDependencyState::Failed(message) => {
+                    self.fail_region(
+                        world,
+                        id,
+                        format!("required typed dependency failed: {message}"),
+                    );
+                    return;
+                }
+            }
+        }
+        for (asset_type, path) in stale_typed_dependencies {
+            let reacquired = world.resource_scope::<AssetServer, _>(|world, server| {
+                world.resource::<StreamingAssetAdapters>().request(
+                    server,
+                    &asset_type,
+                    &path,
+                    priority,
+                )
+            });
+            match reacquired {
+                Ok(lease) => {
+                    let key = (asset_type.clone(), path.clone());
+                    let old_lease = self
+                        .regions
+                        .get_mut(id)
+                        .and_then(|record| record.typed_dependency_leases.insert(key, lease));
+                    if let Some(old_lease) = old_lease {
+                        world.resource_scope::<AssetServer, _>(|world, server| {
+                            if let Some(adapters) = world.try_resource::<StreamingAssetAdapters>() {
+                                adapters.release(server, &asset_type, old_lease);
+                            }
+                        });
+                    }
+                    waiting = true;
+                }
+                Err(error) if error.kind == LoadErrorKind::QueueFull => waiting = true,
+                Err(error) => {
+                    self.fail_region(
+                        world,
+                        id,
+                        format!("could not reacquire typed dependency `{path}`: {error}"),
+                    );
+                    return;
+                }
+            }
         }
 
         for path in stale_generations {
@@ -1828,6 +2432,10 @@ impl StreamingCoordinator {
         id: &RegionId,
         entity_spawn_budget: &mut usize,
     ) {
+        if let Err(message) = self.instantiate_region_scene_doc(world, id) {
+            self.fail_region(world, id, message);
+            return;
+        }
         if let Some(record) = self.regions.get_mut(id) {
             record.pending_collider_spawn = 0;
             record.collider_entities.clear();
@@ -1848,6 +2456,79 @@ impl StreamingCoordinator {
                 );
             }
         }
+    }
+
+    fn instantiate_region_scene_doc(
+        &mut self,
+        world: &mut World,
+        id: &RegionId,
+    ) -> Result<(), String> {
+        let Some((already_instantiated, lease)) = self.regions.get(id).map(|record| {
+            (
+                record.scene_doc_instantiated,
+                record.scene_doc_lease.as_ref().map(AssetRef::handle),
+            )
+        }) else {
+            return Err("region disappeared while instantiating its scene document".to_owned());
+        };
+        if already_instantiated || lease.is_none() {
+            return Ok(());
+        }
+        let handle = lease.expect("checked above");
+        let document = world
+            .try_resource::<AssetServer>()
+            .and_then(|server| server.get(handle).cloned())
+            .ok_or_else(|| {
+                "prepared SceneDoc disappeared before prefab instantiation".to_owned()
+            })?;
+
+        // Prefab codecs need mutable AssetServer access to restore path-backed components. Move
+        // the resource into the short-lived load context, instantiate atomically, then restore all
+        // resources before returning to the normal app schedule. The codec contract forbids IO here.
+        let Some(server) = world.remove_resource::<AssetServer>() else {
+            return Err(
+                "AssetServer resource is unavailable during prefab instantiation".to_owned(),
+            );
+        };
+        let Some(registry) = world.remove_resource::<TypeRegistry>() else {
+            world.insert_resource(server);
+            return Err(
+                "TypeRegistry resource is unavailable during prefab instantiation".to_owned(),
+            );
+        };
+        let Some(codecs) = world.remove_resource::<PrefabCodecRegistry>() else {
+            world.insert_resource(registry);
+            world.insert_resource(server);
+            return Err(
+                "PrefabCodecRegistry resource is unavailable during prefab instantiation"
+                    .to_owned(),
+            );
+        };
+        let mut context = PrefabLoadContext::default();
+        context.insert(server);
+        let result = instantiate_with_context(
+            world,
+            &registry,
+            &document.prefab,
+            None,
+            &codecs,
+            &mut context,
+        );
+        let server = context.remove::<AssetServer>();
+        world.insert_resource(codecs);
+        world.insert_resource(registry);
+        if let Some(server) = server {
+            world.insert_resource(server);
+        } else {
+            return Err("PrefabLoadContext lost the AssetServer during instantiation".to_owned());
+        }
+        let entities = result
+            .map_err(|error| format!("scene document prefab instantiation failed: {error}"))?;
+        if let Some(record) = self.regions.get_mut(id) {
+            record.prefab_entities = entities;
+            record.scene_doc_instantiated = true;
+        }
+        Ok(())
     }
 
     fn visual_entities_ready(&self, id: &RegionId) -> bool {
@@ -1892,15 +2573,25 @@ impl StreamingCoordinator {
         if record.pending_collider_spawn < record.definition.colliders.len() {
             return false;
         }
-        if record.collider_entities.is_empty() {
-            return record.definition.colliders.is_empty();
+        let mut required_entities = record.collider_entities.clone();
+        // SceneDoc-prefab colliders participate in the same Rapier readiness contract as colliders
+        // authored directly on RegionDefinition. Otherwise a region could become playable while
+        // its prefab-owned collision shapes are still waiting for physics reconciliation.
+        required_entities.extend(
+            record
+                .prefab_entities
+                .iter()
+                .copied()
+                .filter(|entity| world.get::<Collider>(*entity).is_some()),
+        );
+        if required_entities.is_empty() {
+            return true;
         }
         let Some(debug) = world.try_resource::<PhysicsDebugData>() else {
             return false;
         };
         let registered: HashSet<_> = debug.colliders.iter().map(|entry| entry.entity).collect();
-        record
-            .collider_entities
+        required_entities
             .iter()
             .all(|entity| registered.contains(entity))
     }
@@ -2014,6 +2705,18 @@ impl StreamingCoordinator {
         for entity in record.visual_entities.drain(..) {
             let _ = world.despawn(entity);
         }
+        let prefab_entities = std::mem::take(&mut record.prefab_entities);
+        // Record prefab-owned colliders before despawning their hierarchy so Rapier cleanup is
+        // observed before leases are released and the same entities cannot outlive the region.
+        for &entity in &prefab_entities {
+            if world.get::<Collider>(entity).is_some() {
+                record.pending_collider_cleanup.push(entity);
+            }
+        }
+        for entity in prefab_entities {
+            let _ = world.despawn_recursive(entity);
+        }
+        record.scene_doc_instantiated = false;
         for entity in record.collider_entities.drain(..) {
             let _ = world.despawn(entity);
             record.pending_collider_cleanup.push(entity);
@@ -2040,11 +2743,48 @@ impl StreamingCoordinator {
         record.pending_collider_cleanup.is_empty()
     }
 
+    fn release_region_model_lease(&mut self, world: &mut World, id: &RegionId, path: &str) {
+        let lease = self
+            .regions
+            .get_mut(id)
+            .and_then(|record| record.leases.remove(path));
+        let Some(lease) = lease else { return };
+        let handle = lease.handle();
+        let key = model_key(handle);
+        let release_warmup = if let Some((_, users)) = self.warmup_users.get_mut(&key) {
+            *users = users.saturating_sub(1);
+            *users == 0
+        } else {
+            false
+        };
+        if release_warmup {
+            self.warmup_users.remove(&key);
+            if world.try_resource::<ModelWarmup>().is_some() {
+                world.resource_mut::<ModelWarmup>().release(handle);
+            }
+        }
+        drop(lease);
+        if world.try_resource::<AssetServer>().is_some() {
+            world.resource_scope::<AssetServer, _>(|_, server| {
+                let _ = server.cancel_if_unleased(handle);
+            });
+        }
+    }
+
     fn release_region_assets(&mut self, world: &mut World, id: &RegionId) {
         let handles: Vec<_> = self
             .regions
             .get(id)
             .map(|record| record.leases.values().map(AssetRef::handle).collect())
+            .unwrap_or_default();
+        let scene_doc_handle = self
+            .regions
+            .get(id)
+            .and_then(|record| record.scene_doc_lease.as_ref().map(AssetRef::handle));
+        let typed_leases = self
+            .regions
+            .get_mut(id)
+            .map(|record| std::mem::take(&mut record.typed_dependency_leases))
             .unwrap_or_default();
         for handle in handles.iter().copied() {
             let key = model_key(handle);
@@ -2064,6 +2804,12 @@ impl StreamingCoordinator {
             // server will preserve a shared in-flight request while any other region/consumer
             // still owns a lease for the same generation.
             record.leases.clear();
+            record.scene_doc_lease = None;
+            record.scene_doc_dependencies_resolved = false;
+            record.scene_doc_instantiated = false;
+            record.prefab_entities.clear();
+            record.pending_typed_dependency_paths.clear();
+            record.next_typed_dependency_request = 0;
             record.pending_asset_paths.clear();
             record.next_asset_request = 0;
             record.resident_cpu_bytes_estimate = 0;
@@ -2073,11 +2819,29 @@ impl StreamingCoordinator {
             record.pending_collider_spawn = 0;
         }
         if world.try_resource::<AssetServer>().is_some() {
+            // Remove the adapter registry before scoping AssetServer out of World. Looking the
+            // registry up from inside resource_scope would borrow World while its mutable scope
+            // borrow is still active (E0502). Restore it immediately after all typed leases have
+            // been released; codecs and callers continue to observe the same registry resource.
+            let adapters = world.remove_resource::<StreamingAssetAdapters>();
             world.resource_scope::<AssetServer, _>(|_, server| {
                 for handle in handles {
                     let _ = server.cancel_if_unleased(handle);
                 }
+                if let Some(handle) = scene_doc_handle {
+                    let _ = server.cancel_if_unleased(handle);
+                }
+                if let Some(adapters) = adapters.as_ref() {
+                    for ((asset_type, _path), lease) in typed_leases {
+                        adapters.release(server, &asset_type, lease);
+                    }
+                }
+                // If no adapter registry is installed, dropping the erased leases still releases
+                // their CPU pins; only queued-load cancellation is skipped.
             });
+            if let Some(adapters) = adapters {
+                world.insert_resource(adapters);
+            }
         }
     }
 
@@ -2266,12 +3030,23 @@ impl StreamingCoordinator {
         diagnostics.region_transitions = self.diagnostics.region_transitions;
         diagnostics.recent_events = self.diagnostics.recent_events.clone();
         for record in self.regions.values() {
-            diagnostics.pending_asset_requests = diagnostics.pending_asset_requests.saturating_add(
-                record
-                    .pending_asset_paths
-                    .len()
-                    .saturating_sub(record.next_asset_request),
-            );
+            diagnostics.pending_asset_requests = diagnostics
+                .pending_asset_requests
+                .saturating_add(
+                    record
+                        .pending_asset_paths
+                        .len()
+                        .saturating_sub(record.next_asset_request),
+                )
+                .saturating_add(
+                    record
+                        .pending_typed_dependency_paths
+                        .len()
+                        .saturating_sub(record.next_typed_dependency_request),
+                )
+                .saturating_add(usize::from(
+                    record.definition.scene_doc_path.is_some() && record.scene_doc_lease.is_none(),
+                ));
             match &record.state {
                 RegionState::LoadingAssets
                 | RegionState::WarmingGpu
@@ -2390,8 +3165,19 @@ impl Plugin for StreamingPlugin {
     }
 
     fn build(&self, app: &mut App) {
+        // SceneDoc is decoded by the same bounded AssetServer worker pool as other CPU assets.
+        // The .scenedoc extension avoids taking ownership of generic .ron application files.
+        app.world
+            .resource_mut::<AssetServer>()
+            .register_loader(crate::SceneDocLoader);
+        app.world
+            .resource_mut::<AssetServer>()
+            .register_loader(crate::WorldPartitionLoader);
         app.insert_resource(StreamingCoordinator::new(self.config.clone()));
         app.insert_resource(StreamDiagnostics::default());
+        if app.world.try_resource::<StreamingAssetAdapters>().is_none() {
+            app.insert_resource(StreamingAssetAdapters::default());
+        }
         app.add_system(Stage::Update, update_streaming);
         // RenderProfilePlugin is normally installed after the streaming plugin. Publishing at Last
         // places these counters in the same RenderDiagnostics snapshot consumed by its CSV recorder.
@@ -2449,9 +3235,18 @@ mod tests {
         RegionDefinition, RegionId, RegionPolicy, StreamObserver, StreamingConfig,
         StreamingCoordinator,
     };
-    use crate::RegionBounds;
+    use crate::{RegionBounds, StreamingAssetAdapters};
     use glam::Vec3;
+    use ribbon_app::World;
     use std::collections::HashSet;
+
+    // Mirror the resource installed by StreamingPlugin::build. Unit tests construct the
+    // coordinator directly, so they must provide its adapter registry explicitly.
+    fn test_world() -> World {
+        let mut world = World::new();
+        world.insert_resource(StreamingAssetAdapters::default());
+        world
+    }
 
     fn region() -> RegionDefinition {
         region_with_id("test")
@@ -2463,6 +3258,182 @@ mod tests {
             format!("{id} region"),
             RegionBounds::new(Vec3::splat(-10.0), Vec3::splat(10.0)).unwrap(),
         )
+    }
+
+    #[test]
+    fn authored_partition_registration_sorts_dependencies_and_rejects_cycles_atomically() {
+        use crate::{WorldPartitionAsset, WorldRegionAsset};
+
+        let region = |id: &str, dependencies: Vec<String>| WorldRegionAsset {
+            id: id.to_owned(),
+            name: format!("{id} region"),
+            bounds_min: [0.0, 0.0, 0.0],
+            bounds_max: [10.0, 10.0, 10.0],
+            scene_doc_path: None,
+            models: Vec::new(),
+            dependencies,
+            neighbors: Vec::new(),
+            policy: Default::default(),
+        };
+        let partition = WorldPartitionAsset {
+            format_version: 1,
+            id: "authored-world".into(),
+            name: "Authored World".into(),
+            // Deliberately put the dependent region first to verify topological registration.
+            regions: vec![
+                region("village", vec!["room".into()]),
+                region("room", Vec::new()),
+            ],
+        };
+        let mut coordinator = StreamingCoordinator::default();
+        let registered = coordinator.register_partition(&partition).unwrap();
+        assert_eq!(
+            registered,
+            vec![RegionId::new("room"), RegionId::new("village")]
+        );
+        assert_eq!(coordinator.snapshot().regions.len(), 2);
+
+        let cyclic = WorldPartitionAsset {
+            format_version: 1,
+            id: "cyclic-world".into(),
+            name: "Cyclic World".into(),
+            regions: vec![
+                region("alpha", vec!["beta".into()]),
+                region("beta", vec!["alpha".into()]),
+            ],
+        };
+        let before = coordinator.snapshot().regions.len();
+        assert!(coordinator
+            .register_partition(&cyclic)
+            .unwrap_err()
+            .contains("cycle"));
+        assert_eq!(coordinator.snapshot().regions.len(), before);
+    }
+
+    #[test]
+    fn scene_doc_region_loads_and_owns_prefab_entities_through_activation_and_unload() {
+        use crate::SceneDocLoader;
+        use ribbon_assets::{AssetServer, MemorySource};
+        use ribbon_plugin_physics::PhysicsDebugData;
+        use ribbon_plugin_render3d::ModelWarmup;
+        use ribbon_reflect::TypeRegistry;
+        use ribbon_scene::{Prefab, PrefabCodecRegistry, PrefabEntity, SceneDoc};
+        use std::collections::HashMap;
+
+        let document = SceneDoc {
+            prefab: Prefab {
+                format_version: 1,
+                name: "streamed prefab region".into(),
+                entities: vec![PrefabEntity {
+                    local_id: 7,
+                    parent: None,
+                    components: Vec::new(),
+                }],
+            },
+            metadata: HashMap::new(),
+        };
+        let source = MemorySource::default();
+        source.insert(
+            "regions/test.scenedoc",
+            document.to_ron().unwrap().into_bytes(),
+        );
+        let mut assets = AssetServer::default();
+        assets.register_loader(SceneDocLoader);
+        assets.add_source(0, source);
+        // Preload in test setup; the production coordinator uses the same lease API via its
+        // bounded worker queue and never performs synchronous IO itself.
+        assets.load::<SceneDoc>("regions/test.scenedoc").unwrap();
+
+        let mut world = test_world();
+        world.insert_resource(assets);
+        world.insert_resource(ModelWarmup::default());
+        world.insert_resource(TypeRegistry::default());
+        world.insert_resource(PrefabCodecRegistry::default());
+        world.insert_resource(PhysicsDebugData::default());
+
+        let mut coordinator = StreamingCoordinator::default();
+        let id = RegionId::new("scene-doc-region");
+        coordinator
+            .register_region(
+                region_with_id("scene-doc-region").with_scene_doc("regions/test.scenedoc"),
+            )
+            .unwrap();
+        coordinator.request_region(&id).unwrap();
+        coordinator.tick(&mut world);
+        coordinator.tick(&mut world);
+        assert_eq!(
+            coordinator.region_state(&id),
+            Some(&super::RegionState::Ready)
+        );
+
+        coordinator.activate_region(&id).unwrap();
+        coordinator.tick(&mut world);
+        coordinator.tick(&mut world);
+        assert_eq!(
+            coordinator.region_state(&id),
+            Some(&super::RegionState::Active)
+        );
+        let snapshot = coordinator.snapshot();
+        assert_eq!(snapshot.regions[0].prefab_entity_count, 1);
+        let entity = coordinator.regions[&id].prefab_entities[0];
+        assert!(world.contains(entity));
+
+        coordinator.release_region_request(&id).unwrap();
+        coordinator.tick(&mut world);
+        assert_eq!(
+            coordinator.region_state(&id),
+            Some(&super::RegionState::Unloaded)
+        );
+        assert!(!world.contains(entity));
+    }
+
+    #[test]
+    fn prefab_owned_colliders_are_part_of_region_physics_readiness_and_cleanup() {
+        use glam::{Quat, Vec3};
+        use ribbon_plugin_physics::{
+            Collider, ColliderShape, PhysicsDebugCollider, PhysicsDebugData,
+        };
+
+        let mut world = test_world();
+        world.insert_resource(PhysicsDebugData::default());
+        let mut coordinator = StreamingCoordinator::default();
+        let id = RegionId::new("prefab-physics-region");
+        coordinator
+            .register_region(region_with_id("prefab-physics-region"))
+            .unwrap();
+        let entity = world.spawn((Collider::cuboid(Vec3::ONE),));
+        coordinator
+            .regions
+            .get_mut(&id)
+            .unwrap()
+            .prefab_entities
+            .push(entity);
+
+        assert!(!coordinator.physics_entities_registered(&world, &id));
+        world
+            .resource_mut::<PhysicsDebugData>()
+            .colliders
+            .push(PhysicsDebugCollider {
+                entity,
+                shape: ColliderShape::Cuboid {
+                    half_extents: Vec3::ONE,
+                },
+                position: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+                sensor: false,
+            });
+        assert!(coordinator.physics_entities_registered(&world, &id));
+
+        coordinator.despawn_region_entities(&mut world, &id);
+        assert!(!world.contains(entity));
+        assert_eq!(
+            coordinator.regions[&id].pending_collider_cleanup,
+            vec![entity]
+        );
+        assert!(!coordinator.physics_cleanup_complete(&world, &id));
+        world.resource_mut::<PhysicsDebugData>().colliders.clear();
+        assert!(coordinator.physics_cleanup_complete(&world, &id));
     }
 
     #[test]
@@ -2631,12 +3602,11 @@ mod tests {
     #[test]
     fn failed_dependency_propagates_instead_of_leaving_parent_loading_forever() {
         use super::{RegionDefinition, RegionState, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_assets::AssetServer;
         use ribbon_plugin_physics::PhysicsDebugData;
         use ribbon_plugin_render3d::ModelWarmup;
 
-        let mut world = World::new();
+        let mut world = test_world();
         world.insert_resource(AssetServer::default());
         world.insert_resource(ModelWarmup::default());
         world.insert_resource(PhysicsDebugData::default());
@@ -2685,12 +3655,11 @@ mod tests {
     #[test]
     fn empty_region_prepares_activates_and_unloads_without_duplicate_entities() {
         use super::{RegionState, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_assets::AssetServer;
         use ribbon_plugin_physics::PhysicsDebugData;
         use ribbon_plugin_render3d::ModelWarmup;
 
-        let mut world = World::new();
+        let mut world = test_world();
         world.insert_resource(AssetServer::default());
         world.insert_resource(ModelWarmup::default());
         world.insert_resource(PhysicsDebugData::default());
@@ -2731,12 +3700,11 @@ mod tests {
     #[test]
     fn dormant_region_recreates_visual_entities_when_reactivated() {
         use super::{RegionPointLight, RegionState, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_assets::AssetServer;
         use ribbon_plugin_physics::PhysicsDebugData;
         use ribbon_plugin_render3d::{ModelWarmup, PointLight};
 
-        let mut world = World::new();
+        let mut world = test_world();
         world.insert_resource(AssetServer::default());
         world.insert_resource(ModelWarmup::default());
         world.insert_resource(PhysicsDebugData::default());
@@ -2790,13 +3758,12 @@ mod tests {
     fn zero_entity_spawn_budget_cannot_mark_unspawned_colliders_ready() {
         use super::{RegionCollider, RegionPointLight, RegionState, StreamingCoordinator};
         use glam::Vec3;
-        use ribbon_app::World;
         use ribbon_assets::AssetServer;
         use ribbon_plugin_physics::{Collider, PhysicsDebugData};
         use ribbon_plugin_render3d::ModelWarmup;
         use ribbon_scene::Transform3D;
 
-        let mut world = World::new();
+        let mut world = test_world();
         world.insert_resource(AssetServer::default());
         world.insert_resource(ModelWarmup::default());
         world.insert_resource(PhysicsDebugData::default());
@@ -2879,12 +3846,11 @@ mod tests {
     #[test]
     fn admission_budget_starts_the_highest_priority_region_first() {
         use super::{RegionState, StreamingConfig, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_assets::AssetServer;
         use ribbon_plugin_physics::PhysicsDebugData;
         use ribbon_plugin_render3d::ModelWarmup;
 
-        let mut world = World::new();
+        let mut world = test_world();
         world.insert_resource(AssetServer::default());
         world.insert_resource(ModelWarmup::default());
         world.insert_resource(PhysicsDebugData::default());
@@ -2926,7 +3892,6 @@ mod tests {
     #[test]
     fn current_loading_generation_is_not_released_and_reacquired_each_update() {
         use super::{RegionModel, RegionState, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_assets::{AssetServer, FsSource};
         use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
         use ribbon_plugin_physics::PhysicsDebugData;
@@ -2940,7 +3905,7 @@ mod tests {
             0,
             FsSource::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/models")),
         );
-        let mut world = World::new();
+        let mut world = test_world();
         world.insert_resource(assets);
         world.insert_resource(ModelWarmup::default());
         world.insert_resource(PhysicsDebugData::default());
@@ -2992,7 +3957,6 @@ mod tests {
     #[test]
     fn per_update_asset_request_budget_limits_submissions_for_large_regions() {
         use super::{RegionModel, RegionState, StreamingConfig, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_assets::{AssetServer, FsSource};
         use ribbon_plugin_gltf::GltfLoader;
         use ribbon_plugin_physics::PhysicsDebugData;
@@ -3000,7 +3964,7 @@ mod tests {
         use ribbon_scene::Transform3D;
         use std::path::Path;
 
-        let mut world = World::new();
+        let mut world = test_world();
         let mut assets = AssetServer::default();
         assets.register_loader(GltfLoader);
         assets.add_source(
@@ -3049,12 +4013,11 @@ mod tests {
     #[test]
     fn recent_stream_events_remain_available_across_updates() {
         use super::{RegionState, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_assets::AssetServer;
         use ribbon_plugin_physics::PhysicsDebugData;
         use ribbon_plugin_render3d::ModelWarmup;
 
-        let mut world = World::new();
+        let mut world = test_world();
         world.insert_resource(AssetServer::default());
         world.insert_resource(ModelWarmup::default());
         world.insert_resource(PhysicsDebugData::default());
@@ -3110,8 +4073,7 @@ mod tests {
     #[test]
     fn unloading_region_with_pending_physics_cleanup_keeps_its_activation_slot() {
         use super::{RegionState, StreamingCoordinator};
-        use ribbon_app::World;
-        let mut world = World::new();
+        let mut world = test_world();
         let entity = world.spawn(());
         let mut coordinator = StreamingCoordinator::default();
         let id = RegionId::new("unloading-slot");
@@ -3128,10 +4090,9 @@ mod tests {
     #[test]
     fn unload_waiting_for_physics_is_cancelled_when_an_observer_reenters_range() {
         use super::{RegionState, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_plugin_physics::PhysicsDebugData;
 
-        let mut world = World::new();
+        let mut world = test_world();
         let collider_entity = world.spawn(());
         world.insert_resource(PhysicsDebugData::default());
         let id = RegionId::new("reentered-unload");
@@ -3190,8 +4151,7 @@ mod tests {
     #[test]
     fn missing_physics_snapshot_does_not_confirm_pending_collider_cleanup() {
         use super::{RegionState, StreamingCoordinator};
-        use ribbon_app::World;
-        let mut world = World::new();
+        let mut world = test_world();
         let entity = world.spawn(());
         let mut coordinator = StreamingCoordinator::default();
         let id = RegionId::new("await-physics-snapshot");
@@ -3265,7 +4225,6 @@ mod tests {
     #[test]
     fn cpu_residency_pressure_releases_a_unique_dormant_region_lease() {
         use super::{model_key, RegionModel, RegionState, StreamingConfig, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_assets::{AssetServer, FsSource};
         use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
         use ribbon_plugin_physics::PhysicsDebugData;
@@ -3290,7 +4249,7 @@ mod tests {
             .estimated_size_bytes();
         assert!(bytes > 0);
 
-        let mut world = World::new();
+        let mut world = test_world();
         world.insert_resource(assets);
         world.insert_resource(ModelWarmup::default());
         world.insert_resource(PhysicsDebugData::default());
@@ -3349,7 +4308,6 @@ mod tests {
 
     #[test]
     fn cpu_total_budget_reduces_unpinned_cache_allowance_without_invalidating_pinned_assets() {
-        use ribbon_app::World;
         use ribbon_assets::{AssetServer, FsSource};
         use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
         use ribbon_plugin_physics::PhysicsDebugData;
@@ -3367,7 +4325,7 @@ mod tests {
         let pinned_bytes = assets.cpu_memory_stats().pinned_bytes_estimate;
         assert!(pinned_bytes > 0);
 
-        let mut world = World::new();
+        let mut world = test_world();
         world.insert_resource(assets);
         world.insert_resource(ModelWarmup::default());
         world.insert_resource(PhysicsDebugData::default());
@@ -3394,7 +4352,6 @@ mod tests {
     #[test]
     fn shared_cpu_asset_leases_prevent_region_pressure_from_invalidating_other_regions() {
         use super::{RegionModel, RegionState, StreamingConfig, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_assets::{AssetServer, FsSource};
         use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
         use ribbon_plugin_physics::PhysicsDebugData;
@@ -3415,7 +4372,7 @@ mod tests {
             .strong_ref(handle)
             .expect("second consumer shares loaded asset");
 
-        let mut world = World::new();
+        let mut world = test_world();
         world.insert_resource(assets);
         world.insert_resource(ModelWarmup::default());
         world.insert_resource(PhysicsDebugData::default());
@@ -3481,10 +4438,9 @@ mod tests {
     #[test]
     fn memory_pressure_does_not_evict_dormant_regions_inside_preload_or_neighbor_range() {
         use super::{RegionState, StreamingCoordinator};
-        use ribbon_app::World;
         use ribbon_render::profiling::RenderDiagnostics;
 
-        let mut world = World::new();
+        let mut world = test_world();
         let mut diagnostics = RenderDiagnostics::default();
         diagnostics.resources.mesh_bytes_estimate = 1024;
         world.insert_resource(diagnostics);

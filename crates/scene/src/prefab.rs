@@ -31,6 +31,19 @@ pub struct SceneDoc {
     pub metadata: HashMap<String, String>,
 }
 
+/// A typed external resource referenced by a serialized prefab component.
+///
+/// The scene crate deliberately stores a stable type name and path rather than an asset handle;
+/// runtime handles are owned by the asset service and are reconstructed by registered codecs.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PrefabAssetDependency {
+    pub local_entity_id: u32,
+    pub component: String,
+    pub asset_type: String,
+    pub path: String,
+    pub required: bool,
+}
+
 impl SceneDoc {
     pub fn to_ron(&self) -> Result<String, SceneError> {
         ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
@@ -39,6 +52,15 @@ impl SceneDoc {
 
     pub fn from_ron(source: &str) -> Result<Self, SceneError> {
         ron::de::from_str(source).map_err(|error| SceneError::Ron(error.to_string()))
+    }
+
+    /// Discover external resources declared by registered component codecs. Unknown component
+    /// formats are intentionally ignored here and remain subject to normal instantiate validation.
+    pub fn asset_dependencies(
+        &self,
+        codecs: &PrefabCodecRegistry,
+    ) -> Result<Vec<PrefabAssetDependency>, SceneError> {
+        codecs.discover_asset_dependencies(&self.prefab)
     }
 }
 
@@ -64,6 +86,14 @@ impl PrefabLoadContext {
             .get_mut(&TypeId::of::<T>())
             .and_then(|value| value.downcast_mut())
     }
+
+    /// Remove and return a typed service from the context. This is useful when a caller temporarily
+    /// moves an engine resource into the context for an atomic prefab restore operation.
+    pub fn remove<T: Any>(&mut self) -> Option<T> {
+        self.extensions
+            .remove(&TypeId::of::<T>())
+            .and_then(|value| value.downcast::<T>().ok().map(|value| *value))
+    }
 }
 
 type EncodePrefabComponent =
@@ -71,10 +101,13 @@ type EncodePrefabComponent =
 type DecodePrefabComponent = dyn Fn(&Value, &mut PrefabLoadContext) -> Result<Box<dyn ribbon_reflect::Reflect>, SceneError>
     + Send
     + Sync;
+type DiscoverPrefabDependencies =
+    dyn Fn(&Value) -> Result<Vec<(String, String, bool)>, SceneError> + Send + Sync;
 
 struct PrefabCodec {
     encode: Arc<EncodePrefabComponent>,
     decode: Arc<DecodePrefabComponent>,
+    discover_dependencies: Arc<DiscoverPrefabDependencies>,
 }
 
 /// Component-specific asset-reference codecs. Registration is owned by crates that already know
@@ -105,8 +138,99 @@ impl PrefabCodecRegistry {
             PrefabCodec {
                 encode: Arc::new(encode),
                 decode: Arc::new(decode),
+                discover_dependencies: Arc::new(|_| Ok(Vec::new())),
             },
         );
+    }
+
+    /// Register a component codec that also declares its external resource references.
+    /// Each tuple is `(stable_asset_type_name, path, required)`; the scene layer never loads it.
+    pub fn register_with_dependencies(
+        &mut self,
+        component_name: impl Into<String>,
+        encode: impl Fn(&World, Entity, &PrefabLoadContext) -> Result<Value, SceneError>
+            + Send
+            + Sync
+            + 'static,
+        decode: impl Fn(
+                &Value,
+                &mut PrefabLoadContext,
+            ) -> Result<Box<dyn ribbon_reflect::Reflect>, SceneError>
+            + Send
+            + Sync
+            + 'static,
+        discover_dependencies: impl Fn(&Value) -> Result<Vec<(String, String, bool)>, SceneError>
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.codecs.insert(
+            component_name.into(),
+            PrefabCodec {
+                encode: Arc::new(encode),
+                decode: Arc::new(decode),
+                discover_dependencies: Arc::new(discover_dependencies),
+            },
+        );
+    }
+
+    /// Return stable resource references in prefab/entity order. References from different
+    /// entities are preserved so the streaming owner can retain per-consumer ownership; the
+    /// asset service is responsible for deduplicating the underlying typed load.
+    pub fn discover_asset_dependencies(
+        &self,
+        prefab: &Prefab,
+    ) -> Result<Vec<PrefabAssetDependency>, SceneError> {
+        if prefab.format_version != 1 {
+            return Err(SceneError::UnsupportedVersion(prefab.format_version));
+        }
+        let mut local_ids = HashSet::new();
+        for entity in &prefab.entities {
+            if !local_ids.insert(entity.local_id) {
+                return Err(SceneError::DuplicateLocalId(entity.local_id));
+            }
+        }
+        for entity in &prefab.entities {
+            if let Some(parent) = entity.parent {
+                if !local_ids.contains(&parent) {
+                    return Err(SceneError::MissingLocalId(parent));
+                }
+            }
+        }
+        let mut seen = HashSet::new();
+        let mut dependencies = Vec::new();
+        for entity in &prefab.entities {
+            for (component, value) in &entity.components {
+                let Some(codec) = self.codecs.get(component) else {
+                    continue;
+                };
+                for (asset_type, path, required) in (codec.discover_dependencies)(value)? {
+                    if asset_type.trim().is_empty() || path.trim().is_empty() {
+                        return Err(SceneError::PrefabCodec(format!(
+                            "component `{component}` declared an empty asset type or path"
+                        )));
+                    }
+                    let dependency = PrefabAssetDependency {
+                        local_entity_id: entity.local_id,
+                        component: component.clone(),
+                        asset_type,
+                        path,
+                        required,
+                    };
+                    let key = (
+                        dependency.local_entity_id,
+                        dependency.component.clone(),
+                        dependency.asset_type.clone(),
+                        dependency.path.clone(),
+                        dependency.required,
+                    );
+                    if seen.insert(key) {
+                        dependencies.push(dependency);
+                    }
+                }
+            }
+        }
+        Ok(dependencies)
     }
 }
 
@@ -391,6 +515,7 @@ mod tests {
     use ribbon_ecs::World;
     use ribbon_math::Vect;
     use ribbon_reflect::{TypeRegistry, Value};
+    use std::collections::HashMap;
 
     fn registry() -> TypeRegistry {
         let mut registry = TypeRegistry::default();
@@ -457,6 +582,72 @@ mod tests {
         assert_eq!(world.get::<Name>(entities[0]).unwrap().0, "parent");
         assert_eq!(log.iter().count(), 1);
     }
+    #[test]
+    fn prefab_codecs_discover_typed_external_resources_without_loading_them() {
+        let prefab = Prefab {
+            format_version: 1,
+            name: "dependency discovery".into(),
+            entities: vec![
+                super::PrefabEntity {
+                    local_id: 4,
+                    parent: None,
+                    components: vec![(
+                        "Name".into(),
+                        Value::Struct(vec![(
+                            "path".into(),
+                            Value::Str("models/shared.glb".into()),
+                        )]),
+                    )],
+                },
+                super::PrefabEntity {
+                    local_id: 9,
+                    parent: None,
+                    components: vec![(
+                        "Name".into(),
+                        Value::Struct(vec![(
+                            "path".into(),
+                            Value::Str("models/shared.glb".into()),
+                        )]),
+                    )],
+                },
+            ],
+        };
+        let mut codecs = PrefabCodecRegistry::default();
+        codecs.register_with_dependencies(
+            "Name",
+            |_world, _entity, _context| Ok(Value::Struct(Vec::new())),
+            |_value, _context| Ok(Box::new(Name(String::new()))),
+            |value| {
+                let Value::Struct(fields) = value else {
+                    return Err(SceneError::InvalidComponentValue("Name".into()));
+                };
+                let Some((_, Value::Str(path))) = fields.iter().find(|(field, _)| field == "path")
+                else {
+                    return Err(SceneError::InvalidComponentValue("Name.path".into()));
+                };
+                Ok(vec![("test::Model".into(), path.clone(), true)])
+            },
+        );
+        let dependencies = codecs.discover_asset_dependencies(&prefab).unwrap();
+        assert_eq!(
+            dependencies.len(),
+            2,
+            "each component consumer must remain visible"
+        );
+        assert_eq!(dependencies[0].local_entity_id, 4);
+        assert_eq!(dependencies[1].local_entity_id, 9);
+        assert!(dependencies.iter().all(|dependency| {
+            dependency.asset_type == "test::Model"
+                && dependency.path == "models/shared.glb"
+                && dependency.required
+        }));
+        let doc = SceneDoc {
+            prefab,
+            metadata: HashMap::new(),
+        };
+        assert_eq!(doc.asset_dependencies(&codecs).unwrap(), dependencies);
+    }
+
     #[test]
     fn context_codecs_round_trip_asset_like_references_and_rollback_missing_assets() {
         let mut world = World::new();
@@ -557,5 +748,20 @@ mod tests {
             0,
             "failed restoration must roll back spawned entities"
         );
+    }
+
+    #[test]
+    fn prefab_load_context_remove_returns_owned_service_and_clears_slot() {
+        let mut context = PrefabLoadContext::default();
+        assert_eq!(
+            context.insert::<String>("temporary service".to_owned()),
+            None
+        );
+        assert_eq!(
+            context.remove::<String>().as_deref(),
+            Some("temporary service")
+        );
+        assert!(context.get::<String>().is_none());
+        assert!(context.remove::<String>().is_none());
     }
 }

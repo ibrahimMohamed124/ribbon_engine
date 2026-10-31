@@ -9,6 +9,7 @@ ribbon_ecs = { path = "../../crates/ecs" }
 ribbon_events = { path = "../../crates/events" }
 ribbon_plugins = { path = "../../crates/plugins" }
 ribbon_scene = { path = "../../crates/scene" }
+ribbon_reflect = { path = "../../crates/reflect" }
 glam = "0.30"
 rapier3d = { version = "0.36.1", features = ["parallel"] }
 crossbeam-channel = "0.5"

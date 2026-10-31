@@ -1,5 +1,7 @@
 use ribbon_app::{App, Stage, Time};
 use ribbon_plugins::Plugin;
+use ribbon_reflect::TypeRegistry;
+use ribbon_scene::PrefabCodecRegistry;
 
 use crate::config::PhysicsConfig;
 use crate::events::{CollisionStarted, CollisionStopped, SensorEntered, SensorExited};
@@ -22,6 +24,28 @@ impl Plugin for PhysicsPlugin {
     }
 
     fn build(&self, app: &mut App) {
+        // Physics codecs share the scene registry with render3d codecs. Preserve any registry
+        // already installed by another plugin so plugin registration order cannot erase codecs.
+        let mut prefab_codecs = app
+            .world
+            .remove_resource::<PrefabCodecRegistry>()
+            .unwrap_or_default();
+        let registration = crate::prefab::register_prefab_components(
+            app.world.resource_mut::<TypeRegistry>(),
+            &mut prefab_codecs,
+        );
+        match registration {
+            Ok(()) => {
+                app.insert_resource(prefab_codecs);
+            }
+            Err(error) => {
+                app.insert_resource(prefab_codecs);
+                app.world.resource_mut::<ribbon_app::LogBuffer>().push(
+                    ribbon_app::LogLevel::Error,
+                    format!("physics prefab reflection registration failed: {error}"),
+                );
+            }
+        }
         if app.world.try_resource::<PhysicsConfig>().is_none() {
             app.world.insert_resource(PhysicsConfig::default());
         }

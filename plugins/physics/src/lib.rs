@@ -11,6 +11,7 @@ pub mod controller;
 pub mod events;
 mod physics;
 pub mod plugin;
+mod prefab;
 pub mod queries;
 mod runtime;
 

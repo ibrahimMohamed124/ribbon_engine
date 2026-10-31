@@ -1,4 +1,4 @@
-﻿//! Reflection and asset-path codecs for render3d prefab components.
+//! Reflection and asset-path codecs for render3d prefab components.
 use crate::components::{
     Camera3D, FogSettings, MeshInstance, ModelInstance, PointLight, SpotLight, SunLight,
 };
@@ -65,7 +65,7 @@ pub fn register_prefab_components(
     registry.register_reflect::<PointLight>()?;
     registry.register_reflect::<FogSettings>()?;
 
-    codecs.register(
+    codecs.register_with_dependencies(
         "ModelInstance",
         |world: &World, entity: Entity, context: &PrefabLoadContext| {
             let instance = world.get::<ModelInstance>(entity).ok_or_else(|| {
@@ -101,10 +101,29 @@ pub fn register_prefab_components(
                     "PrefabLoadContext does not contain mutable AssetServer".into(),
                 )
             })?;
+            // A prefab restore is only allowed after its declared asset dependencies have been
+            // prepared by the caller. Never fall back to synchronous file IO from ECS activation.
             let handle = server
-                .load::<ModelAsset>(path)
-                .map_err(|_| SceneError::MissingAsset(path.clone()))?;
+                .current_handle::<ModelAsset>(path)
+                .filter(|handle| server.get(*handle).is_some())
+                .ok_or_else(|| SceneError::MissingAsset(path.clone()))?;
             Ok(Box::new(ModelInstance { model: handle }) as Box<dyn Reflect>)
+        },
+        |value: &Value| {
+            let Value::Struct(fields) = value else {
+                return Err(SceneError::InvalidComponentValue("ModelInstance".into()));
+            };
+            let Some((_, Value::Str(path))) = fields.iter().find(|(name, _)| name == "model")
+            else {
+                return Err(SceneError::InvalidComponentValue(
+                    "ModelInstance.model".into(),
+                ));
+            };
+            Ok(vec![(
+                "ribbon_plugin_gltf::ModelAsset".into(),
+                path.clone(),
+                true,
+            )])
         },
     );
     Ok(())
@@ -174,6 +193,11 @@ mod tests {
         let doc =
             ribbon_scene::capture_with_context(&world, &registry, |_| true, &codecs, &context)
                 .unwrap();
+        let dependencies = doc.asset_dependencies(&codecs).unwrap();
+        assert_eq!(dependencies.len(), 1);
+        assert_eq!(dependencies[0].asset_type, "ribbon_plugin_gltf::ModelAsset");
+        assert_eq!(dependencies[0].path, "models/room.glb");
+        assert!(dependencies[0].required);
         let ron = doc.to_ron().unwrap();
         assert!(ron.contains("models/room.glb"));
         assert!(!ron.contains(&format!("handle:{}", handle.id())));
@@ -184,6 +208,12 @@ mod tests {
         let mut restore_server = AssetServer::default();
         restore_server.register_loader(EmptyModelLoader);
         restore_server.add_source(0, source);
+        // Prefab codecs intentionally resolve only CPU-ready assets; merely adding a source
+        // does not submit or complete an asset request. Prepare the declared dependency before
+        // restoring the prefab, matching the coordinator's readiness contract.
+        restore_server
+            .load::<ribbon_plugin_gltf::ModelAsset>("models/room.glb")
+            .unwrap();
         let mut restore_context = PrefabLoadContext::default();
         restore_context.insert(restore_server);
         let mut restored = World::new();

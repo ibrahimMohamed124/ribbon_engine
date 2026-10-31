@@ -2509,6 +2509,7 @@ dependencies = [
  "ribbon_ecs",
  "ribbon_events",
  "ribbon_plugins",
+ "ribbon_reflect",
  "ribbon_scene",
 ]
 
@@ -2545,8 +2546,11 @@ dependencies = [
  "ribbon_plugin_physics",
  "ribbon_plugin_render3d",
  "ribbon_plugins",
+ "ribbon_reflect",
  "ribbon_render",
  "ribbon_scene",
+ "ron",
+ "serde",
 ]
 
 [[package]]

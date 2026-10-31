@@ -14,7 +14,8 @@ pub use hierarchy::{
 pub use hierarchy_components::{Children, Parent};
 pub use prefab::{
     capture, capture_with_context, instantiate, instantiate_lenient, instantiate_with_context,
-    Prefab, PrefabCodecRegistry, PrefabEntity, PrefabLoadContext, SceneDoc, SceneError,
+    Prefab, PrefabAssetDependency, PrefabCodecRegistry, PrefabEntity, PrefabLoadContext, SceneDoc,
+    SceneError,
 };
 pub use transform::{GlobalTransform, GlobalTransform3D, Name, Transform, Transform3D};
 
