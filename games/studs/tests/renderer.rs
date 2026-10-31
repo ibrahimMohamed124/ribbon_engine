@@ -1,8 +1,8 @@
-use ribbon_plugin_rendering::cpu::render::entities::ray_box;
 use ribbon_render::Framebuffer;
 use studs::config::DEFAULT_HFOV;
 use studs::game::{Game, PAGES_TOTAL};
 use studs::ui::hud::{draw_caught, draw_hud, draw_won, fill_rect};
+use studs_cpu_renderer::cpu::render::entities::ray_box;
 
 #[test]
 fn ray_box_front_face() {

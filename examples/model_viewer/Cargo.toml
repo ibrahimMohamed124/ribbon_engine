@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ribbon_app = { path = "../../crates/ribbon_app" }
-ribbon_assets = { path = "../../crates/ribbon_assets" }
-ribbon_events = { path = "../../crates/ribbon_events" }
-ribbon_platform = { path = "../../crates/ribbon_platform" }
-ribbon_plugins = { path = "../../crates/ribbon_plugins" }
-ribbon_render = { path = "../../crates/ribbon_render" }
-ribbon_scene = { path = "../../crates/ribbon_scene" }
+ribbon_app = { path = "../../crates/app" }
+ribbon_assets = { path = "../../crates/assets" }
+ribbon_events = { path = "../../crates/events" }
+ribbon_platform = { path = "../../crates/platform" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_render = { path = "../../crates/render" }
+ribbon_scene = { path = "../../crates/scene" }
 ribbon_plugin_gltf = { path = "../../plugins/gltf" }
 ribbon_plugin_render3d = { path = "../../plugins/render3d" }

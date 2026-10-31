@@ -1,0 +1,18 @@
+[package]
+name = "ribbon_render"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["gpu"]
+gpu = ["dep:wgpu", "dep:pollster"]
+
+[dependencies]
+ribbon_app = { path = "../app" }
+ribbon_plugins = { path = "../plugins" }
+ribbon_platform = { path = "../platform" }
+ribbon_assets = { path = "../assets" }
+ribbon_math = { path = "../math" }
+ribbon_profiling = { path = "../profiling" }
+wgpu = { version = "25.0.2", optional = true }
+pollster = { version = "0.4", optional = true }

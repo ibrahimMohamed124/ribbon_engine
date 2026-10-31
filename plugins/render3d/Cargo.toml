@@ -4,15 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ribbon_app = { path = "../../crates/ribbon_app" }
-ribbon_assets = { path = "../../crates/ribbon_assets" }
-ribbon_plugins = { path = "../../crates/ribbon_plugins" }
-ribbon_render = { path = "../../crates/ribbon_render", default-features = false, features = ["gpu"] }
-ribbon_scene = { path = "../../crates/ribbon_scene" }
+ribbon_reflect = { path = "../../crates/reflect" }
+ribbon_ecs = { path = "../../crates/ecs" }
+ribbon_app = { path = "../../crates/app" }
+ribbon_assets = { path = "../../crates/assets" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_render = { path = "../../crates/render", default-features = false, features = ["gpu"] }
+ribbon_scene = { path = "../../crates/scene" }
+ribbon_render_contracts = { path = "../../crates/render_contracts" }
 bytemuck = { version = "1", features = ["derive"] }
 glam = "0.30"
 ribbon_plugin_gltf = { path = "../gltf" }
-ribbon_plugin_voxel = { path = "../voxel" }
 pollster = "0.4"
 wgpu = "25.0.2"
 

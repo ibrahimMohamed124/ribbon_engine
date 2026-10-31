@@ -3,11 +3,15 @@
 //! Inspector edits use `ribbon_commands` so they remain undoable.
 
 use ribbon_app::{App, LogBuffer, ScheduleStats, Time};
+use ribbon_assets::AssetServer;
 use ribbon_commands::{CommandStack, SetField};
 use ribbon_ecs::{Entity, World};
 use ribbon_editor::{EditorShell, Panel, Selection, Ui};
+use ribbon_plugin_render3d::GpuUploadBudget;
+use ribbon_plugin_streaming::StreamingCoordinator;
 use ribbon_plugins::Plugin;
 use ribbon_reflect::{TypeRegistry, Value};
+use ribbon_render::profiling::RenderDiagnostics;
 use ribbon_scene::{Name, Parent};
 use std::collections::HashSet;
 
@@ -145,6 +149,112 @@ impl Panel for StatsPanel {
     }
 }
 
+/// Live view of world-region state, asset worker pressure, memory residency, and GPU upload
+/// pacing. The panel remains inert when StreamingPlugin is not installed.
+pub struct StreamingPanel;
+impl Panel for StreamingPanel {
+    fn title(&self) -> &str {
+        "Streaming"
+    }
+
+    fn ui(&mut self, ui: &mut Ui, world: &mut World) {
+        if let Some(coordinator) = world.try_resource::<StreamingCoordinator>() {
+            let snapshot = coordinator.snapshot();
+            let diagnostics = snapshot.diagnostics;
+            for scene in &snapshot.scenes {
+                ui.label(&format!(
+                    "Scene {}: {:?} | regions {}/{} ready, {} active",
+                    scene.name,
+                    scene.state,
+                    scene.ready_region_count,
+                    scene.region_count,
+                    scene.active_region_count
+                ));
+            }
+            ui.label(&format!(
+                "Regions: {} | active {} | loading {} | failed {}",
+                diagnostics.region_count,
+                diagnostics.active_regions,
+                diagnostics.loading_regions,
+                diagnostics.failed_regions
+            ));
+            ui.label(&format!(
+                "Asset queue: {}/{} | workers: {} | staged commits: {}",
+                diagnostics.queued_asset_jobs,
+                diagnostics.asset_queue_capacity,
+                diagnostics.active_asset_workers,
+                world
+                    .try_resource::<AssetServer>()
+                    .map(|server| server.worker_stats().pending_completions)
+                    .unwrap_or(0)
+            ));
+            let mut regions = snapshot.regions;
+            regions.sort_by(|left, right| left.id.cmp(&right.id));
+            for region in regions {
+                ui.label(&format!(
+                    "{}: {:?} | {:.1}m | CPU {}/{} GPU {}/{} | entities {}",
+                    region.name,
+                    region.state,
+                    region.distance_to_nearest_observer.unwrap_or(f32::INFINITY),
+                    region.cpu_ready_models,
+                    region.model_count,
+                    region.gpu_ready_models,
+                    region.model_count,
+                    region.active_entity_count
+                ));
+                if let Some(error) = region.last_error {
+                    ui.label(&format!("  error: {error}"));
+                }
+            }
+        } else {
+            ui.label("StreamingPlugin is not installed");
+        }
+
+        if let Some(server) = world.try_resource::<AssetServer>() {
+            let memory = server.cpu_memory_stats();
+            let workers = server.worker_stats();
+            ui.label(&format!(
+                "CPU assets: {} | resident estimate: {} MiB | pinned: {} MiB",
+                memory.loaded_assets,
+                memory.resident_bytes_estimate / (1024 * 1024),
+                memory.pinned_bytes_estimate / (1024 * 1024)
+            ));
+            ui.label(&format!(
+                "Completion poll: {}/{} | staged: {} | byte cap: {}",
+                workers.completions_processed_last_poll,
+                workers.max_completions_per_poll,
+                workers.pending_completions,
+                workers
+                    .max_completion_bytes_per_poll
+                    .map(|bytes| format!("{} MiB", bytes / (1024 * 1024)))
+                    .unwrap_or_else(|| "unbounded".to_owned())
+            ));
+            ui.label(&format!(
+                "Asset worker (last poll): read {:.2} ms | decode {:.2} ms",
+                workers.source_read_time_ns_last_poll as f64 / 1_000_000.0,
+                workers.decode_time_ns_last_poll as f64 / 1_000_000.0
+            ));
+        }
+        if let Some(diagnostics) = world.try_resource::<RenderDiagnostics>() {
+            ui.label(&format!(
+                "GPU upload last frame: {} models | {:.2} MiB estimated",
+                diagnostics.resources.model_gpu_uploads_this_frame,
+                diagnostics.resources.model_gpu_upload_bytes_this_frame as f64 / (1024.0 * 1024.0)
+            ));
+        }
+        if let Some(budget) = world.try_resource::<GpuUploadBudget>() {
+            ui.label(&format!(
+                "GPU warmup: max {} models/frame | byte budget: {}",
+                budget.max_models_per_frame,
+                budget
+                    .max_bytes_per_frame
+                    .map(|bytes| format!("{} MiB", bytes / (1024 * 1024)))
+                    .unwrap_or_else(|| "unbounded".to_owned())
+            ));
+        }
+    }
+}
+
 /// Installs the standard panels into the editor shell.
 pub struct EditorToolsPlugin;
 impl Plugin for EditorToolsPlugin {
@@ -161,6 +271,7 @@ impl Plugin for EditorToolsPlugin {
                 Box::new(HierarchyPanel) as Box<dyn Panel>,
                 Box::new(InspectorPanel),
                 Box::new(StatsPanel),
+                Box::new(StreamingPanel),
             ]);
         }
         #[cfg(not(debug_assertions))]

@@ -1,75 +1,15 @@
-# Ribbon 3D Rendering Plugin (`ribbon_plugin_render3d`)
+# `ribbon_plugin_render3d`
 
-Native-surface 3D mesh rendering for the ECS engine. It consumes resolved
-`GlobalTransform3D` values from `ribbon_scene` and draws through the `GpuWindow`
-frame-pass / `RenderGraph` path.
+`ribbon_plugin_render3d` is the engine's native mesh/PBR rendering plugin. It owns ECS extraction for cameras, built-in meshes, glTF models, lights, fog, GPU mesh/material uploads, depth, shadows, HDR tone mapping, and renderer diagnostics. It does not own game world formats or game-specific mesh generation.
 
-## Current path
+The generic renderer extension surface is exposed through `mesh`, `post`, `profiling`, and `renderer` modules. Game-specific render integrations may depend on those public APIs without making the engine depend on the game.
 
-- Instanced indexed mesh rendering with a depth buffer.
-- ECS extraction for camera, built-in mesh, glTF model, voxel mesh, directional/spot/point lights, and fog settings.
-- Cook-Torrance/GGX metallic-roughness shading with base-color factors/textures
-  and glTF packed metallic-roughness textures.
-- Linear HDR scene target (`Rgba16Float`) and fullscreen Reinhard tone mapping.
-- A directional depth shadow map plus one perspective shadow map for the first shadow-casting spotlight; both use 3x3 PCF and depth bias.
-- Up to eight non-shadowed point lights.
-- glTF base-color, metallic-roughness, tangent-space normal, occlusion and emissive maps.
-- Exponential height/distance fog and a quarter-resolution bright-pass bloom contribution before tone mapping.
-- Conservative CPU camera-frustum culling for the color pass; objects not in the
-  camera view remain in the shadow pass list.
-- Cached immutable voxel-mesh GPU uploads keyed by retained `Arc` ownership, with eviction
-  when extracted voxel mesh instances disappear.
-- `OffscreenVoxelRenderer`, a backend-neutral framebuffer bridge that incrementally consumes
-  `ChunkedVoxelWorld` updates, uploads/releases GPU chunk meshes, renders through the same PBR/
-  HDR/depth/shadow pipeline, and returns engine framebuffer pixels for existing presenters.
+See [`../../docs/architecture/renderer-roles.md`](../../docs/architecture/renderer-roles.md) and [`../../docs/architecture/RENDERER_PLAN.md`](../../docs/architecture/RENDERER_PLAN.md).
 
-## Dynamic voxel use
+## Public data contracts
 
-Use `OffscreenVoxelRenderer::new(width, height)` with a mutable
-`ribbon_plugin_voxel::ChunkedVoxelWorld`. Each `render` drains that world's dirty chunk updates,
-updates GPU mesh storage by chunk coordinate, applies a caller-provided linear-color block
-palette and draws optional unit-cube instances. Empty chunk updates release old GPU geometry;
-mesh slots are reused after edits rather than accumulating a new buffer for every revision.
-The offscreen output is tone-mapped and converted to sRGB before readback into
-`ribbon_render::Framebuffer`. `GpuContext`/adapter initialization can fail on a target without
-a usable GPU adapter, so callers should retain a fallback renderer.
-
-This adapter exists for applications that still present through
-`WindowFrame`. Applications using `GpuWindowPlugin` can continue to use the native-surface
-`Render3dPlugin` and `VoxelMeshInstance3D` ECS components directly.
-
-## Basic use
-
-Add `PlatformPlugin`, `ScenePlugin`, `GpuWindowPlugin`, and `Render3dPlugin` in
-that dependency order. Spawn an entity with `Transform3D` and `Camera3D`, then
-spawn `MeshInstance`, `ModelInstance`, or `VoxelMeshInstance3D` entities.
-The `examples/graphics_showcase`, `examples/model_viewer`,
-`examples/scene_hierarchy_3d`, and `examples/voxel_mesh_showcase` applications
-show these paths in context.
-
-## Material contract
-
-`PbrMaterialDesc` and `TextureData` define GPU mesh material input: linear factors plus optional
-base-color/emissive sRGB maps and linear metallic-roughness/normal/occlusion maps. Invalid or
-over-device-limit texture dimensions and mismatched byte lengths use neutral fallback maps instead
-of being passed to wgpu as invalid extents. `Draw::tint` is a linear RGB multiplier. The offscreen voxel convenience API is intentionally narrower: its
-`VoxelBlockColor` palette maps each block ID to a linear RGB tint over the shared white PBR material.
-It does not accept the CPU renderer's `SurfaceShader`, does not execute custom per-hit Rust callbacks,
-and currently does not bind independent PBR texture sets per voxel block. See
-[`../../docs/RENDERING_API_CONTRACTS.md`](../../docs/RENDERING_API_CONTRACTS.md) for the supported
-contract and deliberate compatibility boundary.
-
-## Limitations
-
-This is an intentionally focused PBR implementation, not a complete production
-renderer. It does not yet support alpha blend/mask modes, multiple shadow-casting
-spotlights, cascaded shadows, image-based lighting, screen-space ambient occlusion,
-GPU-driven culling, skinned meshes, or external glTF resource resolution. The
-spotlight-shadow and bloom implementations still need validation across a range of
-Windows GPU adapters; a headless spot-lit corridor test writes `target/spotlight_corridor.png`
-when an adapter is available. Applications can use `OffscreenVoxelRenderer` for offscreen
-voxel rendering; `ribbon_plugin_rendering` retains only its CPU reference/fallback and CPU-only
-legacy ECS bridge. That crate's prior GPU raycaster and `gpu` feature have been deleted. New GPU rendering
-uses `ribbon_plugin_render3d` directly, either through the native-surface `Render3dPlugin` or
-`OffscreenVoxelRenderer`. See [`../../docs/RENDERER_PLAN.md`](../../docs/RENDERER_PLAN.md) and
-[`../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md`](../../docs/DYNAMIC_VOXEL_WORLD_MIGRATION.md).
+Renderer-neutral camera, built-in mesh, light, fog, and transform-facing data types are re-exported
+from `ribbon_render_contracts`. The plugin retains glTF-specific `ModelInstance`, renderer extraction
+logic, GPU resource management, PBR pipelines, shadows, and post-processing. This preserves existing
+`ribbon_plugin_render3d::*` type paths while allowing reusable engine plugins such as weather to
+consume public mesh/camera types without depending on render implementation.

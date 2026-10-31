@@ -1,7 +1,0 @@
-[package]
-name = "ribbon_schedule"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-ribbon_ecs = { path = "../ribbon_ecs" }

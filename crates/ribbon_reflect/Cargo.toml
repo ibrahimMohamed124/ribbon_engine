@@ -1,8 +1,0 @@
-[package]
-name = "ribbon_reflect"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-ribbon_ecs = { path = "../ribbon_ecs" }
-serde = { version = "1.0", features = ["derive"] }

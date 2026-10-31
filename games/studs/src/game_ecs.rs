@@ -13,7 +13,7 @@ use crate::level::World as Maze;
 use crate::player::Player;
 use ribbon_app::{Time, World};
 use ribbon_math::{forward_vec, Vect};
-use ribbon_plugin_rendering::RENDER_DIST;
+use studs_cpu_renderer::RENDER_DIST;
 
 const PAGE_PICKUP_RADIUS: f32 = 0.9;
 

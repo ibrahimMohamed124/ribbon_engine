@@ -1,0 +1,16 @@
+[package]
+name = "ribbon_plugin_streaming"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_app = { path = "../../crates/app" }
+ribbon_assets = { path = "../../crates/assets" }
+ribbon_ecs = { path = "../../crates/ecs" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_scene = { path = "../../crates/scene" }
+ribbon_render = { path = "../../crates/render" }
+ribbon_plugin_gltf = { path = "../gltf" }
+ribbon_plugin_render3d = { path = "../render3d" }
+ribbon_plugin_physics = { path = "../physics" }
+glam = "0.30"

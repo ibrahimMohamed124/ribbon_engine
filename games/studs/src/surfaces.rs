@@ -5,15 +5,15 @@ use std::sync::OnceLock;
 pub use crate::entities::ENEMY_BOUNDS;
 use crate::entities::{PAGE, WARDEN};
 use ribbon_math::{hash4, Vect};
-use ribbon_plugin_rendering::cpu::render::entities::EntitySurface;
-use ribbon_plugin_rendering::cpu::render::lighting::SurfaceShader;
-use ribbon_plugin_rendering::entities::{EntityInstance, EntityKind};
-use ribbon_plugin_rendering::texture::{
+use studs_cpu_renderer::cpu::render::entities::EntitySurface;
+use studs_cpu_renderer::cpu::render::lighting::SurfaceShader;
+use studs_cpu_renderer::entities::{EntityInstance, EntityKind};
+use studs_cpu_renderer::texture::{
     PbrTextureSet, RgbaMipChain, RgbaMipLevel, SpriteAtlas, Texture, TextureColorSpace, TextureId,
 };
-use ribbon_plugin_rendering::RenderStyle;
-use ribbon_plugin_rendering::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
-use ribbon_plugin_voxel::{face_uv, Hit};
+use studs_cpu_renderer::RenderStyle;
+use studs_cpu_renderer::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
+use studs_voxel::{face_uv, Hit};
 
 use crate::level::{CEIL, FLOOR, WALL};
 
@@ -241,7 +241,7 @@ impl SurfaceShader for StudsSurface {
         if style.pbr_enabled {
             if let Some(set_id) = material.pbr_texture {
                 let (_, _, tint, alternate) =
-                    ribbon_plugin_rendering::material::cell_uv(hit.cell, (0.0, 0.0));
+                    studs_cpu_renderer::material::cell_uv(hit.cell, (0.0, 0.0));
                 let selected_id = if material.cell_variation && alternate && set_id.0 == 1 {
                     TextureId(2)
                 } else {
@@ -250,8 +250,7 @@ impl SurfaceShader for StudsSurface {
                 if let Some(set) = materials.get_pbr_texture(selected_id) {
                     let (mut u, mut v) = face_uv(hit);
                     if material.cell_variation {
-                        let transformed =
-                            ribbon_plugin_rendering::material::cell_uv(hit.cell, (u, v));
+                        let transformed = studs_cpu_renderer::material::cell_uv(hit.cell, (u, v));
                         u = transformed.0;
                         v = transformed.1;
                     }
@@ -451,8 +450,8 @@ pub fn page_view(pos: Vect, time: f32, index: f32) -> EntityInstance {
 mod tests {
     use super::{apply_texture_modulation, wall_texture_modulation};
     use ribbon_math::Vect;
-    use ribbon_plugin_rendering::texture::Texture;
-    use ribbon_plugin_voxel::Hit;
+    use studs_cpu_renderer::texture::Texture;
+    use studs_voxel::Hit;
 
     #[test]
     fn texture_modulation_preserves_classic_at_zero_and_stays_moderate() {

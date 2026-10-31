@@ -1,5 +1,4 @@
 use ribbon_math::Rng;
-use ribbon_plugin_rendering::cpu::render::render_with_materials;
 use ribbon_render::Framebuffer;
 use studs::config::DEFAULT_HFOV;
 use studs::entities::WARDEN;
@@ -8,6 +7,7 @@ use studs::input::{Controls, InputFrame};
 use studs::settings::Settings;
 use studs::surfaces::studs_material_table;
 use studs::world::World;
+use studs_cpu_renderer::cpu::render::render_with_materials;
 
 fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
     bytes.into_iter().fold(0xcbf29ce484222325, |hash, byte| {
@@ -189,7 +189,7 @@ fn realistic_monster_sprite_is_visible_and_matches_its_golden() {
         .iter()
         .find(|entity| entity.kind == WARDEN)
         .unwrap();
-    let sprite_hit = ribbon_plugin_rendering::cpu::render::entities::SpriteView::new(
+    let sprite_hit = studs_cpu_renderer::cpu::render::entities::SpriteView::new(
         *warden,
         scene.entity_registry.get(warden.kind).unwrap(),
         scene.camera.eye,

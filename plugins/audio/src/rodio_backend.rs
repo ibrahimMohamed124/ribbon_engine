@@ -114,16 +114,21 @@ impl AudioBackend for RodioBackend {
         let Some(source) = self.decoded.get(&sound) else {
             return;
         };
-        self.output.mixer().add(
-            source
-                .buffer
-                .clone()
-                .speed(asset.speed)
-                .amplify(volume * asset.gain),
-        );
+        let speed = safe_speed(asset.speed);
+        let gain = safe_gain(volume) * safe_asset_gain(asset.gain);
+        if gain <= 0.0 {
+            return;
+        }
+        self.output
+            .mixer()
+            .add(source.buffer.clone().speed(speed).amplify(gain));
     }
 
     fn play_spatial(&mut self, sound: SoundId, volume: f32, pan: f32) {
+        self.play_spatial_rate(sound, volume, pan, 1.0);
+    }
+
+    fn play_spatial_rate(&mut self, sound: SoundId, volume: f32, pan: f32, doppler_ratio: f32) {
         let Some(asset) = self.bank.sound(sound) else {
             return;
         };
@@ -131,21 +136,35 @@ impl AudioBackend for RodioBackend {
             self.play(sound, volume);
             return;
         }
-        let player = rodio::SpatialPlayer::connect_new(
-            self.output.mixer(),
-            [pan.clamp(-1.0, 1.0) * 0.6, 0.8, 0.0],
-            [-0.12, 0.0, 0.0],
-            [0.12, 0.0, 0.0],
-        );
         let Some(source) = self.decoded.get(&sound) else {
             return;
         };
+        let gain = safe_gain(volume) * safe_asset_gain(asset.gain);
+        if gain <= 0.0 {
+            return;
+        }
+        let pan = if pan.is_finite() {
+            pan.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        let doppler = if doppler_ratio.is_finite() {
+            doppler_ratio.clamp(0.5, 2.0)
+        } else {
+            1.0
+        };
+        let player = rodio::SpatialPlayer::connect_new(
+            self.output.mixer(),
+            [pan * 0.6, 0.8, 0.0],
+            [-0.12, 0.0, 0.0],
+            [0.12, 0.0, 0.0],
+        );
         player.append(
             source
                 .buffer
                 .clone()
-                .speed(asset.speed)
-                .amplify(volume * asset.gain),
+                .speed(safe_speed(asset.speed * doppler))
+                .amplify(gain),
         );
         player.detach();
     }
@@ -160,8 +179,11 @@ impl AudioBackend for RodioBackend {
         };
         if let Some((current, player)) = &self.ambience {
             if *current == ambience {
-                let gain = self.bank.ambience(ambience).map_or(1.0, |asset| asset.gain);
-                player.set_volume(volume * gain);
+                let gain = self
+                    .bank
+                    .ambience(ambience)
+                    .map_or(1.0, |asset| safe_asset_gain(asset.gain));
+                player.set_volume(safe_gain(volume) * gain);
                 return;
             }
         }
@@ -172,7 +194,7 @@ impl AudioBackend for RodioBackend {
             return;
         };
         let player = rodio::Player::connect_new(self.output.mixer());
-        player.set_volume(volume * asset.gain);
+        player.set_volume(safe_gain(volume) * safe_asset_gain(asset.gain));
         match rodio::Decoder::try_from(Cursor::new(asset.data)) {
             Ok(source) => {
                 player.append(source.repeat_infinite());
@@ -180,6 +202,30 @@ impl AudioBackend for RodioBackend {
             }
             Err(error) => eprintln!("could not decode {ambience:?} audio: {error}"),
         }
+    }
+}
+
+fn safe_gain(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn safe_asset_gain(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 4.0)
+    } else {
+        0.0
+    }
+}
+
+fn safe_speed(value: f32) -> f32 {
+    if value.is_finite() && value > 0.0 {
+        value.clamp(0.1, 4.0)
+    } else {
+        1.0
     }
 }
 

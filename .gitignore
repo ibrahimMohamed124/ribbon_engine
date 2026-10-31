@@ -6,9 +6,11 @@
 /games/studs/settings.cfg
 *.zip
 /games/studs/assets/source/
-/examples/horror_slice/assets/textures/source/
-scripts/
+/games/athar/assets/textures/source/
 
 # Python asset-generator caches
 __pycache__/
+*.pyc
 *.py[cod]
+/NONE
+*.pdb

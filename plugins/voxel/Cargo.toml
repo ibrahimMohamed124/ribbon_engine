@@ -1,7 +1,0 @@
-[package]
-name = "ribbon_plugin_voxel"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-ribbon_math = { path = "../../crates/ribbon_math" }

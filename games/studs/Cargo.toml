@@ -15,20 +15,27 @@ path = "src/main.rs"
 default = ["audio", "gpu"]
 audio = ["ribbon_plugin_audio/audio"]
 # STUDS GPU rendering is the engine's mesh renderer; do not enable the legacy raycaster backend.
-gpu = ["dep:ribbon_plugin_render3d"]
+gpu = ["dep:ribbon_plugin_render3d", "dep:studs_voxel_gpu"]
 
 [dependencies]
-ribbon_app = { path = "../../crates/ribbon_app" }
-ribbon_events = { path = "../../crates/ribbon_events" }
-ribbon_plugins = { path = "../../crates/ribbon_plugins" }
-ribbon_scene = { path = "../../crates/ribbon_scene" }
-ribbon_math = { path = "../../crates/ribbon_math" }
-ribbon_platform = { path = "../../crates/ribbon_platform" }
-ribbon_render = { path = "../../crates/ribbon_render", default-features = false }
+ribbon_app = { path = "../../crates/app" }
+ribbon_events = { path = "../../crates/events" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_scene = { path = "../../crates/scene" }
+ribbon_math = { path = "../../crates/math" }
+ribbon_platform = { path = "../../crates/platform" }
+ribbon_render = { path = "../../crates/render", default-features = false }
 ribbon_plugin_audio = { path = "../../plugins/audio", default-features = false }
-ribbon_plugin_physics = { path = "../../plugins/physics" }
-ribbon_plugin_voxel = { path = "../../plugins/voxel" }
-ribbon_plugin_rendering = { path = "../../plugins/rendering", default-features = false, features = ["cpu"] }
+studs_voxel = { path = "crates/studs_voxel" }
+studs_cpu_renderer = { path = "crates/studs_cpu_renderer", default-features = false, features = ["cpu"] }
 ribbon_plugin_render3d = { path = "../../plugins/render3d", optional = true }
+studs_voxel_gpu = { path = "crates/studs_voxel_gpu", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+# The legacy decoder is only used by the audio integration test to measure the
+# bundled WAV assets. Keep Rodio out of normal STUDS builds while explicitly
+# enabling the compatibility module for test targets. Cargo unifies these
+# features with the normal ribbon_plugin_audio dependency only during tests.
+ribbon_plugin_audio = { path = "../../plugins/audio", default-features = false, features = ["rodio-compat"] }
 

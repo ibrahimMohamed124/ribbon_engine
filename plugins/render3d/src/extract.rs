@@ -5,35 +5,21 @@
 //! instead of querying gameplay ECS data while recording GPU commands.
 
 use crate::components::{
-    Camera3D, FogSettings, MeshInstance, ModelInstance, PointLight, SpotLight, SunLight,
-    VoxelMeshInstance3D,
+    Camera3D, DynamicMeshInstance3D, FogSettings, MeshInstance, ModelInstance, PointLight,
+    SpotLight, SunLight,
 };
+use crate::mesh::MeshData;
 use glam::Mat4;
 use ribbon_app::{App, Stage, World};
 use ribbon_assets::Handle;
 use ribbon_plugin_gltf::ModelAsset;
-use ribbon_plugin_voxel::VoxelChunkMesh;
 use ribbon_plugins::Plugin;
+use ribbon_render::profiling::RenderProfileRecorder;
 use ribbon_scene::GlobalTransform3D;
 use std::sync::Arc;
+use std::time::Instant;
 
-/// Camera and resolved world pose selected for one render frame.
-#[derive(Clone, Copy, Debug)]
-pub struct ExtractedCamera3D {
-    /// Resolved camera world transform (including any parent transforms).
-    pub transform: GlobalTransform3D,
-    /// Projection settings for the camera.
-    pub camera: Camera3D,
-}
-
-/// One built-in mesh draw extracted from an ECS entity.
-#[derive(Clone, Copy, Debug)]
-pub struct ExtractedMesh3D {
-    /// Resolved object-to-world matrix.
-    pub transform: Mat4,
-    /// Linear RGB instance tint.
-    pub color: [f32; 3],
-}
+pub use ribbon_render_contracts::{ExtractedCamera3D, ExtractedMesh3D};
 
 /// One glTF model placement extracted from an ECS entity.
 #[derive(Clone, Copy, Debug)]
@@ -44,31 +30,31 @@ pub struct ExtractedModel3D {
     pub model: Handle<ModelAsset>,
 }
 
-/// One immutable greedy-meshed voxel chunk ready for GPU upload.
-#[derive(Clone, Debug)]
-pub struct ExtractedVoxelMesh3D {
-    /// Resolved chunk-to-world transform including the voxel-grid origin.
+/// One placement of an arbitrary indexed mesh extracted from the ECS.
+#[derive(Clone)]
+pub struct ExtractedDynamicMesh3D {
+    /// Resolved object-to-world matrix.
     pub transform: Mat4,
-    /// Shared CPU mesh; GPU upload is cached by `Render3dPlugin`.
-    pub mesh: Arc<VoxelChunkMesh>,
-    /// Linear RGB tint for the block id represented by this mesh.
+    /// Shared CPU geometry retained while its GPU cache entry is live.
+    pub mesh: Arc<MeshData>,
+    /// Linear RGB tint multiplier.
     pub color: [f32; 3],
 }
 
 /// Compact render-facing scene snapshot produced from the ECS each frame.
 ///
-/// This contains copied transforms and asset handles rather than references into
-/// the ECS. The vectors are reused between frames to avoid repeated allocations.
+/// This contains copied transforms, shared mesh geometry, and asset handles rather than ECS
+/// component references. Model handle records stay here because they are specific to the glTF API.
 #[derive(Default)]
 pub struct ExtractedScene3D {
     /// First camera with a resolved global transform, if any.
     pub camera: Option<ExtractedCamera3D>,
     /// Built-in mesh instances.
     pub meshes: Vec<ExtractedMesh3D>,
+    /// Arbitrary indexed mesh instances with shared CPU geometry.
+    pub dynamic_meshes: Vec<ExtractedDynamicMesh3D>,
     /// Loaded or pending glTF model instances.
     pub models: Vec<ExtractedModel3D>,
-    /// Greedy-meshed voxel instances rendered by the same native GPU mesh pipeline.
-    pub voxels: Vec<ExtractedVoxelMesh3D>,
     /// Directional sunlight and ambient contribution for this frame.
     pub sun: SunLight,
     /// World-space spotlight components for the native mesh renderer.
@@ -79,10 +65,16 @@ pub struct ExtractedScene3D {
     pub fog: FogSettings,
     /// App frame counter used by tools to correlate diagnostics with a frame.
     pub frame: u64,
+    /// CPU extraction time, populated only while render-profile capture is enabled.
+    pub extraction_cpu_time_ns: Option<u64>,
 }
 
 /// Extract camera, transform, mesh, model and light data from the live ECS world.
 pub fn extract_scene_3d(world: &mut World) {
+    let extraction_started = world
+        .try_resource::<RenderProfileRecorder>()
+        .is_some()
+        .then(Instant::now);
     let frame = world.resource::<ribbon_app::Time>().frame;
     let sun = world
         .try_resource::<SunLight>()
@@ -107,25 +99,24 @@ pub fn extract_scene_3d(world: &mut World) {
             });
         }
 
+        extracted.dynamic_meshes.clear();
+        for (_, (transform, instance)) in world
+            .query::<(&GlobalTransform3D, &DynamicMeshInstance3D)>()
+            .iter()
+        {
+            extracted.dynamic_meshes.push(ExtractedDynamicMesh3D {
+                transform: transform.matrix(),
+                mesh: Arc::clone(&instance.mesh),
+                color: instance.color,
+            });
+        }
+
         extracted.models.clear();
         for (_, (transform, model)) in world.query::<(&GlobalTransform3D, &ModelInstance)>().iter()
         {
             extracted.models.push(ExtractedModel3D {
                 transform: transform.matrix(),
                 model: model.model,
-            });
-        }
-
-        extracted.voxels.clear();
-        for (_, (transform, voxel)) in world
-            .query::<(&GlobalTransform3D, &VoxelMeshInstance3D)>()
-            .iter()
-        {
-            let origin = glam::Vec3::from(voxel.mesh.origin_y_up);
-            extracted.voxels.push(ExtractedVoxelMesh3D {
-                transform: transform.matrix() * Mat4::from_translation(origin),
-                mesh: Arc::clone(&voxel.mesh),
-                color: voxel.color,
             });
         }
 
@@ -144,6 +135,16 @@ pub fn extract_scene_3d(world: &mut World) {
             .unwrap_or_default();
         extracted.frame = frame;
     });
+    if let Some(started) = extraction_started {
+        world
+            .resource_mut::<ExtractedScene3D>()
+            .extraction_cpu_time_ns =
+            Some(started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64);
+    } else {
+        world
+            .resource_mut::<ExtractedScene3D>()
+            .extraction_cpu_time_ns = None;
+    }
 }
 
 /// Internal marker so applications can install the public extraction plugin together

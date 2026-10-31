@@ -24,6 +24,42 @@ pub fn upload_model(
     queue: &wgpu::Queue,
     model: &ModelAsset,
 ) -> Vec<GpuModelPart> {
+    // Keep the original infallible API for compatibility, but do not hide invalid model data.
+    // New code that needs a readiness contract should use `try_upload_model` and propagate the
+    // validation error to its caller.
+    match try_upload_model(renderer, device, queue, model) {
+        Ok(parts) => parts,
+        Err(error) => {
+            eprintln!("render3d model upload rejected: {error}");
+            Vec::new()
+        }
+    }
+}
+
+/// Validate and upload all resources referenced by a glTF model.
+///
+/// Validation happens before any GPU objects are created, so malformed or empty models cannot
+/// partially populate the renderer cache and can be surfaced as a terminal warmup error.
+pub fn try_upload_model(
+    renderer: &mut MeshRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    model: &ModelAsset,
+) -> Result<Vec<GpuModelPart>, String> {
+    validate_model_for_upload(model)?;
+    Ok(upload_validated_model(renderer, device, queue, model))
+}
+
+/// Upload a model after the caller has verified its CPU representation.
+///
+/// This is crate-visible so the renderer can surface malformed models without scanning their
+/// full vertex/image payload twice before every successful upload.
+pub(crate) fn upload_validated_model(
+    renderer: &mut MeshRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    model: &ModelAsset,
+) -> Vec<GpuModelPart> {
     let used_materials: HashSet<usize> = model
         .nodes
         .iter()
@@ -98,10 +134,18 @@ pub fn upload_model(
             ))
         })
         .collect();
-    let meshes: Vec<MeshId> = model
+    // Only upload primitive geometry referenced by a placed node. Keeping unused primitive
+    // uploads here would create MeshIds that never enter the returned cache entry and therefore
+    // could not be released when a warmup or active scene use ends.
+    let used_primitives: HashSet<usize> = model.nodes.iter().map(|node| node.primitive).collect();
+    let meshes: Vec<Option<MeshId>> = model
         .primitives
         .iter()
-        .map(|primitive| {
+        .enumerate()
+        .map(|(index, primitive)| {
+            if !used_primitives.contains(&index) {
+                return None;
+            }
             let vertices: Vec<Vertex> = primitive
                 .positions
                 .iter()
@@ -113,14 +157,15 @@ pub fn upload_model(
                     uv: *uv,
                 })
                 .collect();
-            renderer.upload_mesh(device, &vertices, &primitive.indices)
+            Some(renderer.upload_mesh(device, &vertices, &primitive.indices))
         })
         .collect();
     model
         .nodes
         .iter()
         .map(|node| GpuModelPart {
-            mesh: meshes[node.primitive],
+            mesh: meshes[node.primitive]
+                .expect("validated node references a primitive that was uploaded"),
             material: model.primitives[node.primitive]
                 .material
                 .and_then(|index| materials.get(index).copied().flatten())
@@ -130,9 +175,118 @@ pub fn upload_model(
         .collect()
 }
 
+/// Check that every model resource the current renderer upload path indexes is valid.
+pub fn validate_model_for_upload(model: &ModelAsset) -> Result<(), String> {
+    if model.nodes.is_empty() {
+        return Err("model has no placed renderable nodes".to_owned());
+    }
+    if model.primitives.is_empty() {
+        return Err("model has no indexed primitives".to_owned());
+    }
+    for (index, primitive) in model.primitives.iter().enumerate() {
+        if primitive.positions.is_empty() || primitive.indices.is_empty() {
+            return Err(format!("primitive {index} has empty geometry"));
+        }
+        if primitive.positions.len() != primitive.normals.len()
+            || primitive.positions.len() != primitive.uvs.len()
+        {
+            return Err(format!(
+                "primitive {index} has mismatched position/normal/UV counts"
+            ));
+        }
+        if primitive.indices.len() % 3 != 0 {
+            return Err(format!("primitive {index} is not a triangle list"));
+        }
+        if primitive
+            .indices
+            .iter()
+            .any(|&index| index as usize >= primitive.positions.len())
+        {
+            return Err(format!("primitive {index} contains an out-of-range index"));
+        }
+        if primitive
+            .material
+            .is_some_and(|material| material >= model.materials.len())
+        {
+            return Err(format!("primitive {index} references a missing material"));
+        }
+        if primitive
+            .positions
+            .iter()
+            .flatten()
+            .any(|value| !value.is_finite())
+            || primitive
+                .normals
+                .iter()
+                .flatten()
+                .any(|value| !value.is_finite())
+            || primitive
+                .uvs
+                .iter()
+                .flatten()
+                .any(|value| !value.is_finite())
+        {
+            return Err(format!("primitive {index} contains non-finite vertex data"));
+        }
+    }
+    for (index, node) in model.nodes.iter().enumerate() {
+        if node.primitive >= model.primitives.len() {
+            return Err(format!("node {index} references a missing primitive"));
+        }
+        if !node
+            .transform
+            .to_cols_array()
+            .iter()
+            .all(|value| value.is_finite())
+        {
+            return Err(format!("node {index} contains a non-finite transform"));
+        }
+    }
+    for (index, image) in model.images.iter().enumerate() {
+        let expected = u64::from(image.width)
+            .saturating_mul(u64::from(image.height))
+            .saturating_mul(4);
+        if image.width == 0 || image.height == 0 || expected != image.rgba8.len() as u64 {
+            return Err(format!(
+                "image {index} has invalid RGBA8 dimensions/data length"
+            ));
+        }
+    }
+    for (index, material) in model.materials.iter().enumerate() {
+        if material.base_color.iter().any(|value| !value.is_finite())
+            || !material.metallic_factor.is_finite()
+            || !material.roughness_factor.is_finite()
+            || !material.occlusion_strength.is_finite()
+            || material
+                .emissive_factor
+                .iter()
+                .any(|value| !value.is_finite())
+        {
+            return Err(format!("material {index} contains non-finite factors"));
+        }
+        for texture in [
+            material.base_color_texture,
+            material.metallic_roughness_texture,
+            material.normal_texture,
+            material.occlusion_texture,
+            material.emissive_texture,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if texture >= model.images.len() {
+                return Err(format!(
+                    "material {index} references missing image {texture}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::upload_model;
+    use super::{upload_model, validate_model_for_upload};
     use crate::components::{Camera3D, SunLight, Transform3D};
     use crate::renderer::{Draw, MeshRenderer, Scene};
     use glam::{Mat4, Vec3};
@@ -140,6 +294,37 @@ mod tests {
     use ribbon_render::gpu_window::clear_view;
 
     const CUBE: &[u8] = include_bytes!("../../../assets/models/checker_cube.glb");
+
+    #[test]
+    fn model_upload_validation_rejects_empty_and_accepts_packaged_models() {
+        let empty = ribbon_plugin_gltf::ModelAsset::default();
+        assert!(validate_model_for_upload(&empty).is_err());
+        let model = ribbon_plugin_gltf::parse(CUBE).expect("packaged model parses");
+        validate_model_for_upload(&model).expect("packaged model is uploadable");
+    }
+
+    #[test]
+    fn model_upload_does_not_allocate_gpu_meshes_for_unplaced_primitives() {
+        let context = match pollster::block_on(GpuContext::new_offscreen(8, 8)) {
+            Ok(context) => context,
+            Err(error) => {
+                eprintln!("skipping GPU resource-lifetime test: {}", error.0);
+                return;
+            }
+        };
+        let (device, queue) = (context.device(), context.queue());
+        let mut renderer = MeshRenderer::new(device, queue, wgpu::TextureFormat::Rgba8Unorm);
+        let before = renderer.resource_stats().live_meshes;
+        let mut model = ribbon_plugin_gltf::parse(CUBE).expect("packaged model parses");
+        let unused_primitive = model.primitives[0].clone();
+        model.primitives.push(unused_primitive);
+        assert_eq!(model.nodes.len(), 1);
+
+        let parts = upload_model(&mut renderer, device, queue, &model);
+        let after = renderer.resource_stats().live_meshes;
+        assert_eq!(parts.len(), 1);
+        assert_eq!(after.saturating_sub(before), 1);
+    }
 
     #[test]
     fn textured_gltf_cube_renders_with_its_checker_pattern() {

@@ -328,7 +328,7 @@ impl ToneMapper {
             .map_or_else(Vec::new, GpuTimestampProfiler::drain_completed)
     }
 
-    pub(crate) fn clear_gpu_timing_samples(&mut self) {
+    pub fn clear_gpu_timing_samples(&mut self) {
         if let Some(profiler) = self.gpu_timing.as_mut() {
             profiler.clear_completed();
         }

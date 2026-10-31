@@ -26,7 +26,7 @@ For example:
 
 ```powershell
 cargo run --release -p model_viewer -- --frames 1800 --profile-csv target/profiles/model-viewer.csv
-python tools/render_profile_report.py target/profiles/model-viewer.csv --output target/profiles/model-viewer.md
+python tools/perf/render_profile_report.py target/profiles/model-viewer.csv --output target/profiles/model-viewer.md
 ```
 
 Compare runs only on the same machine, GPU adapter, resolution, build profile, scene setup, and

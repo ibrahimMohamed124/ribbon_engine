@@ -113,6 +113,70 @@ impl ModelAsset {
         bytes
     }
 
+    /// Estimate bytes the current renderer upload path will submit for this model. This is a
+    /// pacing estimate, not driver VRAM telemetry. It includes unique placed primitive vertex/
+    /// index buffers, referenced material records, and referenced image base levels plus a
+    /// conservative one-third allowance for generated mip levels.
+    pub fn estimated_gpu_upload_bytes(&self) -> u64 {
+        let mut bytes = 0_u64;
+        let used_primitives: std::collections::HashSet<usize> =
+            self.nodes.iter().map(|node| node.primitive).collect();
+        for index in used_primitives {
+            let Some(primitive) = self.primitives.get(index) else {
+                continue;
+            };
+            let vertices = primitive.positions.len() as u64;
+            bytes = bytes.saturating_add(vertices.saturating_mul(
+                (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<[f32; 2]>()) as u64,
+            ));
+            bytes = bytes.saturating_add(
+                (primitive.indices.len() as u64).saturating_mul(std::mem::size_of::<u32>() as u64),
+            );
+        }
+        let mut used_materials = std::collections::HashSet::new();
+        let mut used_images = std::collections::HashSet::new();
+        for node in &self.nodes {
+            let Some(primitive) = self.primitives.get(node.primitive) else {
+                continue;
+            };
+            let Some(material_index) = primitive.material else {
+                continue;
+            };
+            if !used_materials.insert(material_index) {
+                continue;
+            }
+            let Some(material) = self.materials.get(material_index) else {
+                continue;
+            };
+            // The current renderer creates one compact uniform per used material. Its texture
+            // cache key includes the transfer function, so a source image used both as sRGB and
+            // linear data can consume two GPU allocations and is counted twice here.
+            bytes = bytes.saturating_add(256);
+            for image_index in material
+                .base_color_texture
+                .into_iter()
+                .chain(material.emissive_texture)
+            {
+                used_images.insert((image_index, true));
+            }
+            for image_index in material
+                .metallic_roughness_texture
+                .into_iter()
+                .chain(material.normal_texture)
+                .chain(material.occlusion_texture)
+            {
+                used_images.insert((image_index, false));
+            }
+        }
+        for (index, _is_srgb) in used_images {
+            if let Some(image) = self.images.get(index) {
+                let base = image.rgba8.len() as u64;
+                bytes = bytes.saturating_add(base.saturating_add(base / 3));
+            }
+        }
+        bytes
+    }
+
     /// Axis-aligned bounds of every placed vertex, or `None` for an empty model.
     pub fn bounds(&self) -> Option<(Vec3, Vec3)> {
         let mut min = Vec3::splat(f32::INFINITY);

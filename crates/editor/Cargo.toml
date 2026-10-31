@@ -1,0 +1,19 @@
+[package]
+name = "ribbon_editor"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+editor = []
+
+[dependencies]
+ribbon_app = { path = "../app" }
+ribbon_plugins = { path = "../plugins" }
+ribbon_platform = { path = "../platform" }
+ribbon_render = { path = "../render" }
+ribbon_reflect = { path = "../reflect" }
+ribbon_commands = { path = "../commands" }
+ribbon_scene = { path = "../scene" }
+ribbon_ecs = { path = "../ecs" }
+ribbon_math = { path = "../math" }

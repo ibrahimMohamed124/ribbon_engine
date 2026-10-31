@@ -1,0 +1,8 @@
+[package]
+name = "studs_voxel_gpu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_plugin_render3d = { path = "../../../../plugins/render3d" }
+studs_voxel = { path = "../studs_voxel" }

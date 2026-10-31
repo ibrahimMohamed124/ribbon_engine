@@ -14,7 +14,7 @@
 //!     audio.rs      backend-agnostic sound events
 //!     ui/           menus, controls, settings, and pixel UI theme
 //!     settings.rs   persisted user settings
-//!   ribbon_math, ribbon_plugin_voxel   shared math and voxel storage
+//!   ribbon_math, studs_voxel   shared math and voxel storage
 //! ```
 
 pub mod app;

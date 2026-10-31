@@ -1,7 +1,0 @@
-[package]
-name = "ribbon_plugins"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-ribbon_app = { path = "../ribbon_app" }

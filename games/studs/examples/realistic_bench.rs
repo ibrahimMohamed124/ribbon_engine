@@ -1,10 +1,10 @@
 use std::time::Instant;
 
-use ribbon_plugin_rendering::cpu::render::render_with_materials;
 use ribbon_render::Framebuffer;
 use studs::config::DEFAULT_HFOV;
 use studs::game::Game;
 use studs::surfaces::{studs_material_table, StudsSurface};
+use studs_cpu_renderer::cpu::render::render_with_materials;
 
 fn main() {
     let frames = std::env::args()

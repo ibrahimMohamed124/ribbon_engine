@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ribbon_assets = { path = "../../crates/ribbon_assets" }
+ribbon_assets = { path = "../../crates/assets" }
 glam = "0.30"
 gltf = { version = "1", default-features = false, features = ["import", "utils", "names"] }

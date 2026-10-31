@@ -1,4 +1,4 @@
-use ribbon_plugin_rendering::entities::{
+use studs_cpu_renderer::entities::{
     EntityAnimation, EntityBox, EntityDefinition, EntityKind, EntityRegistry, EntityRenderMode,
     EntityShadow,
 };

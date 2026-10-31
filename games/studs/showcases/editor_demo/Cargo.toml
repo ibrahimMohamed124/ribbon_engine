@@ -1,0 +1,15 @@
+[package]
+name = "editor_demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_app = { path = "../../../../crates/app" }
+ribbon_ecs = { path = "../../../../crates/ecs" }
+ribbon_editor = { path = "../../../../crates/editor", features = ["editor"] }
+ribbon_platform = { path = "../../../../crates/platform" }
+ribbon_plugins = { path = "../../../../crates/plugins" }
+ribbon_render = { path = "../../../../crates/render" }
+ribbon_scene = { path = "../../../../crates/scene" }
+studs_cpu_renderer = { path = "../../crates/studs_cpu_renderer" }
+ribbon_plugin_editor_tools = { path = "../../../../plugins/editor_tools" }

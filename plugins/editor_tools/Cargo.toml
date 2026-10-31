@@ -4,12 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ribbon_editor = { path = "../../crates/ribbon_editor" }
-ribbon_commands = { path = "../../crates/ribbon_commands" }
-ribbon_reflect = { path = "../../crates/ribbon_reflect" }
-ribbon_scene = { path = "../../crates/ribbon_scene" }
-ribbon_ecs = { path = "../../crates/ribbon_ecs" }
-ribbon_app = { path = "../../crates/ribbon_app" }
-ribbon_plugins = { path = "../../crates/ribbon_plugins" }
-ribbon_render = { path = "../../crates/ribbon_render" }
-ribbon_math = { path = "../../crates/ribbon_math" }
+ribbon_editor = { path = "../../crates/editor" }
+ribbon_commands = { path = "../../crates/commands" }
+ribbon_reflect = { path = "../../crates/reflect" }
+ribbon_scene = { path = "../../crates/scene" }
+ribbon_ecs = { path = "../../crates/ecs" }
+ribbon_app = { path = "../../crates/app" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_render = { path = "../../crates/render" }
+ribbon_math = { path = "../../crates/math" }
+ribbon_plugin_streaming = { path = "../streaming" }
+ribbon_assets = { path = "../../crates/assets" }
+ribbon_plugin_render3d = { path = "../render3d" }
