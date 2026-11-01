@@ -14,6 +14,7 @@ pub mod prefab;
 pub mod preload;
 pub mod profiling;
 pub mod renderer;
+pub mod shader_pipeline;
 
 pub use components::{
     BuiltinMesh, Camera3D, DynamicMeshInstance3D, FogSettings, GpuMeshInstance3D, MeshInstance,
@@ -32,7 +33,10 @@ pub use gpu_streaming::{
 pub use model::{try_upload_model, upload_model, validate_model_for_upload, GpuModelPart};
 pub use pollster;
 pub use prefab::register_prefab_components;
-pub use preload::{GpuUploadBudget, ModelGpuResidencyBudget, ModelWarmup, ModelWarmupStatus};
+pub use preload::{
+    GlobalGpuResidencyBudget, GpuUploadBudget, ModelGpuResidencyBudget, ModelWarmup,
+    ModelWarmupStatus,
+};
 pub use renderer::{
     Draw, GpuSamplerAddressMode, GpuSamplerDesc, GpuSamplerFilter, MaterialId, MeshId,
     MeshRenderer, PbrMaterialDesc, SamplerId, Scene, TextureData, TextureId,
@@ -44,6 +48,11 @@ pub use ribbon_render::gpu_window::clear_view;
 pub use ribbon_render::profiling::RenderResourceStats;
 pub use ribbon_render::{graph::RenderError, Framebuffer};
 pub use ribbon_scene::GlobalTransform3D;
+pub use shader_pipeline::{
+    RenderPipelineBuilder, RenderPipelineLease, RenderPipelineState, ShaderModuleAsset,
+    ShaderModuleLease, ShaderModuleState, ShaderPipelineRegistry, ShaderPipelineRegistryStats,
+    ShaderSourceLoader, SHADER_ASSET_GPU_NAMESPACE,
+};
 pub use wgpu;
 
 use crate::mesh::MeshData;
@@ -136,6 +145,9 @@ struct MeshPass {
     model_cache_bytes: HashMap<ModelAssetKey, u64>,
     model_cache_pressure_events: u64,
     model_cache_pressure_level: u8,
+    global_gpu_pressure_level: u8,
+    global_gpu_pressure_events: u64,
+    global_gpu_budget_rejections: u64,
     /// Last CPU-content revision observed for each model handle.
     asset_revisions: HashMap<ModelAssetKey, u64>,
     /// GPU uploads for shared runtime-provided mesh geometry, keyed by the retained Arc allocation.
@@ -168,6 +180,7 @@ impl FramePass for MeshPass {
         self.models.clear();
         self.model_cache_bytes.clear();
         self.model_cache_pressure_level = 0;
+        self.global_gpu_pressure_level = 0;
         self.asset_revisions.clear();
         self.dynamic_meshes.clear();
         self.failed_model_uploads.clear();
@@ -182,6 +195,11 @@ impl FramePass for MeshPass {
         if world.try_resource::<ModelWarmup>().is_some() {
             world
                 .resource_mut::<ModelWarmup>()
+                .reset_after_device_loss();
+        }
+        if world.try_resource::<ShaderPipelineRegistry>().is_some() {
+            world
+                .resource_mut::<ShaderPipelineRegistry>()
                 .reset_after_device_loss();
         }
         if world.try_resource::<GpuResourceWarmup>().is_some() {
@@ -354,6 +372,39 @@ impl MeshPass {
             resources.model_warmup_ready = counts.ready;
             resources.model_warmup_failed = counts.failed;
         }
+        if let Some(registry) = world.try_resource::<ShaderPipelineRegistry>() {
+            let stats = registry.stats();
+            resources.shader_modules = stats.shader_modules;
+            resources.shader_modules_ready = stats.shader_modules_ready;
+            resources.shader_modules_failed = stats.shader_modules_failed;
+            resources.render_pipelines = stats.render_pipelines;
+            resources.render_pipelines_ready = stats.render_pipelines_ready;
+            resources.render_pipelines_failed = stats.render_pipelines_failed;
+            resources.shader_pipeline_pending_validations = stats.pending_validations;
+            resources.shader_pipeline_retained_wgsl_bytes_estimate = stats.retained_wgsl_bytes;
+            resources.shader_pipeline_source_asset_leases = stats.source_asset_leases;
+            resources.shader_pipeline_creations_started = stats.creations_started;
+            resources.shader_pipeline_validation_failures = stats.validation_failures;
+            resources.shader_pipeline_released_generations = stats.released_generations;
+        }
+        resources.gpu_global_tracked_bytes_estimate = self.tracked_gpu_bytes_estimate(world);
+        let global_budget = world
+            .try_resource::<GlobalGpuResidencyBudget>()
+            .copied()
+            .unwrap_or_default()
+            .normalized();
+        resources.gpu_global_budget_bytes = global_budget.max_tracked_bytes.unwrap_or(0);
+        resources.gpu_global_over_budget_bytes =
+            global_budget.max_tracked_bytes.map_or(0, |limit| {
+                resources
+                    .gpu_global_tracked_bytes_estimate
+                    .saturating_sub(limit)
+            });
+        resources.gpu_global_pressure_level =
+            global_budget.pressure_level(resources.gpu_global_tracked_bytes_estimate);
+        self.global_gpu_pressure_level = resources.gpu_global_pressure_level;
+        resources.gpu_global_pressure_events = self.global_gpu_pressure_events;
+        resources.gpu_global_budget_rejections = self.global_gpu_budget_rejections;
         if let Some(warmup) = world.try_resource::<GpuResourceWarmup>() {
             let counts = warmup.counts();
             resources.generic_gpu_warmup_queued = counts.queued;
@@ -645,6 +696,49 @@ impl MeshPass {
         }
     }
 
+    fn tracked_gpu_bytes_estimate(&self, world: &World) -> u64 {
+        let renderer_bytes = self
+            .renderer
+            .as_ref()
+            .map(|renderer| renderer.resource_stats().total_bytes_estimate())
+            .unwrap_or(0);
+        let transient_bytes = self.transient_targets.stats().allocated_bytes_estimate;
+        let post_process_bytes = self
+            .tonemapper
+            .as_ref()
+            .map(|(_, tonemapper)| tonemapper.estimated_bytes())
+            .unwrap_or(0);
+        let pass_bytes = renderer_bytes
+            .saturating_add(transient_bytes)
+            .saturating_add(post_process_bytes);
+        // RenderDiagnostics also includes context-owned target/readback bytes. `max` avoids
+        // double-counting the renderer/pass allocations already represented above.
+        let published_bytes = world
+            .try_resource::<RenderDiagnostics>()
+            .map(|diagnostics| diagnostics.resources.total_bytes_estimate())
+            .unwrap_or(0);
+        pass_bytes.max(published_bytes)
+    }
+
+    fn admit_global_gpu_upload(&mut self, world: &World, next_bytes: u64) -> bool {
+        let budget = world
+            .try_resource::<GlobalGpuResidencyBudget>()
+            .copied()
+            .unwrap_or_default()
+            .normalized();
+        let current = self.tracked_gpu_bytes_estimate(world);
+        let pressure = budget.pressure_level(current.saturating_add(next_bytes));
+        if pressure > self.global_gpu_pressure_level {
+            self.global_gpu_pressure_events = self.global_gpu_pressure_events.saturating_add(1);
+        }
+        self.global_gpu_pressure_level = pressure;
+        let admitted = budget.allows(current, next_bytes);
+        if !admitted {
+            self.global_gpu_budget_rejections = self.global_gpu_budget_rejections.saturating_add(1);
+        }
+        admitted
+    }
+
     fn process_generic_gpu_warmups(
         &mut self,
         world: &mut World,
@@ -656,11 +750,26 @@ impl MeshPass {
             .try_resource::<GpuResourceWarmup>()
             .and_then(GpuResourceWarmup::next_upload_bytes)
         {
+            // Do not initialize renderer-owned baseline resources when this frame has already
+            // exhausted its upload-count allowance. Once a generic request is eligible to run,
+            // initialize the renderer before global admission so its fixed allocations are part
+            // of the tracked residency estimate used by the hard managed-allocation gate.
+            if !frame_budget.limits.allows_upload(
+                frame_budget.uploads,
+                frame_budget.uploaded_bytes,
+                0,
+            ) {
+                break;
+            }
+            if self.renderer.is_none() {
+                self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
+            }
             if !frame_budget.limits.allows_upload(
                 frame_budget.uploads,
                 frame_budget.uploaded_bytes,
                 next_bytes,
-            ) {
+            ) || !self.admit_global_gpu_upload(world, next_bytes)
+            {
                 break;
             }
             let job = if world.try_resource::<GpuResourceWarmup>().is_some() {
@@ -670,9 +779,6 @@ impl MeshPass {
             };
             let Some(job) = job else { break };
             let started = profile_cpu.then(Instant::now);
-            if self.renderer.is_none() {
-                self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
-            }
             let Some(renderer) = self.renderer.as_mut() else {
                 if world.try_resource::<GpuResourceWarmup>().is_some() {
                     world
@@ -785,6 +891,8 @@ impl MeshPass {
         }
         let model = server.get(handle)?;
         let estimated_upload_bytes = model.estimated_gpu_upload_bytes();
+        // Check the per-frame scheduler first so global-pressure diagnostics count only real
+        // admission attempts, not jobs that were already deferred by the upload pacing policy.
         if !upload_budget.allows_upload(
             frame_budget.uploads,
             frame_budget.uploaded_bytes,
@@ -805,6 +913,16 @@ impl MeshPass {
                 let warmup = world.resource_mut::<ModelWarmup>();
                 let _ = warmup.set_status(handle, ModelWarmupStatus::Failed(message));
             }
+            return Some(revision_key);
+        }
+        // Include the renderer's baseline allocations in the global residency estimate before
+        // deciding whether another model may be admitted. These baseline resources are mandatory
+        // for rendering, but their cost must not be invisible to the managed upload gate.
+        if self.renderer.is_none() {
+            self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
+        }
+        if !self.admit_global_gpu_upload(world, estimated_upload_bytes) {
+            Self::set_warmup_status(world, handle, ModelWarmupStatus::WaitingForGpu);
             return Some(revision_key);
         }
         // This nested phase measures CPU-side GPU object creation and command submission, not
@@ -879,6 +997,11 @@ impl MeshPass {
         self.model_gpu_upload_bytes_this_frame = 0;
         self.generic_gpu_uploads_this_frame = 0;
         self.generic_gpu_upload_bytes_this_frame = 0;
+        if world.try_resource::<ShaderPipelineRegistry>().is_some() {
+            world
+                .resource_mut::<ShaderPipelineRegistry>()
+                .pump(target.device, 1);
+        }
         let (width, height) = target.size;
         if let Some(cpu_time_ns) = extracted.extraction_cpu_time_ns {
             self.cpu_phases.push(RenderPassTiming {
@@ -1138,6 +1261,15 @@ impl MeshPass {
             let mesh_id = if let Some(cached) = self.dynamic_meshes.get(&key) {
                 cached.mesh
             } else {
+                let estimated_bytes = (placement.mesh.vertices.len() as u64)
+                    .saturating_mul(std::mem::size_of::<crate::mesh::Vertex>() as u64)
+                    .saturating_add(
+                        (placement.mesh.indices.len() as u64)
+                            .saturating_mul(std::mem::size_of::<u32>() as u64),
+                    );
+                if !self.admit_global_gpu_upload(world, estimated_bytes) {
+                    continue;
+                }
                 let Some(renderer) = self.renderer.as_mut() else {
                     continue;
                 };

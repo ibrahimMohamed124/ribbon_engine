@@ -117,6 +117,78 @@ impl ModelGpuResidencyBudget {
     }
 }
 
+/// Global admission budget for renderer-owned GPU allocations whose sizes can be estimated.
+///
+/// This is a hard admission limit for tracked estimates, not a claim about physical VRAM: driver,
+/// swapchain, and opaque backend allocations may not be visible to the renderer. Existing live
+/// resources are never destroyed to satisfy this limit; new uploads wait or are rejected until
+/// enough tracked capacity is available.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GlobalGpuResidencyBudget {
+    /// Maximum total tracked GPU bytes. `None` disables the global admission limit.
+    pub max_tracked_bytes: Option<u64>,
+    /// Percentage of the limit at which warning pressure begins.
+    pub warning_percent: u8,
+    /// Percentage of the limit at which high pressure begins.
+    pub high_percent: u8,
+    /// Percentage of the limit at which critical pressure begins.
+    pub critical_percent: u8,
+}
+
+impl Default for GlobalGpuResidencyBudget {
+    fn default() -> Self {
+        Self {
+            max_tracked_bytes: Some(2 * 1024 * 1024 * 1024),
+            warning_percent: 75,
+            high_percent: 90,
+            critical_percent: 100,
+        }
+    }
+}
+
+impl GlobalGpuResidencyBudget {
+    /// Normalize pressure thresholds while preserving the configured byte limit.
+    pub fn normalized(self) -> Self {
+        let warning_percent = self.warning_percent.clamp(1, 100);
+        let high_percent = self.high_percent.clamp(warning_percent, 100);
+        let critical_percent = self.critical_percent.clamp(high_percent, 100);
+        Self {
+            max_tracked_bytes: self.max_tracked_bytes,
+            warning_percent,
+            high_percent,
+            critical_percent,
+        }
+    }
+
+    /// Return pressure level: 0 normal, 1 warning, 2 high, 3 critical.
+    pub fn pressure_level(self, tracked_bytes: u64) -> u8 {
+        let Some(limit) = self.max_tracked_bytes else {
+            return 0;
+        };
+        if limit == 0 {
+            return if tracked_bytes == 0 { 0 } else { 3 };
+        }
+        let budget = self.normalized();
+        let usage_percent = (u128::from(tracked_bytes) * 100 / u128::from(limit)).min(100) as u8;
+        if usage_percent >= budget.critical_percent {
+            3
+        } else if usage_percent >= budget.high_percent {
+            2
+        } else if usage_percent >= budget.warning_percent {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Whether a new estimated allocation fits without evicting any existing live resource.
+    pub fn allows(self, current_tracked_bytes: u64, next_allocation_bytes: u64) -> bool {
+        self.max_tracked_bytes.is_none_or(|limit| {
+            current_tracked_bytes.saturating_add(next_allocation_bytes) <= limit
+        })
+    }
+}
+
 /// GPU preparation state for one requested model generation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModelWarmupStatus {
@@ -313,10 +385,50 @@ pub(crate) fn model_key(handle: Handle<ModelAsset>) -> (u64, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{GpuUploadBudget, ModelWarmup, ModelWarmupStatus};
+    use super::{GlobalGpuResidencyBudget, GpuUploadBudget, ModelWarmup, ModelWarmupStatus};
     use ribbon_assets::{AssetServer, FsSource};
     use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
     use std::path::Path;
+
+    #[test]
+    fn global_gpu_budget_enforces_tracked_admission_without_evicting_live_resources() {
+        let budget = GlobalGpuResidencyBudget {
+            max_tracked_bytes: Some(100),
+            warning_percent: 75,
+            high_percent: 90,
+            critical_percent: 100,
+        };
+        assert!(budget.allows(60, 40));
+        assert!(!budget.allows(60, 41));
+        assert!(budget.allows(0, 100));
+        assert!(!budget.allows(1, 100));
+        assert_eq!(budget.pressure_level(74), 0);
+        assert_eq!(budget.pressure_level(75), 1);
+        assert_eq!(budget.pressure_level(90), 2);
+        assert_eq!(budget.pressure_level(100), 3);
+    }
+
+    #[test]
+    fn global_gpu_budget_normalizes_thresholds_and_supports_disabled_limit() {
+        let normalized = GlobalGpuResidencyBudget {
+            max_tracked_bytes: Some(100),
+            warning_percent: 0,
+            high_percent: 5,
+            critical_percent: 4,
+        }
+        .normalized();
+        assert_eq!(normalized.warning_percent, 1);
+        assert_eq!(normalized.high_percent, 5);
+        assert_eq!(normalized.critical_percent, 5);
+        assert!(!normalized.allows(u64::MAX, 1));
+
+        let disabled = GlobalGpuResidencyBudget {
+            max_tracked_bytes: None,
+            ..GlobalGpuResidencyBudget::default()
+        };
+        assert!(disabled.allows(u64::MAX, u64::MAX));
+        assert_eq!(disabled.pressure_level(u64::MAX), 0);
+    }
 
     fn loaded_handle() -> (ModelAsset, ribbon_assets::Handle<ModelAsset>) {
         let mut server = AssetServer::default();

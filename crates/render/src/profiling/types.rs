@@ -131,6 +131,43 @@ pub struct RenderResourceStats {
     pub model_gpu_cache_pressure_events: u64,
     /// Current glTF model-cache pressure level: 0 normal, 1 warning, 2 high, 3 critical.
     pub model_gpu_cache_pressure_level: u8,
+    /// Number of generation-aware shader module records retained by the renderer registry.
+    pub shader_modules: usize,
+    /// Shader modules whose wgpu validation completed successfully.
+    pub shader_modules_ready: usize,
+    /// Shader modules that failed wgpu validation.
+    pub shader_modules_failed: usize,
+    /// Number of generation-aware render pipeline records retained by the renderer registry.
+    pub render_pipelines: usize,
+    /// Render pipelines whose wgpu validation completed successfully.
+    pub render_pipelines_ready: usize,
+    /// Render pipelines whose builder or wgpu validation failed.
+    pub render_pipelines_failed: usize,
+    /// Shader/pipeline error-scope validations currently awaiting asynchronous completion.
+    pub shader_pipeline_pending_validations: usize,
+    /// CPU bytes retained as WGSL source for device recreation; not GPU residency.
+    pub shader_pipeline_retained_wgsl_bytes_estimate: u64,
+    /// Number of WGSL AssetServer generations pinned by the shader registry.
+    pub shader_pipeline_source_asset_leases: usize,
+    /// Cumulative shader/pipeline object creation attempts submitted on the render thread.
+    pub shader_pipeline_creations_started: u64,
+    /// Cumulative shader/pipeline validation failures.
+    pub shader_pipeline_validation_failures: u64,
+    /// Cumulative shader/pipeline generations released after their final lease ended.
+    pub shader_pipeline_released_generations: u64,
+    /// Estimated bytes across currently tracked renderer-owned GPU allocations. This excludes
+    /// opaque driver/OS allocations and resources without a portable size estimate.
+    pub gpu_global_tracked_bytes_estimate: u64,
+    /// Configured global tracked-GPU admission budget, or zero when disabled.
+    pub gpu_global_budget_bytes: u64,
+    /// Tracked GPU estimate above the configured admission budget.
+    pub gpu_global_over_budget_bytes: u64,
+    /// Global tracked-GPU pressure level: 0 normal, 1 warning, 2 high, 3 critical.
+    pub gpu_global_pressure_level: u8,
+    /// Cumulative transitions into a higher global tracked-GPU pressure level.
+    pub gpu_global_pressure_events: u64,
+    /// Cumulative upload admissions rejected by the global tracked-GPU budget.
+    pub gpu_global_budget_rejections: u64,
     /// Cumulative distinct glTF model uploads for the current render-pass lifetime.
     pub model_gpu_uploads_cumulative: u64,
     /// Cumulative glTF GPU model cache entries released from the current render-pass lifetime.

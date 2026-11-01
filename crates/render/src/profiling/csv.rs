@@ -155,6 +155,24 @@ impl RenderProfileRecorder {
             "model_gpu_cache_over_budget_bytes",
             "model_gpu_cache_pressure_events",
             "model_gpu_cache_pressure_level",
+            "shader_modules",
+            "shader_modules_ready",
+            "shader_modules_failed",
+            "render_pipelines",
+            "render_pipelines_ready",
+            "render_pipelines_failed",
+            "shader_pipeline_pending_validations",
+            "shader_pipeline_retained_wgsl_bytes_estimate",
+            "shader_pipeline_source_asset_leases",
+            "shader_pipeline_creations_started",
+            "shader_pipeline_validation_failures",
+            "shader_pipeline_released_generations",
+            "gpu_global_tracked_bytes_estimate",
+            "gpu_global_budget_bytes",
+            "gpu_global_over_budget_bytes",
+            "gpu_global_pressure_level",
+            "gpu_global_pressure_events",
+            "gpu_global_budget_rejections",
         ];
         write_csv_record(&mut writer, HEADER.iter().map(|field| (*field).to_owned()))?;
         for sample in &self.samples {
@@ -333,6 +351,26 @@ impl RenderProfileRecorder {
             row[149] = resources.model_gpu_cache_over_budget_bytes.to_string();
             row[150] = resources.model_gpu_cache_pressure_events.to_string();
             row[151] = resources.model_gpu_cache_pressure_level.to_string();
+            row[152] = resources.shader_modules.to_string();
+            row[153] = resources.shader_modules_ready.to_string();
+            row[154] = resources.shader_modules_failed.to_string();
+            row[155] = resources.render_pipelines.to_string();
+            row[156] = resources.render_pipelines_ready.to_string();
+            row[157] = resources.render_pipelines_failed.to_string();
+            row[158] = resources.shader_pipeline_pending_validations.to_string();
+            row[159] = resources
+                .shader_pipeline_retained_wgsl_bytes_estimate
+                .to_string();
+            row[160] = resources.shader_pipeline_source_asset_leases.to_string();
+            row[161] = resources.shader_pipeline_creations_started.to_string();
+            row[162] = resources.shader_pipeline_validation_failures.to_string();
+            row[163] = resources.shader_pipeline_released_generations.to_string();
+            row[164] = resources.gpu_global_tracked_bytes_estimate.to_string();
+            row[165] = resources.gpu_global_budget_bytes.to_string();
+            row[166] = resources.gpu_global_over_budget_bytes.to_string();
+            row[167] = resources.gpu_global_pressure_level.to_string();
+            row[168] = resources.gpu_global_pressure_events.to_string();
+            row[169] = resources.gpu_global_budget_rejections.to_string();
             write_csv_record(&mut writer, row)?;
             for pass in &sample.passes {
                 let mut pass_row = vec![String::new(); HEADER.len()];
@@ -478,7 +516,7 @@ mod tests {
         let header: Vec<_> = rows.next().expect("header row").split(',').collect();
         let frame: Vec<_> = rows.next().expect("frame row").split(',').collect();
 
-        assert_eq!(header.len(), 152);
+        assert_eq!(header.len(), 170);
         assert_eq!(frame.len(), header.len());
         assert_eq!(header[75], "model_warmup_requested");
         assert_eq!(header[80], "model_gpu_uploads_this_frame");
@@ -524,6 +562,12 @@ mod tests {
         assert_eq!(header[149], "model_gpu_cache_over_budget_bytes");
         assert_eq!(header[150], "model_gpu_cache_pressure_events");
         assert_eq!(header[151], "model_gpu_cache_pressure_level");
+        assert_eq!(header[152], "shader_modules");
+        assert_eq!(header[155], "render_pipelines");
+        assert_eq!(header[159], "shader_pipeline_retained_wgsl_bytes_estimate");
+        assert_eq!(header[160], "shader_pipeline_source_asset_leases");
+        assert_eq!(header[164], "gpu_global_tracked_bytes_estimate");
+        assert_eq!(header[169], "gpu_global_budget_rejections");
         assert_eq!(header[137], "gpu_device_recovery_attempts");
         assert_eq!(header[138], "gpu_device_recovery_successes");
         assert_eq!(header[139], "gpu_device_recovery_failures");

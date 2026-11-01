@@ -3,8 +3,9 @@
 //! CPU decoding and asset lifetime remain owned by callers/AssetServer. The queue only accepts
 //! owned, already-decoded upload payloads; all `wgpu` calls are made by the render thread. Requests
 //! are deduplicated by a caller-provided immutable `(namespace, id, generation)` key and retained
-//! by explicit leases. The queue intentionally does not pretend to upload shader/pipeline or
-//! animation resources that the current renderer does not expose as independently managed assets.
+//! by explicit leases. Shader modules and render pipelines use the separate generation-aware
+//! `shader_pipeline` registry; skeletal animation/skinning remains a separate renderer lifecycle
+//! and is not claimed to be covered by this mesh/material queue.
 
 use crate::mesh::Vertex;
 use crate::renderer::{GpuSamplerDesc, MaterialId, MeshId, SamplerId, TextureId};

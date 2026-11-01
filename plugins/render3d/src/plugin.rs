@@ -1,6 +1,6 @@
 use super::*;
 use crate::GpuResourceWarmup;
-use ribbon_app::App;
+use ribbon_app::{App, Stage};
 use ribbon_plugins::Plugin;
 use ribbon_reflect::TypeRegistry;
 use ribbon_scene::PrefabCodecRegistry;
@@ -39,6 +39,23 @@ impl Plugin for Render3dPlugin {
         {
             app.insert_resource(ModelGpuResidencyBudget::default());
         }
+        if app.world.try_resource::<ShaderPipelineRegistry>().is_none() {
+            app.insert_resource(ShaderPipelineRegistry::default());
+        }
+        if app
+            .world
+            .try_resource::<GlobalGpuResidencyBudget>()
+            .is_none()
+        {
+            app.insert_resource(GlobalGpuResidencyBudget::default());
+        }
+        // WGSL asset loading is optional when AssetPlugin is installed later; install now when
+        // possible and keep the First-stage hook for plugin orders where AssetServer comes later.
+        crate::shader_pipeline::ensure_shader_asset_loader(&mut app.world);
+        app.add_system(
+            Stage::First,
+            crate::shader_pipeline::ensure_shader_asset_loader,
+        );
         // Compose codecs with physics and any other scene-aware plugins; do not replace an
         // existing registry as plugin build order is not otherwise constrained between peers.
         let mut prefab_codecs = app
