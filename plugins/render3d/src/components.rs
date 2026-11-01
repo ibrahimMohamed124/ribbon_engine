@@ -5,6 +5,7 @@ use crate::gpu_streaming::{
 };
 use crate::mesh::MeshData;
 use crate::renderer::{MaterialId, MeshId};
+use glam::Mat4;
 use ribbon_assets::Handle;
 use ribbon_plugin_gltf::ModelAsset;
 pub use ribbon_render_contracts::{
@@ -94,4 +95,30 @@ impl GpuMeshInstance3D {
 pub struct ModelInstance {
     /// Handle of the model in the asset server.
     pub model: Handle<ModelAsset>,
+}
+
+/// Evaluated per-model-node skin palettes produced by `AnimationPlugin`.
+///
+/// `node_palettes[i]` corresponds to `ModelAsset::nodes[i]`; a skinned placement contains
+/// model-local joint matrices (mesh-node inverse * joint-global * inverse-bind). Palettes are
+/// immutable and shared with extracted render snapshots so the GPU upload sees a stable pose.
+#[derive(Clone, Debug)]
+pub struct SkeletalPose {
+    pub model_asset_id: u64,
+    pub model_generation: u32,
+    /// Animated model-space global transforms indexed by original glTF node index.
+    pub node_global_transforms: Arc<[Mat4]>,
+    /// Mesh-local joint palettes indexed by `ModelAsset::nodes` placement index.
+    pub node_palettes: Arc<[Option<Arc<[Mat4]>>]>,
+}
+
+impl Default for SkeletalPose {
+    fn default() -> Self {
+        Self {
+            model_asset_id: 0,
+            model_generation: 0,
+            node_global_transforms: Arc::<[Mat4]>::from(Vec::new().into_boxed_slice()),
+            node_palettes: Arc::<[Option<Arc<[Mat4]>>]>::from(Vec::new().into_boxed_slice()),
+        }
+    }
 }

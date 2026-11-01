@@ -348,6 +348,12 @@ impl Panel for StreamingPanel {
                     diagnostics.gpu_last_device_loss_message
                 ));
             }
+            ui.label(&format!(
+                "Skeletal skinning: {} skinned draws after palette budget | {} rejected | {} joint matrices staged",
+                diagnostics.resources.skinned_draws_after_palette_budget,
+                diagnostics.resources.skinned_draws_rejected_palette_capacity,
+                diagnostics.resources.skin_palette_matrices_staged,
+            ));
         }
         if let Some(warmup) = world.try_resource::<GpuResourceWarmup>() {
             let counts = warmup.counts();

@@ -18,7 +18,7 @@ pub mod shader_pipeline;
 
 pub use components::{
     BuiltinMesh, Camera3D, DynamicMeshInstance3D, FogSettings, GpuMeshInstance3D, MeshInstance,
-    ModelInstance, PointLight, SpotLight, StagedRender, SunLight, Transform3D,
+    ModelInstance, PointLight, SkeletalPose, SpotLight, StagedRender, SunLight, Transform3D,
 };
 pub use extract::{
     extract_scene_3d, ExtractedCamera3D, ExtractedDynamicMesh3D, ExtractedMesh3D, ExtractedModel3D,
@@ -39,7 +39,7 @@ pub use preload::{
 };
 pub use renderer::{
     Draw, GpuSamplerAddressMode, GpuSamplerDesc, GpuSamplerFilter, MaterialId, MeshId,
-    MeshRenderer, PbrMaterialDesc, SamplerId, Scene, TextureData, TextureId,
+    MeshRenderer, PbrMaterialDesc, SamplerId, Scene, SkinnedDraw, TextureData, TextureId,
 };
 pub use ribbon_render::gpu::{
     GpuContext, TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool,
@@ -435,6 +435,10 @@ impl MeshPass {
             resources.visible_mesh_instances = stats.visible_mesh_instances;
             resources.visible_draw_calls = stats.visible_draw_calls;
             resources.shadow_draw_calls = stats.shadow_draw_calls;
+            resources.skinned_draws_after_palette_budget = stats.skinned_draws_after_palette_budget;
+            resources.skinned_draws_rejected_palette_capacity =
+                stats.skinned_draws_rejected_palette_capacity;
+            resources.skin_palette_matrices_staged = stats.skin_palette_matrices_staged;
             resources.mesh_bytes_estimate = stats.mesh_bytes_estimate;
             resources.material_bytes_estimate = stats.material_bytes_estimate;
             resources.live_material_textures = stats.live_material_textures;
@@ -1313,6 +1317,7 @@ impl MeshPass {
             model: placement.transform,
             tint: placement.color,
         }));
+        let mut skinned_draws = Vec::<SkinnedDraw>::new();
         record_cpu_phase(
             &mut self.cpu_phases,
             "built-in scene conversion",
@@ -1371,12 +1376,38 @@ impl MeshPass {
                 let Some(parts) = self.models.get(&key) else {
                     continue;
                 };
-                draws.extend(parts.iter().map(|part| Draw {
-                    mesh: part.mesh,
-                    material: part.material,
-                    model: placement.transform * part.transform,
-                    tint: [1.0; 3],
-                }));
+                for part in parts {
+                    let animated_node_transform = placement
+                        .skeletal_pose
+                        .as_ref()
+                        .and_then(|pose| pose.node_global_transforms.get(part.node_index))
+                        .copied()
+                        .unwrap_or(part.transform);
+                    let draw = Draw {
+                        mesh: part.mesh,
+                        material: part.material,
+                        model: placement.transform * animated_node_transform,
+                        tint: [1.0; 3],
+                    };
+                    if part.skin.is_some() {
+                        let animated_palette = placement
+                            .skeletal_pose
+                            .as_ref()
+                            .and_then(|pose| pose.node_palettes.get(part.placement_index))
+                            .and_then(Option::as_ref);
+                        let palette = animated_palette.or(part.bind_pose_palette.as_ref());
+                        if let Some(palette) = palette {
+                            skinned_draws.push(SkinnedDraw {
+                                draw,
+                                joint_matrices: Arc::clone(palette),
+                            });
+                        }
+                        // Do not draw weighted geometry as a static mesh if even its validated
+                        // bind-pose palette was unavailable.
+                    } else {
+                        draws.push(draw);
+                    }
+                }
             }
 
             // Standalone meshes/materials use the same count/byte admission budget as model
@@ -1486,7 +1517,7 @@ impl MeshPass {
             asset_resolution_started,
         );
 
-        if draws.is_empty() {
+        if draws.is_empty() && skinned_draws.is_empty() {
             if let Some(renderer) = self.renderer.as_mut() {
                 renderer.maintain_instance_buffers(target.device, 0);
             }
@@ -1553,16 +1584,27 @@ impl MeshPass {
                 draws: &draws,
             };
             if profile_cpu {
-                self.cpu_phases.extend(renderer.render_profiled(
+                self.cpu_phases
+                    .extend(renderer.render_profiled_with_skinning(
+                        crate::renderer::RenderTarget {
+                            device: target.device,
+                            queue: target.queue,
+                            view: hdr_view,
+                            size: target.size,
+                            scene: &scene,
+                        },
+                        &skinned_draws,
+                        frame,
+                    ));
+            } else {
+                renderer.render_with_skinning(
                     target.device,
                     target.queue,
                     hdr_view,
                     target.size,
                     &scene,
-                    frame,
-                ));
-            } else {
-                renderer.render(target.device, target.queue, hdr_view, target.size, &scene);
+                    &skinned_draws,
+                );
             }
         }
         if let Some((_, tonemapper)) = self.tonemapper.as_mut() {
@@ -1635,6 +1677,7 @@ mod model_warmup_integration_tests {
             models: vec![ExtractedModel3D {
                 transform: glam::Mat4::IDENTITY,
                 model: visible,
+                skeletal_pose: None,
             }],
             ..ExtractedScene3D::default()
         };
@@ -1845,6 +1888,7 @@ mod model_warmup_integration_tests {
             .push(ExtractedModel3D {
                 transform: glam::Mat4::IDENTITY,
                 model: active_handle,
+                skeletal_pose: None,
             });
         for (handle, _) in handles {
             assert!(world.resource_mut::<ModelWarmup>().release(handle));

@@ -238,6 +238,10 @@ impl MeshRenderer {
             visible_mesh_instances: self.last_visible_mesh_instances,
             visible_draw_calls: self.last_visible_draw_calls,
             shadow_draw_calls: self.last_shadow_draw_calls,
+            skinned_draws_after_palette_budget: self.last_skinned_draws_after_palette_budget,
+            skinned_draws_rejected_palette_capacity: self
+                .last_skinned_draws_rejected_palette_capacity,
+            skin_palette_matrices_staged: self.last_skin_palette_matrices_staged,
             ..MeshRendererResourceStats::default()
         };
         for mesh in self.meshes.iter().filter_map(|slot| slot.mesh.as_ref()) {
@@ -302,6 +306,10 @@ impl MeshRenderer {
         stats.instance_buffer_shrinks_cumulative = self.instance_buffer_shrinks_cumulative;
         stats.buffer_bytes_estimate = (std::mem::size_of::<Globals>() as u64)
             .saturating_add(2_u64.saturating_mul(std::mem::size_of::<ShadowGlobals>() as u64))
+            .saturating_add(
+                (MAX_SKIN_MATRICES_PER_FRAME as u64)
+                    .saturating_mul(std::mem::size_of::<[[f32; 4]; 4]>() as u64),
+            )
             .saturating_add(
                 (self.instance_capacity as u64)
                     .saturating_mul(std::mem::size_of::<RawInstance>() as u64)

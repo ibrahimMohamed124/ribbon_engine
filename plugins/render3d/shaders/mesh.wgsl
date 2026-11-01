@@ -31,6 +31,7 @@ struct Material {
 @group(0) @binding(2) var directional_shadow_sampler: sampler_comparison;
 @group(0) @binding(3) var spot_shadow_map: texture_depth_2d;
 @group(0) @binding(4) var spot_shadow_sampler: sampler_comparison;
+@group(0) @binding(7) var<storage, read> joint_matrices: array<mat4x4<f32>>;
 @group(1) @binding(0) var<uniform> material: Material;
 @group(1) @binding(1) var base_texture: texture_2d<f32>;
 @group(1) @binding(2) var base_sampler: sampler;
@@ -43,11 +44,16 @@ struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
-    @location(3) model0: vec4<f32>,
-    @location(4) model1: vec4<f32>,
-    @location(5) model2: vec4<f32>,
-    @location(6) model3: vec4<f32>,
-    @location(7) tint: vec4<f32>,
+    @location(3) joints0: vec4<u32>,
+    @location(4) weights0: vec4<f32>,
+    @location(5) joints1: vec4<u32>,
+    @location(6) weights1: vec4<f32>,
+    @location(7) model0: vec4<f32>,
+    @location(8) model1: vec4<f32>,
+    @location(9) model2: vec4<f32>,
+    @location(10) model3: vec4<f32>,
+    @location(11) tint: vec4<f32>,
+    @location(12) bone_offset: u32,
 }
 
 struct VertexOut {
@@ -61,13 +67,37 @@ struct VertexOut {
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     let model = mat4x4<f32>(in.model0, in.model1, in.model2, in.model3);
-    let world_position = (model * vec4<f32>(in.position, 1.0)).xyz;
+    var local_position = in.position;
+    var local_normal = in.normal;
+    let weight_sum = dot(in.weights0, vec4<f32>(1.0))
+        + dot(in.weights1, vec4<f32>(1.0));
+    if weight_sum > 0.000001 {
+        var skin = mat4x4<f32>(
+            vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0)
+        );
+        if in.weights0.x > 0.0 { skin += joint_matrices[in.bone_offset + in.joints0.x] * in.weights0.x; }
+        if in.weights0.y > 0.0 { skin += joint_matrices[in.bone_offset + in.joints0.y] * in.weights0.y; }
+        if in.weights0.z > 0.0 { skin += joint_matrices[in.bone_offset + in.joints0.z] * in.weights0.z; }
+        if in.weights0.w > 0.0 { skin += joint_matrices[in.bone_offset + in.joints0.w] * in.weights0.w; }
+        if in.weights1.x > 0.0 { skin += joint_matrices[in.bone_offset + in.joints1.x] * in.weights1.x; }
+        if in.weights1.y > 0.0 { skin += joint_matrices[in.bone_offset + in.joints1.y] * in.weights1.y; }
+        if in.weights1.z > 0.0 { skin += joint_matrices[in.bone_offset + in.joints1.z] * in.weights1.z; }
+        if in.weights1.w > 0.0 { skin += joint_matrices[in.bone_offset + in.joints1.w] * in.weights1.w; }
+        local_position = (skin * vec4<f32>(in.position, 1.0)).xyz;
+        let s0 = skin[0].xyz;
+        let s1 = skin[1].xyz;
+        let s2 = skin[2].xyz;
+        local_normal = cross(s1, s2) * in.normal.x
+            + cross(s2, s0) * in.normal.y
+            + cross(s0, s1) * in.normal.z;
+    }
+    let world_position = (model * vec4<f32>(local_position, 1.0)).xyz;
     let c0 = model[0].xyz;
     let c1 = model[1].xyz;
     let c2 = model[2].xyz;
-    let transformed_normal = cross(c1, c2) * in.normal.x
-        + cross(c2, c0) * in.normal.y
-        + cross(c0, c1) * in.normal.z;
+    let transformed_normal = cross(c1, c2) * local_normal.x
+        + cross(c2, c0) * local_normal.y
+        + cross(c0, c1) * local_normal.z;
 
     var out: VertexOut;
     out.clip = globals.view_proj * vec4<f32>(world_position, 1.0);

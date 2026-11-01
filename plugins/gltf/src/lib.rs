@@ -5,10 +5,10 @@
 //! the renderer's job. External buffer/image files are not resolved: use `.glb`
 //! or embed the data.
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use ribbon_assets::{AssetLoader, AssetMemoryBreakdown, LoadContext, LoadError, LoadErrorKind};
 use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// Indexed triangle geometry with per-vertex normals and first UV set.
 #[derive(Clone, Debug, PartialEq)]
@@ -23,6 +23,10 @@ pub struct PrimitiveData {
     pub indices: Vec<u32>,
     /// Index into [`ModelAsset::materials`]; `None` selects the default material.
     pub material: Option<usize>,
+    /// Up to eight glTF joint indices per vertex (JOINTS_0 and JOINTS_1).
+    pub joints: Vec<[u16; 8]>,
+    /// Normalized linear-blend skinning weights (WEIGHTS_0 and WEIGHTS_1).
+    pub weights: Vec<[f32; 8]>,
 }
 
 /// Metallic-roughness material reduced to what the renderer currently uses.
@@ -74,6 +78,65 @@ pub struct ModelNode {
     pub primitive: usize,
     /// Model-space matrix accumulated from the node hierarchy.
     pub transform: Mat4,
+    /// Original glTF node index. Used to resolve animated node transforms.
+    pub node: usize,
+    /// Optional skin index from the node.
+    pub skin: Option<usize>,
+}
+
+/// A node in the imported glTF transform hierarchy, retained for skinning and animation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkeletonNode {
+    pub parent: Option<usize>,
+    pub translation: [f32; 3],
+    /// glTF quaternion component order (x, y, z, w).
+    pub rotation: [f32; 4],
+    pub scale: [f32; 3],
+}
+
+/// Joint list and inverse-bind matrices for one glTF skin.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SkinData {
+    /// glTF node indices, in the exact order expected by JOINTS vertex attributes.
+    pub joints: Vec<usize>,
+    /// Inverse bind matrix for each joint, in the same order as `joints`.
+    pub inverse_bind_matrices: Vec<[[f32; 4]; 4]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnimationProperty {
+    Translation,
+    Rotation,
+    Scale,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnimationInterpolation {
+    Linear,
+    Step,
+    CubicSpline,
+}
+
+/// One transform channel targeting a single glTF node.
+/// Values are vec4: translation/scale use xyz and rotation uses xyzw.
+/// For CUBICSPLINE, tangents are retained separately as required by glTF Hermite evaluation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnimationTrack {
+    pub node: usize,
+    pub property: AnimationProperty,
+    pub interpolation: AnimationInterpolation,
+    pub times: Vec<f32>,
+    pub values: Vec<[f32; 4]>,
+    pub in_tangents: Vec<[f32; 4]>,
+    pub out_tangents: Vec<[f32; 4]>,
+}
+
+/// CPU-side skeletal transform clip imported from glTF animation channels.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SkeletalAnimationClip {
+    pub name: String,
+    pub duration_seconds: f32,
+    pub tracks: Vec<AnimationTrack>,
 }
 
 /// A loaded glTF scene.
@@ -85,11 +148,148 @@ pub struct ModelAsset {
     pub materials: Vec<MaterialData>,
     /// Images in file order.
     pub images: Vec<ImageData>,
-    /// Placements of primitives in model space.
+    /// Placements of primitives in model space. Each placement keeps its source node and skin.
     pub nodes: Vec<ModelNode>,
+    /// All document nodes, indexed by original glTF node index.
+    pub skeleton_nodes: Vec<SkeletonNode>,
+    /// Imported skins and inverse-bind matrices.
+    pub skins: Vec<SkinData>,
+    /// Imported node TRS animation clips. Morph-target animation is not included here.
+    pub skeletal_animations: Vec<SkeletalAnimationClip>,
 }
 
 impl ModelAsset {
+    /// Resolve every glTF node's bind-pose global transform, indexed by original node index.
+    pub fn bind_pose_node_transforms(&self) -> Result<Vec<Mat4>, String> {
+        let local: Vec<Mat4> = self
+            .skeleton_nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| {
+                let translation = Vec3::from_array(node.translation);
+                let scale = Vec3::from_array(node.scale);
+                let rotation = Quat::from_xyzw(
+                    node.rotation[0],
+                    node.rotation[1],
+                    node.rotation[2],
+                    node.rotation[3],
+                );
+                if !translation.is_finite()
+                    || !scale.is_finite()
+                    || !rotation.is_finite()
+                    || rotation.length_squared() <= 1.0e-12
+                {
+                    return Err(format!(
+                        "skeleton node {index} has invalid bind-pose TRS data"
+                    ));
+                }
+                Ok(Mat4::from_scale_rotation_translation(
+                    scale,
+                    rotation.normalize(),
+                    translation,
+                ))
+            })
+            .collect::<Result<_, _>>()?;
+
+        fn resolve(
+            index: usize,
+            nodes: &[SkeletonNode],
+            local: &[Mat4],
+            state: &mut [u8],
+            global: &mut [Mat4],
+        ) -> Result<Mat4, String> {
+            match state[index] {
+                2 => return Ok(global[index]),
+                1 => {
+                    return Err(format!(
+                        "cycle detected in bind-pose hierarchy at node {index}"
+                    ))
+                }
+                _ => {}
+            }
+            state[index] = 1;
+            let matrix = if let Some(parent) = nodes[index].parent {
+                if parent >= nodes.len() {
+                    return Err(format!(
+                        "skeleton node {index} references missing parent {parent}"
+                    ));
+                }
+                resolve(parent, nodes, local, state, global)? * local[index]
+            } else {
+                local[index]
+            };
+            if !matrix.to_cols_array().iter().all(|value| value.is_finite()) {
+                return Err(format!(
+                    "skeleton node {index} produced a non-finite bind transform"
+                ));
+            }
+            global[index] = matrix;
+            state[index] = 2;
+            Ok(matrix)
+        }
+
+        let mut state = vec![0_u8; local.len()];
+        let mut global = vec![Mat4::IDENTITY; local.len()];
+        for index in 0..local.len() {
+            let _ = resolve(index, &self.skeleton_nodes, &local, &mut state, &mut global)?;
+        }
+        Ok(global)
+    }
+
+    /// Build the skin joint palettes for the imported bind pose. The result is indexed by
+    /// `ModelAsset::nodes`; matrices are mesh-local: inverse(mesh global) * joint global * inverse-bind.
+    pub fn bind_pose_palettes(&self) -> Result<Vec<Option<Arc<[Mat4]>>>, String> {
+        if self.skeleton_nodes.is_empty() {
+            if self.nodes.iter().any(|node| node.skin.is_some()) {
+                return Err("skinned model has no retained node hierarchy".to_owned());
+            }
+            return Ok(vec![None; self.nodes.len()]);
+        }
+        let global = self.bind_pose_node_transforms()?;
+        let mut palettes = vec![None; self.nodes.len()];
+        for (placement_index, placement) in self.nodes.iter().enumerate() {
+            let Some(skin_index) = placement.skin else {
+                continue;
+            };
+            let skin = self.skins.get(skin_index).ok_or_else(|| {
+                format!("placement {placement_index} references missing skin {skin_index}")
+            })?;
+            if skin.joints.is_empty() || skin.joints.len() != skin.inverse_bind_matrices.len() {
+                return Err(format!(
+                    "skin {skin_index} has inconsistent joint/inverse-bind data"
+                ));
+            }
+            let mesh_global = *global.get(placement.node).ok_or_else(|| {
+                format!(
+                    "placement {placement_index} references missing mesh node {}",
+                    placement.node
+                )
+            })?;
+            let determinant = mesh_global.determinant();
+            if !determinant.is_finite() || determinant.abs() < 1.0e-8 {
+                return Err(format!(
+                    "placement {placement_index} has a singular mesh transform"
+                ));
+            }
+            let inverse_mesh = mesh_global.inverse();
+            let mut palette = Vec::with_capacity(skin.joints.len());
+            for (joint_node, inverse_bind) in skin.joints.iter().zip(&skin.inverse_bind_matrices) {
+                let joint_global = *global.get(*joint_node).ok_or_else(|| {
+                    format!("skin {skin_index} references missing joint node {joint_node}")
+                })?;
+                let matrix = inverse_mesh * joint_global * Mat4::from_cols_array_2d(inverse_bind);
+                if !matrix.to_cols_array().iter().all(|value| value.is_finite()) {
+                    return Err(format!(
+                        "skin {skin_index} produced a non-finite bind palette"
+                    ));
+                }
+                palette.push(matrix);
+            }
+            palettes[placement_index] = Some(Arc::<[Mat4]>::from(palette.into_boxed_slice()));
+        }
+        Ok(palettes)
+    }
+
     /// Estimate currently allocated CPU bytes, including nested vector capacities.
     ///
     /// This is a cache-budget estimate rather than exact allocator telemetry; it excludes decoder
@@ -104,6 +304,36 @@ impl ModelAsset {
         ));
         bytes = bytes.saturating_add(allocated_vec_bytes::<ImageData>(self.images.capacity()));
         bytes = bytes.saturating_add(allocated_vec_bytes::<ModelNode>(self.nodes.capacity()));
+        bytes = bytes.saturating_add(allocated_vec_bytes::<SkeletonNode>(
+            self.skeleton_nodes.capacity(),
+        ));
+        bytes = bytes.saturating_add(allocated_vec_bytes::<SkinData>(self.skins.capacity()));
+        bytes = bytes.saturating_add(allocated_vec_bytes::<SkeletalAnimationClip>(
+            self.skeletal_animations.capacity(),
+        ));
+        for skin in &self.skins {
+            bytes = bytes.saturating_add(allocated_vec_bytes::<usize>(skin.joints.capacity()));
+            bytes = bytes.saturating_add(allocated_vec_bytes::<[[f32; 4]; 4]>(
+                skin.inverse_bind_matrices.capacity(),
+            ));
+        }
+        for clip in &self.skeletal_animations {
+            bytes = bytes.saturating_add(clip.name.capacity() as u64);
+            bytes = bytes.saturating_add(allocated_vec_bytes::<AnimationTrack>(
+                clip.tracks.capacity(),
+            ));
+            for track in &clip.tracks {
+                bytes = bytes.saturating_add(allocated_vec_bytes::<f32>(track.times.capacity()));
+                bytes =
+                    bytes.saturating_add(allocated_vec_bytes::<[f32; 4]>(track.values.capacity()));
+                bytes = bytes.saturating_add(allocated_vec_bytes::<[f32; 4]>(
+                    track.in_tangents.capacity(),
+                ));
+                bytes = bytes.saturating_add(allocated_vec_bytes::<[f32; 4]>(
+                    track.out_tangents.capacity(),
+                ));
+            }
+        }
         for primitive in &self.primitives {
             bytes = bytes.saturating_add(allocated_vec_bytes::<[f32; 3]>(
                 primitive.positions.capacity(),
@@ -113,6 +343,11 @@ impl ModelAsset {
             ));
             bytes = bytes.saturating_add(allocated_vec_bytes::<[f32; 2]>(primitive.uvs.capacity()));
             bytes = bytes.saturating_add(allocated_vec_bytes::<u32>(primitive.indices.capacity()));
+            bytes =
+                bytes.saturating_add(allocated_vec_bytes::<[u16; 8]>(primitive.joints.capacity()));
+            bytes = bytes.saturating_add(allocated_vec_bytes::<[f32; 8]>(
+                primitive.weights.capacity(),
+            ));
         }
         for image in &self.images {
             bytes = bytes.saturating_add(image.rgba8.capacity() as u64);
@@ -130,12 +365,19 @@ impl ModelAsset {
     }
 
     /// Categorize this model's decoded CPU residency using vector capacities. These are cache
-    /// estimates rather than allocator telemetry. The loader currently does not retain animation
-    /// clips, so animation residency is zero for this asset type.
+    /// estimates rather than allocator telemetry. Imported skeleton and inverse-bind data is
+    /// scene metadata; transform tracks are counted as animation memory.
     pub fn memory_breakdown(&self) -> AssetMemoryBreakdown {
         let mut breakdown = AssetMemoryBreakdown {
             scene_metadata_bytes: (std::mem::size_of::<Self>() as u64)
-                .saturating_add(allocated_vec_bytes::<ModelNode>(self.nodes.capacity())),
+                .saturating_add(allocated_vec_bytes::<ModelNode>(self.nodes.capacity()))
+                .saturating_add(allocated_vec_bytes::<SkeletonNode>(
+                    self.skeleton_nodes.capacity(),
+                ))
+                .saturating_add(allocated_vec_bytes::<SkinData>(self.skins.capacity())),
+            animation_bytes: allocated_vec_bytes::<SkeletalAnimationClip>(
+                self.skeletal_animations.capacity(),
+            ),
             ..AssetMemoryBreakdown::default()
         };
         breakdown.geometry_bytes = allocated_vec_bytes::<PrimitiveData>(self.primitives.capacity());
@@ -149,7 +391,39 @@ impl ModelAsset {
                     primitive.normals.capacity(),
                 ))
                 .saturating_add(allocated_vec_bytes::<[f32; 2]>(primitive.uvs.capacity()))
-                .saturating_add(allocated_vec_bytes::<u32>(primitive.indices.capacity()));
+                .saturating_add(allocated_vec_bytes::<u32>(primitive.indices.capacity()))
+                .saturating_add(allocated_vec_bytes::<[u16; 8]>(primitive.joints.capacity()))
+                .saturating_add(allocated_vec_bytes::<[f32; 8]>(
+                    primitive.weights.capacity(),
+                ));
+        }
+        for skin in &self.skins {
+            breakdown.scene_metadata_bytes = breakdown
+                .scene_metadata_bytes
+                .saturating_add(allocated_vec_bytes::<usize>(skin.joints.capacity()))
+                .saturating_add(allocated_vec_bytes::<[[f32; 4]; 4]>(
+                    skin.inverse_bind_matrices.capacity(),
+                ));
+        }
+        for clip in &self.skeletal_animations {
+            breakdown.animation_bytes = breakdown
+                .animation_bytes
+                .saturating_add(clip.name.capacity() as u64)
+                .saturating_add(allocated_vec_bytes::<AnimationTrack>(
+                    clip.tracks.capacity(),
+                ));
+            for track in &clip.tracks {
+                breakdown.animation_bytes = breakdown
+                    .animation_bytes
+                    .saturating_add(allocated_vec_bytes::<f32>(track.times.capacity()))
+                    .saturating_add(allocated_vec_bytes::<[f32; 4]>(track.values.capacity()))
+                    .saturating_add(allocated_vec_bytes::<[f32; 4]>(
+                        track.in_tangents.capacity(),
+                    ))
+                    .saturating_add(allocated_vec_bytes::<[f32; 4]>(
+                        track.out_tangents.capacity(),
+                    ));
+            }
         }
         breakdown.material_bytes = allocated_vec_bytes::<MaterialData>(self.materials.capacity());
         breakdown.texture_bytes = allocated_vec_bytes::<ImageData>(self.images.capacity());
@@ -174,8 +448,8 @@ impl ModelAsset {
 
     /// Estimate bytes the current renderer upload path will submit for this model. This is a
     /// pacing estimate, not driver VRAM telemetry. It includes unique placed primitive vertex/
-    /// index buffers, referenced material records, and each unique image transfer-function
-    /// variant with its actual prepared mip byte count when available.
+    /// index buffers (including eight skinning influences), referenced material records, and
+    /// each unique image transfer-function variant with its actual prepared mip byte count.
     pub fn estimated_gpu_upload_bytes(&self) -> u64 {
         let mut bytes = 0_u64;
         let used_primitives: std::collections::HashSet<usize> =
@@ -186,7 +460,10 @@ impl ModelAsset {
             };
             let vertices = primitive.positions.len() as u64;
             bytes = bytes.saturating_add(vertices.saturating_mul(
-                (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<[f32; 2]>()) as u64,
+                (std::mem::size_of::<[f32; 3]>() * 2
+                    + std::mem::size_of::<[f32; 2]>()
+                    + std::mem::size_of::<[u16; 8]>()
+                    + std::mem::size_of::<[f32; 8]>()) as u64,
             ));
             bytes = bytes.saturating_add(
                 (primitive.indices.len() as u64).saturating_mul(std::mem::size_of::<u32>() as u64),
@@ -329,7 +606,12 @@ impl AssetLoader for GltfLoader {
 /// Decode glTF bytes into a [`ModelAsset`].
 pub fn parse(bytes: &[u8]) -> Result<ModelAsset, String> {
     let (document, buffers, images) = gltf::import_slice(bytes).map_err(|e| e.to_string())?;
-    let mut model = ModelAsset::default();
+    let mut model = ModelAsset {
+        skeleton_nodes: build_skeleton_nodes(&document),
+        skins: build_skins(&document, &buffers)?,
+        skeletal_animations: build_skeletal_animations(&document, &buffers)?,
+        ..ModelAsset::default()
+    };
     for image in &images {
         model.images.push(to_rgba8(image)?);
     }
@@ -548,6 +830,8 @@ fn visit(
                 model.nodes.push(ModelNode {
                     primitive,
                     transform: world,
+                    node: node.index(),
+                    skin: node.skin().map(|skin| skin.index()),
                 });
             }
         }
@@ -588,13 +872,280 @@ fn build_primitive(
     if normals.len() != positions.len() || uvs.len() != positions.len() {
         return Err("vertex attribute counts do not match".to_owned());
     }
+    let (joints, weights) = read_skinning_attributes(&reader, positions.len())?;
     Ok(Some(PrimitiveData {
         positions,
         normals,
         uvs,
         indices,
         material: primitive.material().index(),
+        joints,
+        weights,
     }))
+}
+
+fn build_skeleton_nodes(document: &gltf::Document) -> Vec<SkeletonNode> {
+    let nodes: Vec<_> = document.nodes().collect();
+    let mut parents = vec![None; nodes.len()];
+    for node in &nodes {
+        for child in node.children() {
+            if let Some(parent) = parents.get_mut(child.index()) {
+                *parent = Some(node.index());
+            }
+        }
+    }
+    nodes
+        .into_iter()
+        .map(|node| {
+            let (translation, rotation, scale) = node.transform().decomposed();
+            SkeletonNode {
+                parent: parents.get(node.index()).copied().flatten(),
+                translation,
+                rotation,
+                scale,
+            }
+        })
+        .collect()
+}
+
+fn build_skins(
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+) -> Result<Vec<SkinData>, String> {
+    document
+        .skins()
+        .map(|skin| {
+            let joints: Vec<usize> = skin.joints().map(|joint| joint.index()).collect();
+            if joints.is_empty() {
+                return Err(format!("skin {} has no joints", skin.index()));
+            }
+            let inverse_bind_matrices: Vec<[[f32; 4]; 4]> = skin
+                .reader(|buffer| Some(&buffers[buffer.index()]))
+                .read_inverse_bind_matrices()
+                .map(|matrices| matrices.collect())
+                .unwrap_or_else(|| vec![Mat4::IDENTITY.to_cols_array_2d(); joints.len()]);
+            if inverse_bind_matrices.len() != joints.len() {
+                return Err(format!(
+                    "skin {} has {} joints but {} inverse-bind matrices",
+                    skin.index(),
+                    joints.len(),
+                    inverse_bind_matrices.len()
+                ));
+            }
+            if inverse_bind_matrices
+                .iter()
+                .flatten()
+                .flatten()
+                .any(|value| !value.is_finite())
+            {
+                return Err(format!(
+                    "skin {} contains non-finite inverse-bind matrices",
+                    skin.index()
+                ));
+            }
+            Ok(SkinData {
+                joints,
+                inverse_bind_matrices,
+            })
+        })
+        .collect()
+}
+
+fn build_skeletal_animations(
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+) -> Result<Vec<SkeletalAnimationClip>, String> {
+    use gltf::animation::util::ReadOutputs;
+    use gltf::animation::{Interpolation, Property};
+
+    document
+        .animations()
+        .map(|animation| {
+            let mut clip = SkeletalAnimationClip {
+                name: animation
+                    .name()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("animation_{}", animation.index())),
+                ..SkeletalAnimationClip::default()
+            };
+            for channel in animation.channels() {
+                let target = channel.target();
+                let property = match target.property() {
+                    Property::Translation => AnimationProperty::Translation,
+                    Property::Rotation => AnimationProperty::Rotation,
+                    Property::Scale => AnimationProperty::Scale,
+                    // Morph-target weights require a separate mesh morph pipeline and are not
+                    // misrepresented as skeletal joint channels.
+                    Property::MorphTargetWeights => continue,
+                };
+                let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
+                let times: Vec<f32> = reader
+                    .read_inputs()
+                    .ok_or_else(|| {
+                        format!(
+                            "animation {} channel has no input accessor",
+                            animation.index()
+                        )
+                    })?
+                    .collect();
+                if times.is_empty()
+                    || times[0] < 0.0
+                    || times.iter().any(|v| !v.is_finite())
+                    || times.windows(2).any(|pair| pair[0] >= pair[1])
+                {
+                    return Err(format!(
+                        "animation {} channel has invalid keyframe times",
+                        animation.index()
+                    ));
+                }
+                let outputs = reader.read_outputs().ok_or_else(|| {
+                    format!(
+                        "animation {} channel has no output accessor",
+                        animation.index()
+                    )
+                })?;
+                let raw_values: Vec<[f32; 4]> = match outputs {
+                    ReadOutputs::Translations(values) => {
+                        values.map(|v| [v[0], v[1], v[2], 0.0]).collect()
+                    }
+                    ReadOutputs::Scales(values) => {
+                        values.map(|v| [v[0], v[1], v[2], 0.0]).collect()
+                    }
+                    ReadOutputs::Rotations(values) => values
+                        .into_f32()
+                        .map(|v| [v[0], v[1], v[2], v[3]])
+                        .collect(),
+                    ReadOutputs::MorphTargetWeights(_) => continue,
+                };
+                if raw_values.iter().flatten().any(|value| !value.is_finite()) {
+                    return Err(format!(
+                        "animation {} channel contains non-finite output values",
+                        animation.index()
+                    ));
+                }
+                let interpolation = match channel.sampler().interpolation() {
+                    Interpolation::Linear => AnimationInterpolation::Linear,
+                    Interpolation::Step => AnimationInterpolation::Step,
+                    Interpolation::CubicSpline => AnimationInterpolation::CubicSpline,
+                };
+                let (values, in_tangents, out_tangents) =
+                    if interpolation == AnimationInterpolation::CubicSpline {
+                        if raw_values.len() != times.len().saturating_mul(3) {
+                            return Err(format!(
+                                "animation {} cubic spline output count is invalid",
+                                animation.index()
+                            ));
+                        }
+                        let mut values = Vec::with_capacity(times.len());
+                        let mut ins = Vec::with_capacity(times.len());
+                        let mut outs = Vec::with_capacity(times.len());
+                        for triple in raw_values.as_chunks::<3>().0 {
+                            ins.push(triple[0]);
+                            values.push(triple[1]);
+                            outs.push(triple[2]);
+                        }
+                        (values, ins, outs)
+                    } else {
+                        if raw_values.len() != times.len() {
+                            return Err(format!(
+                                "animation {} output count does not match input count",
+                                animation.index()
+                            ));
+                        }
+                        (raw_values, Vec::new(), Vec::new())
+                    };
+                clip.duration_seconds = clip.duration_seconds.max(*times.last().unwrap_or(&0.0));
+                clip.tracks.push(AnimationTrack {
+                    node: target.node().index(),
+                    property,
+                    interpolation,
+                    times,
+                    values,
+                    in_tangents,
+                    out_tangents,
+                });
+            }
+            Ok(clip)
+        })
+        .collect()
+}
+
+type SkinningAttributes = (Vec<[u16; 8]>, Vec<[f32; 8]>);
+
+fn read_skinning_attributes<'a, 's, F>(
+    reader: &gltf::mesh::Reader<'a, 's, F>,
+    vertex_count: usize,
+) -> Result<SkinningAttributes, String>
+where
+    F: Clone + Fn(gltf::Buffer<'a>) -> Option<&'s [u8]>,
+{
+    let joints0 = reader
+        .read_joints(0)
+        .map(|values| values.into_u16().collect::<Vec<_>>());
+    let weights0 = reader
+        .read_weights(0)
+        .map(|values| values.into_f32().collect::<Vec<_>>());
+    let joints1 = reader
+        .read_joints(1)
+        .map(|values| values.into_u16().collect::<Vec<_>>());
+    let weights1 = reader
+        .read_weights(1)
+        .map(|values| values.into_f32().collect::<Vec<_>>());
+    if reader.read_joints(2).is_some() || reader.read_weights(2).is_some() {
+        return Err("more than eight skinning influences per vertex are not supported".to_owned());
+    }
+
+    let (joints0, weights0) = match (joints0, weights0) {
+        (Some(joints), Some(weights)) => (joints, weights),
+        (None, None) if joints1.is_none() && weights1.is_none() => {
+            return Ok((vec![[0; 8]; vertex_count], vec![[0.0; 8]; vertex_count]));
+        }
+        _ => return Err("skinning attributes must provide matching JOINTS_n / WEIGHTS_n pairs starting at set zero".to_owned()),
+    };
+    if joints0.len() != vertex_count || weights0.len() != vertex_count {
+        return Err("JOINTS_0 / WEIGHTS_0 counts do not match vertex count".to_owned());
+    }
+    let (joints1, weights1) = match (joints1, weights1) {
+        (Some(joints), Some(weights)) => (joints, weights),
+        (None, None) => (vec![[0; 4]; vertex_count], vec![[0.0; 4]; vertex_count]),
+        _ => return Err("JOINTS_1 and WEIGHTS_1 must be provided together".to_owned()),
+    };
+    if joints1.len() != vertex_count || weights1.len() != vertex_count {
+        return Err("JOINTS_1 / WEIGHTS_1 counts do not match vertex count".to_owned());
+    }
+    let mut out_joints = Vec::with_capacity(vertex_count);
+    let mut out_weights = Vec::with_capacity(vertex_count);
+    for vertex in 0..vertex_count {
+        let mut joints = [0_u16; 8];
+        joints[..4].copy_from_slice(&joints0[vertex]);
+        joints[4..].copy_from_slice(&joints1[vertex]);
+        let mut weights = [0.0_f32; 8];
+        weights[..4].copy_from_slice(&weights0[vertex]);
+        weights[4..].copy_from_slice(&weights1[vertex]);
+        if weights
+            .iter()
+            .any(|weight| !weight.is_finite() || *weight < 0.0)
+        {
+            return Err(format!("vertex {vertex} has invalid skin weights"));
+        }
+        let sum: f32 = weights.iter().sum();
+        if !sum.is_finite() {
+            return Err(format!(
+                "vertex {vertex} skin weights overflow their normalized sum"
+            ));
+        }
+        if sum > 1.0e-8 {
+            for weight in &mut weights {
+                *weight /= sum;
+            }
+        } else {
+            joints = [0; 8];
+            weights = [0.0; 8];
+        }
+        out_joints.push(joints);
+        out_weights.push(weights);
+    }
+    Ok((out_joints, out_weights))
 }
 
 /// Area-weighted vertex normals for meshes that ship without any.
@@ -666,6 +1217,46 @@ mod tests {
 
     const CUBE: &[u8] = include_bytes!("../../../assets/models/checker_cube.glb");
     const TRIANGLE: &[u8] = include_bytes!("../../../assets/models/bare_triangle.glb");
+    const SKINNED_TRIANGLE: &[u8] = br#"{"asset":{"version":"2.0","generator":"Ribbon skeletal animation fixture"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0,"skin":0,"children":[1]},{"translation":[0,1,0]}],"meshes":[{"primitives":[{"attributes":{"POSITION":0,"JOINTS_0":1,"WEIGHTS_0":2,"JOINTS_1":3,"WEIGHTS_1":4},"indices":5}]}],"skins":[{"inverseBindMatrices":6,"joints":[1]}],"animations":[{"name":"move_joint","samplers":[{"input":7,"output":8,"interpolation":"LINEAR"}],"channels":[{"sampler":0,"target":{"node":1,"path":"translation"}}]}],"buffers":[{"byteLength":284,"uri":"data:application/octet-stream;base64,AAAAvwAAAAAAAAAAAAAAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAABAAIAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAgD8AAAAAAACAPwAAAAAAAAAAAAAAQAAAAAA="}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":24,"target":34962},{"buffer":0,"byteOffset":60,"byteLength":48,"target":34962},{"buffer":0,"byteOffset":108,"byteLength":24,"target":34962},{"buffer":0,"byteOffset":132,"byteLength":48,"target":34962},{"buffer":0,"byteOffset":180,"byteLength":6,"target":34963},{"buffer":0,"byteOffset":188,"byteLength":64},{"buffer":0,"byteOffset":252,"byteLength":8},{"buffer":0,"byteOffset":260,"byteLength":24}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[-0.5,0,0],"max":[0.5,1,0]},{"bufferView":1,"componentType":5123,"count":3,"type":"VEC4"},{"bufferView":2,"componentType":5126,"count":3,"type":"VEC4"},{"bufferView":3,"componentType":5123,"count":3,"type":"VEC4"},{"bufferView":4,"componentType":5126,"count":3,"type":"VEC4"},{"bufferView":5,"componentType":5123,"count":3,"type":"SCALAR"},{"bufferView":6,"componentType":5126,"count":1,"type":"MAT4"},{"bufferView":7,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[1]},{"bufferView":8,"componentType":5126,"count":2,"type":"VEC3"}]}"#;
+
+    #[test]
+    fn skinned_gltf_imports_eight_influences_inverse_bind_and_animation_tracks() {
+        let model = parse(SKINNED_TRIANGLE).expect("skinned glTF parses");
+        assert_eq!(model.skeleton_nodes.len(), 2);
+        assert_eq!(model.skeleton_nodes[1].parent, Some(0));
+        assert_eq!(model.skins.len(), 1);
+        assert_eq!(model.skins[0].joints, vec![1]);
+        assert_eq!(model.nodes.len(), 1);
+        assert_eq!(model.nodes[0].skin, Some(0));
+        assert_eq!(model.primitives[0].joints[0].len(), 8);
+        assert_eq!(model.primitives[0].weights[0].len(), 8);
+        assert!(model.primitives[0].weights[0]
+            .iter()
+            .all(|weight| (*weight - 0.125).abs() < 1.0e-6));
+        assert!((model.primitives[0].weights[0].iter().sum::<f32>() - 1.0).abs() < 1.0e-6);
+        assert_eq!(model.skeletal_animations.len(), 1);
+        assert_eq!(model.skeletal_animations[0].name, "move_joint");
+        assert_eq!(model.skeletal_animations[0].tracks.len(), 1);
+        assert_eq!(model.skeletal_animations[0].tracks[0].node, 1);
+        assert_eq!(model.skeletal_animations[0].tracks[0].times, vec![0.0, 1.0]);
+        let bind_globals = model
+            .bind_pose_node_transforms()
+            .expect("valid bind pose node transforms");
+        assert_eq!(bind_globals.len(), 2);
+        assert!((bind_globals[1].w_axis.y - 1.0).abs() < 1.0e-6);
+        let bind_palettes = model.bind_pose_palettes().expect("valid bind pose palette");
+        assert_eq!(bind_palettes.len(), 1);
+        assert_eq!(
+            bind_palettes[0].as_ref().expect("skinned placement").len(),
+            1
+        );
+        assert!(model.memory_breakdown().animation_bytes > 0);
+        assert_eq!(
+            model.memory_breakdown().total_bytes(),
+            model.estimated_size_bytes()
+        );
+        assert!(model.estimated_gpu_upload_bytes() >= 3 * 80);
+    }
 
     #[test]
     fn textured_cube_loads_geometry_material_image_and_node_transform() {
@@ -790,6 +1381,8 @@ mod tests {
                     uvs: vec![[0.0; 2]; 3],
                     indices: vec![0, 1, 2],
                     material: Some(0),
+                    joints: vec![[0; 8]; 3],
+                    weights: vec![[0.0; 8]; 3],
                 },
                 PrimitiveData {
                     positions: vec![[0.0; 3]; 3],
@@ -797,18 +1390,27 @@ mod tests {
                     uvs: vec![[0.0; 2]; 3],
                     indices: vec![0, 1, 2],
                     material: Some(1),
+                    joints: vec![[0; 8]; 3],
+                    weights: vec![[0.0; 8]; 3],
                 },
             ],
             nodes: vec![
                 ModelNode {
                     primitive: 0,
                     transform: Mat4::IDENTITY,
+                    node: 0,
+                    skin: None,
                 },
                 ModelNode {
                     primitive: 1,
                     transform: Mat4::IDENTITY,
+                    node: 1,
+                    skin: None,
                 },
             ],
+            skeleton_nodes: Vec::new(),
+            skins: Vec::new(),
+            skeletal_animations: Vec::new(),
         };
         let decoded_bytes = model.estimated_size_bytes();
         prepare_material_image_mips(&mut model);
@@ -835,6 +1437,8 @@ mod tests {
                 uvs: vec![[0.0; 2]; 3],
                 indices: vec![0, 1, 2],
                 material: Some(0),
+                joints: vec![[0; 8]; 3],
+                weights: vec![[0.0; 8]; 3],
             }],
             materials: vec![MaterialData {
                 base_color: [1.0; 4],
@@ -858,14 +1462,20 @@ mod tests {
             nodes: vec![ModelNode {
                 primitive: 0,
                 transform: Mat4::IDENTITY,
+                node: 0,
+                skin: None,
             }],
+            skeleton_nodes: Vec::new(),
+            skins: Vec::new(),
+            skeletal_animations: Vec::new(),
         };
 
-        // 3 vertices * 32 bytes + 3 indices * 4 bytes + one 256-byte material uniform,
-        // plus two transfer-function-specific texture allocations (base + 1x1 mip each).
+        // 3 vertices * 80 bytes (position/normal/UV/eight joint indices/eight weights) +
+        // 3 indices * 4 bytes + one 256-byte material uniform, plus two transfer-function-
+        // specific texture allocations (base + 1x1 mip each).
         assert_eq!(
             model.estimated_gpu_upload_bytes(),
-            96 + 12 + 256 + (16 + 4) * 2
+            240 + 12 + 256 + (16 + 4) * 2
         );
     }
 

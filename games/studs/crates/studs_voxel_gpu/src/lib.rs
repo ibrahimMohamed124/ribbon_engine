@@ -417,6 +417,8 @@ impl OffscreenVoxelRenderer {
                         position: vertex.position,
                         normal: vertex.normal,
                         uv: vertex.uv,
+                        joints: [0; 8],
+                        weights: [0.0; 8],
                     })
                     .collect();
                 let id =

@@ -7,9 +7,10 @@ use crate::renderer::{
 use glam::Mat4;
 use ribbon_plugin_gltf::ModelAsset;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// One uploaded primitive and where it sits in model space.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct GpuModelPart {
     /// Uploaded geometry.
     pub mesh: MeshId,
@@ -17,6 +18,14 @@ pub struct GpuModelPart {
     pub material: MaterialId,
     /// Model-space placement from the node hierarchy.
     pub transform: Mat4,
+    /// Index into `ModelAsset::nodes`, used to find this placement's evaluated skin palette.
+    pub placement_index: usize,
+    /// Original glTF node index for animated placement transforms.
+    pub node_index: usize,
+    /// Skin index used by this placement, if any.
+    pub skin: Option<usize>,
+    /// Immutable fallback palette evaluated from the imported bind pose.
+    pub bind_pose_palette: Option<Arc<[Mat4]>>,
 }
 
 /// Upload every placed primitive and the materials referenced by those parts.
@@ -62,6 +71,13 @@ pub(crate) fn upload_validated_model(
     queue: &wgpu::Queue,
     model: &ModelAsset,
 ) -> Vec<GpuModelPart> {
+    let bind_pose_palettes = if model.nodes.iter().any(|node| node.skin.is_some()) {
+        model
+            .bind_pose_palettes()
+            .expect("validated skin hierarchy must produce a valid bind pose")
+    } else {
+        vec![None; model.nodes.len()]
+    };
     let used_materials: HashSet<usize> = model
         .nodes
         .iter()
@@ -161,10 +177,13 @@ pub(crate) fn upload_validated_model(
                 .iter()
                 .zip(&primitive.normals)
                 .zip(&primitive.uvs)
-                .map(|((position, normal), uv)| Vertex {
+                .enumerate()
+                .map(|(vertex_index, ((position, normal), uv))| Vertex {
                     position: *position,
                     normal: *normal,
                     uv: *uv,
+                    joints: primitive.joints[vertex_index],
+                    weights: primitive.weights[vertex_index],
                 })
                 .collect();
             Some(renderer.upload_mesh(device, &vertices, &primitive.indices))
@@ -173,7 +192,8 @@ pub(crate) fn upload_validated_model(
     model
         .nodes
         .iter()
-        .map(|node| GpuModelPart {
+        .enumerate()
+        .map(|(placement_index, node)| GpuModelPart {
             mesh: meshes[node.primitive]
                 .expect("validated node references a primitive that was uploaded"),
             material: model.primitives[node.primitive]
@@ -181,6 +201,10 @@ pub(crate) fn upload_validated_model(
                 .and_then(|index| materials.get(index).copied().flatten())
                 .unwrap_or(MeshRenderer::WHITE),
             transform: node.transform,
+            placement_index,
+            node_index: node.node,
+            skin: node.skin,
+            bind_pose_palette: bind_pose_palettes[placement_index].clone(),
         })
         .collect()
 }
@@ -199,10 +223,28 @@ pub fn validate_model_for_upload(model: &ModelAsset) -> Result<(), String> {
         }
         if primitive.positions.len() != primitive.normals.len()
             || primitive.positions.len() != primitive.uvs.len()
+            || primitive.positions.len() != primitive.joints.len()
+            || primitive.positions.len() != primitive.weights.len()
         {
             return Err(format!(
-                "primitive {index} has mismatched position/normal/UV counts"
+                "primitive {index} has mismatched position/normal/UV/skinning attribute counts"
             ));
+        }
+        for (vertex, weights) in primitive.weights.iter().enumerate() {
+            if weights
+                .iter()
+                .any(|weight| !weight.is_finite() || *weight < 0.0)
+            {
+                return Err(format!(
+                    "primitive {index} vertex {vertex} has invalid skin weights"
+                ));
+            }
+            let sum: f32 = weights.iter().sum();
+            if sum > 1.0e-6 && (sum - 1.0).abs() > 1.0e-3 {
+                return Err(format!(
+                    "primitive {index} vertex {vertex} skin weights are not normalized"
+                ));
+            }
         }
         if primitive.indices.len() % 3 != 0 {
             return Err(format!("primitive {index} is not a triangle list"));
@@ -252,6 +294,60 @@ pub fn validate_model_for_upload(model: &ModelAsset) -> Result<(), String> {
             return Err(format!("node {index} contains a non-finite transform"));
         }
     }
+    for (placement_index, node) in model.nodes.iter().enumerate() {
+        if node.node >= model.skeleton_nodes.len()
+            && (!model.skins.is_empty() || node.skin.is_some())
+        {
+            return Err(format!(
+                "model node placement {placement_index} references missing skeleton node {}",
+                node.node
+            ));
+        }
+        if let Some(skin_index) = node.skin {
+            let skin = model.skins.get(skin_index).ok_or_else(|| {
+                format!(
+                    "model node placement {placement_index} references missing skin {skin_index}"
+                )
+            })?;
+            if skin.joints.is_empty() || skin.joints.len() != skin.inverse_bind_matrices.len() {
+                return Err(format!(
+                    "skin {skin_index} has inconsistent joint and inverse-bind data"
+                ));
+            }
+            if skin
+                .joints
+                .iter()
+                .any(|joint| *joint >= model.skeleton_nodes.len())
+            {
+                return Err(format!(
+                    "skin {skin_index} references a missing skeleton node"
+                ));
+            }
+            let primitive = &model.primitives[node.primitive];
+            for (vertex, (joints, weights)) in
+                primitive.joints.iter().zip(&primitive.weights).enumerate()
+            {
+                for influence in 0..8 {
+                    if weights[influence] > 0.0
+                        && usize::from(joints[influence]) >= skin.joints.len()
+                    {
+                        return Err(format!("placement {placement_index} vertex {vertex} joint index {} exceeds skin {skin_index} joint count {}", joints[influence], skin.joints.len()));
+                    }
+                }
+            }
+        } else {
+            let primitive = &model.primitives[node.primitive];
+            if primitive
+                .weights
+                .iter()
+                .any(|weights| weights.iter().any(|weight| *weight > 0.0))
+            {
+                return Err(format!(
+                    "model node placement {placement_index} has weighted vertices but no skin"
+                ));
+            }
+        }
+    }
     for (index, image) in model.images.iter().enumerate() {
         let expected = u64::from(image.width)
             .saturating_mul(u64::from(image.height))
@@ -275,6 +371,11 @@ pub fn validate_model_for_upload(model: &ModelAsset) -> Result<(), String> {
             image.height,
             image.linear_mips.as_deref(),
         )?;
+    }
+    // A skinned primitive must have a valid fallback bind pose even when the game does not
+    // install AnimationPlugin or has not attached a SkeletalAnimationPlayer yet.
+    if model.nodes.iter().any(|node| node.skin.is_some()) {
+        let _ = model.bind_pose_palettes()?;
     }
     for (index, material) in model.materials.iter().enumerate() {
         if material.base_color.iter().any(|value| !value.is_finite())
@@ -362,6 +463,7 @@ mod tests {
     use crate::components::{Camera3D, SunLight, Transform3D};
     use crate::renderer::{Draw, MeshRenderer, Scene};
     use glam::{Mat4, Vec3};
+    use ribbon_plugin_gltf::{ModelAsset, ModelNode, PrimitiveData, SkeletonNode, SkinData};
     use ribbon_render::gpu::GpuContext;
     use ribbon_render::gpu_window::clear_view;
 
@@ -373,6 +475,76 @@ mod tests {
         assert!(validate_model_for_upload(&empty).is_err());
         let model = ribbon_plugin_gltf::parse(CUBE).expect("packaged model parses");
         validate_model_for_upload(&model).expect("packaged model is uploadable");
+    }
+
+    fn minimal_skinned_model(joint_index: u16, weight: f32) -> ModelAsset {
+        ModelAsset {
+            primitives: vec![PrimitiveData {
+                positions: vec![[0.0, 0.0, 0.0]; 3],
+                normals: vec![[0.0, 0.0, 1.0]; 3],
+                uvs: vec![[0.0, 0.0]; 3],
+                indices: vec![0, 1, 2],
+                material: None,
+                joints: vec![[joint_index, 0, 0, 0, 0, 0, 0, 0]; 3],
+                weights: vec![[weight, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]; 3],
+            }],
+            nodes: vec![ModelNode {
+                primitive: 0,
+                transform: Mat4::IDENTITY,
+                node: 0,
+                skin: Some(0),
+            }],
+            skeleton_nodes: vec![
+                SkeletonNode {
+                    parent: None,
+                    translation: [0.0; 3],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    scale: [1.0; 3],
+                },
+                SkeletonNode {
+                    parent: Some(0),
+                    translation: [0.0; 3],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    scale: [1.0; 3],
+                },
+            ],
+            skins: vec![SkinData {
+                joints: vec![1],
+                inverse_bind_matrices: vec![Mat4::IDENTITY.to_cols_array_2d()],
+            }],
+            ..ModelAsset::default()
+        }
+    }
+
+    #[test]
+    fn skin_validation_rejects_positive_weights_with_out_of_range_joint_indices() {
+        let model = minimal_skinned_model(0, 1.0);
+        validate_model_for_upload(&model).expect("valid single-joint skin");
+
+        let invalid = minimal_skinned_model(1, 1.0);
+        let error = validate_model_for_upload(&invalid).expect_err("invalid joint must fail");
+        assert!(error.contains("exceeds skin 0 joint count 1"), "{error}");
+    }
+
+    #[test]
+    fn skin_validation_rejects_weighted_vertices_without_a_skin() {
+        let mut model = minimal_skinned_model(0, 1.0);
+        model.nodes[0].skin = None;
+        let error =
+            validate_model_for_upload(&model).expect_err("weighted mesh must require a skin");
+        assert!(
+            error.contains("has weighted vertices but no skin"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn skin_validation_rejects_tiny_nonzero_unnormalized_weights() {
+        // The WGSL path treats every positive weight above 1e-6 total as active. Such a sum must
+        // be normalized; it cannot be accepted as an unskinned vertex and then collapse it.
+        let invalid = minimal_skinned_model(2, 5.0e-6);
+        let error = validate_model_for_upload(&invalid).expect_err("tiny weights must fail");
+        assert!(error.contains("skin weights are not normalized"), "{error}");
     }
 
     #[test]

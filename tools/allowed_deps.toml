@@ -70,8 +70,8 @@ workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_events", "rib
 external = ["rayon"]
 
 [allowed."ribbon_plugin_animation"]
-workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_math", "ribbon_assets"]
-external = ["serde", "ron"]
+workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_math", "ribbon_assets", "ribbon_plugin_gltf", "ribbon_plugin_render3d"]
+external = ["serde", "ron", "glam"]
 
 [allowed."ribbon_plugin_audio"]
 workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_events", "ribbon_math", "ribbon_assets", "ribbon_scene"]

@@ -6,7 +6,7 @@
 
 use crate::components::{
     Camera3D, DynamicMeshInstance3D, FogSettings, GpuMeshInstance3D, MeshInstance, ModelInstance,
-    PointLight, SpotLight, StagedRender, SunLight,
+    PointLight, SkeletalPose, SpotLight, StagedRender, SunLight,
 };
 use crate::gpu_streaming::GpuResourceLease;
 use crate::mesh::MeshData;
@@ -24,12 +24,14 @@ use std::time::Instant;
 pub use ribbon_render_contracts::{ExtractedCamera3D, ExtractedMesh3D};
 
 /// One glTF model placement extracted from an ECS entity.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ExtractedModel3D {
     /// Resolved object-to-world matrix.
     pub transform: Mat4,
     /// Weak handle resolved against `AssetServer` during rendering.
     pub model: Handle<ModelAsset>,
+    /// Generation-checked skeletal pose captured with this extraction snapshot.
+    pub skeletal_pose: Option<SkeletalPose>,
 }
 
 /// One placement of an arbitrary indexed mesh extracted from the ECS.
@@ -163,8 +165,13 @@ pub fn extract_scene_3d(world: &mut World) {
         }
 
         extracted.models.clear();
-        for (_, (transform, model, staged)) in world
-            .query::<(&GlobalTransform3D, &ModelInstance, Option<&StagedRender>)>()
+        for (_, (transform, model, skeletal_pose, staged)) in world
+            .query::<(
+                &GlobalTransform3D,
+                &ModelInstance,
+                Option<&SkeletalPose>,
+                Option<&StagedRender>,
+            )>()
             .iter()
         {
             if staged.is_some() {
@@ -173,6 +180,10 @@ pub fn extract_scene_3d(world: &mut World) {
             extracted.models.push(ExtractedModel3D {
                 transform: transform.matrix(),
                 model: model.model,
+                skeletal_pose: skeletal_pose.cloned().filter(|pose| {
+                    pose.model_asset_id == model.model.id()
+                        && pose.model_generation == model.model.generation()
+                }),
             });
         }
 

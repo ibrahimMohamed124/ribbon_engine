@@ -10,5 +10,8 @@ ribbon_ecs = { path = "../../crates/ecs" }
 ribbon_math = { path = "../../crates/math" }
 
 ribbon_assets = { path = "../../crates/assets" }
+ribbon_plugin_gltf = { path = "../gltf" }
+ribbon_plugin_render3d = { path = "../render3d" }
+glam = "0.30"
 serde = { version = "1.0", features = ["derive"] }
 ron = "0.10"

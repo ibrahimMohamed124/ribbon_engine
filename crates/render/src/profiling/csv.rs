@@ -173,6 +173,9 @@ impl RenderProfileRecorder {
             "gpu_global_pressure_level",
             "gpu_global_pressure_events",
             "gpu_global_budget_rejections",
+            "skinned_draws_after_palette_budget",
+            "skinned_draws_rejected_palette_capacity",
+            "skin_palette_matrices_staged",
         ];
         write_csv_record(&mut writer, HEADER.iter().map(|field| (*field).to_owned()))?;
         for sample in &self.samples {
@@ -371,6 +374,11 @@ impl RenderProfileRecorder {
             row[167] = resources.gpu_global_pressure_level.to_string();
             row[168] = resources.gpu_global_pressure_events.to_string();
             row[169] = resources.gpu_global_budget_rejections.to_string();
+            row[170] = resources.skinned_draws_after_palette_budget.to_string();
+            row[171] = resources
+                .skinned_draws_rejected_palette_capacity
+                .to_string();
+            row[172] = resources.skin_palette_matrices_staged.to_string();
             write_csv_record(&mut writer, row)?;
             for pass in &sample.passes {
                 let mut pass_row = vec![String::new(); HEADER.len()];
@@ -505,6 +513,11 @@ mod tests {
         diagnostics.resources.model_gpu_cache_over_budget_bytes = 2048;
         diagnostics.resources.model_gpu_cache_pressure_events = 3;
         diagnostics.resources.model_gpu_cache_pressure_level = 3;
+        diagnostics.resources.skinned_draws_after_palette_budget = 4;
+        diagnostics
+            .resources
+            .skinned_draws_rejected_palette_capacity = 2;
+        diagnostics.resources.skin_palette_matrices_staged = 128;
         recorder.record_diagnostics(&diagnostics);
 
         let mut output = Vec::new();
@@ -516,7 +529,7 @@ mod tests {
         let header: Vec<_> = rows.next().expect("header row").split(',').collect();
         let frame: Vec<_> = rows.next().expect("frame row").split(',').collect();
 
-        assert_eq!(header.len(), 170);
+        assert_eq!(header.len(), 173);
         assert_eq!(frame.len(), header.len());
         assert_eq!(header[75], "model_warmup_requested");
         assert_eq!(header[80], "model_gpu_uploads_this_frame");
@@ -568,6 +581,12 @@ mod tests {
         assert_eq!(header[160], "shader_pipeline_source_asset_leases");
         assert_eq!(header[164], "gpu_global_tracked_bytes_estimate");
         assert_eq!(header[169], "gpu_global_budget_rejections");
+        assert_eq!(header[170], "skinned_draws_after_palette_budget");
+        assert_eq!(header[171], "skinned_draws_rejected_palette_capacity");
+        assert_eq!(header[172], "skin_palette_matrices_staged");
+        assert_eq!(frame[170], "4");
+        assert_eq!(frame[171], "2");
+        assert_eq!(frame[172], "128");
         assert_eq!(header[137], "gpu_device_recovery_attempts");
         assert_eq!(header[138], "gpu_device_recovery_successes");
         assert_eq!(header[139], "gpu_device_recovery_failures");

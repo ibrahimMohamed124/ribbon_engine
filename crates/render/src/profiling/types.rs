@@ -72,6 +72,12 @@ pub struct RenderResourceStats {
     pub visible_draw_calls: usize,
     /// Grouped indexed draw calls issued by the directional shadow pass.
     pub shadow_draw_calls: usize,
+    /// Skinned draws retained after the bounded per-frame joint-palette admission step.
+    pub skinned_draws_after_palette_budget: usize,
+    /// Skinned draws rejected because the remaining per-frame joint-palette capacity was insufficient.
+    pub skinned_draws_rejected_palette_capacity: usize,
+    /// Joint matrices staged for the current frame's bounded GPU storage-buffer upload.
+    pub skin_palette_matrices_staged: usize,
     /// Estimated bytes used by live mesh vertex/index buffers.
     pub mesh_bytes_estimate: u64,
     /// Estimated bytes used by material factors and material textures (aggregate).

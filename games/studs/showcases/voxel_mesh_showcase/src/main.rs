@@ -116,6 +116,8 @@ fn replace_chunk_meshes(world: &mut World, update: ChunkMeshUpdate) {
                     position: vertex.position,
                     normal: vertex.normal,
                     uv: vertex.uv,
+                    joints: [0; 8],
+                    weights: [0.0; 8],
                 })
                 .collect(),
             // Chunk meshes are Arc-shared by the voxel update API; copy indices rather than

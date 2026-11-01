@@ -1,5 +1,22 @@
 use super::*;
 
+/// Append one immutable skin palette to the bounded frame-local upload list.
+/// Returns the matrix offset for the instance, or `None` without mutating the destination when
+/// the palette is empty or would exceed the renderer's per-frame storage-buffer capacity.
+pub(super) fn append_joint_palette(
+    palette: &[Mat4],
+    destination: &mut Vec<[[f32; 4]; 4]>,
+) -> Option<u32> {
+    let start = destination.len();
+    let end = start.checked_add(palette.len())?;
+    if palette.is_empty() || end > MAX_SKIN_MATRICES_PER_FRAME || end > u32::MAX as usize {
+        return None;
+    }
+    let offset = u32::try_from(start).ok()?;
+    destination.extend(palette.iter().map(Mat4::to_cols_array_2d));
+    Some(offset)
+}
+
 impl MeshRenderer {
     pub fn render(
         &mut self,
@@ -9,53 +26,101 @@ impl MeshRenderer {
         size: (u32, u32),
         scene: &Scene<'_>,
     ) {
-        let _ = self.render_internal(device, queue, view, size, scene, None);
+        let _ = self.render_internal(
+            RenderTarget {
+                device,
+                queue,
+                view,
+                size,
+                scene,
+            },
+            &[],
+            None,
+        );
     }
 
-    pub(crate) fn render_profiled(
+    /// Render static and skeletal instances together. Joint palettes are copied to a bounded
+    /// frame-local storage buffer before any color or shadow pass consumes them.
+    pub fn render_with_skinning(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         size: (u32, u32),
         scene: &Scene<'_>,
+        skinned_draws: &[SkinnedDraw],
+    ) {
+        let _ = self.render_internal(
+            RenderTarget {
+                device,
+                queue,
+                view,
+                size,
+                scene,
+            },
+            skinned_draws,
+            None,
+        );
+    }
+
+    pub(crate) fn render_profiled_with_skinning(
+        &mut self,
+        target: RenderTarget<'_, '_>,
+        skinned_draws: &[SkinnedDraw],
         submitted_frame: u64,
     ) -> Vec<RenderPassTiming> {
-        self.render_internal(device, queue, view, size, scene, Some(submitted_frame))
+        self.render_internal(target, skinned_draws, Some(submitted_frame))
     }
 
     fn render_internal(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        view: &wgpu::TextureView,
-        size: (u32, u32),
-        scene: &Scene<'_>,
+        target: RenderTarget<'_, '_>,
+        skinned_draws: &[SkinnedDraw],
         profile_frame: Option<u64>,
     ) -> Vec<RenderPassTiming> {
+        let RenderTarget {
+            device,
+            queue,
+            view,
+            size,
+            scene,
+        } = target;
         let profile_cpu = profile_frame.is_some();
         let submitted_frame = profile_frame.unwrap_or_default();
         let mut cpu_phases = Vec::new();
+        self.last_visible_mesh_instances = 0;
+        self.last_visible_draw_calls = 0;
+        self.last_shadow_draw_calls = 0;
+        self.last_skinned_draws_after_palette_budget = 0;
+        self.last_skinned_draws_rejected_palette_capacity = 0;
+        self.last_skin_palette_matrices_staged = 0;
         if size.0 == 0 || size.1 == 0 {
             return cpu_phases;
         }
         let mut phase_started = profile_cpu.then(Instant::now);
-        self.last_visible_mesh_instances = 0;
-        self.last_visible_draw_calls = 0;
-        self.last_shadow_draw_calls = 0;
-        self.maintain_instance_buffers(device, scene.draws.len());
-        if scene.draws.is_empty() {
+        if scene.draws.is_empty() && skinned_draws.is_empty() {
+            self.maintain_instance_buffers(device, 0);
             return cpu_phases;
         }
         self.ensure_depth(device, size);
-        // Keep every valid draw for shadow casting, but only upload camera-visible instances
-        // to the main pass. The sphere scale uses a Frobenius-norm bound so non-uniform or
-        // sheared transforms remain conservative (possibly overestimating, never underestimating).
-        let mut draws: Vec<Draw> = scene
+        // Static and skinned draws share the same generation-checked mesh/material path. The
+        // skinned palette is retained by Arc through extraction and copied to the GPU once here.
+        let mut draws: Vec<PreparedDraw> = scene
             .draws
             .iter()
             .copied()
-            .filter(|draw| {
+            .map(|draw| PreparedDraw {
+                draw,
+                palette: None,
+                bone_offset: 0,
+            })
+            .chain(skinned_draws.iter().map(|skinned| PreparedDraw {
+                draw: skinned.draw,
+                palette: Some(Arc::clone(&skinned.joint_matrices)),
+                bone_offset: 0,
+            }))
+            .filter(|prepared| {
+                let draw = prepared.draw;
                 self.meshes.get(draw.mesh.slot).is_some_and(|slot| {
                     slot.generation == draw.mesh.generation && slot.mesh.is_some()
                 }) && self.materials.get(draw.material.slot).is_some_and(|slot| {
@@ -63,15 +128,46 @@ impl MeshRenderer {
                 })
             })
             .collect();
-        draws.sort_by_key(|draw| (draw.mesh, draw.material));
+        draws.sort_by_key(|prepared| (prepared.draw.mesh, prepared.draw.material));
+
+        let mut skin_matrices = Vec::<[[f32; 4]; 4]>::new();
+        let mut rejected_skin_palettes = 0_usize;
+        draws.retain_mut(|prepared| {
+            let Some(palette) = prepared.palette.as_ref() else {
+                return true;
+            };
+            let Some(offset) = append_joint_palette(palette, &mut skin_matrices) else {
+                // Reject only the over-capacity skinned draw. Static and earlier accepted draws
+                // continue to render; no invalid offset reaches the vertex shader.
+                rejected_skin_palettes = rejected_skin_palettes.saturating_add(1);
+                return false;
+            };
+            prepared.bone_offset = offset;
+            true
+        });
+        self.last_skinned_draws_after_palette_budget =
+            draws.iter().filter(|draw| draw.palette.is_some()).count();
+        self.last_skinned_draws_rejected_palette_capacity = rejected_skin_palettes;
+        self.last_skin_palette_matrices_staged = skin_matrices.len();
         if draws.is_empty() {
+            self.maintain_instance_buffers(device, 0);
             return cpu_phases;
         }
+        self.maintain_instance_buffers(device, draws.len());
+        if !skin_matrices.is_empty() {
+            queue.write_buffer(&self.skin_matrices, 0, bytemuck::cast_slice(&skin_matrices));
+        }
         let planes = frustum_planes(scene.view_proj);
-        let visible_draws: Vec<Draw> = draws
+        let visible_draws: Vec<PreparedDraw> = draws
             .iter()
-            .copied()
-            .filter(|draw| {
+            .filter(|prepared| {
+                // Bind-pose mesh bounds are not conservative for an animated skeleton: a joint
+                // can move vertices outside that sphere. Keep skinned placements in the main
+                // pass and let clip-space clipping decide visibility until animated bounds exist.
+                if prepared.palette.is_some() {
+                    return true;
+                }
+                let draw = prepared.draw;
                 let Some(mesh) = self.meshes[draw.mesh.slot].mesh.as_ref() else {
                     return false;
                 };
@@ -83,16 +179,19 @@ impl MeshRenderer {
                     (x.length_squared() + y.length_squared() + z.length_squared()).sqrt();
                 sphere_visible(&planes, center, mesh.bounds_radius * max_scale)
             })
+            .cloned()
             .collect();
         if visible_draws.is_empty() {
             return cpu_phases;
         }
         self.last_visible_mesh_instances = visible_draws.len();
         self.last_visible_draw_calls = visible_draws
-            .chunk_by(|left, right| (left.mesh, left.material) == (right.mesh, right.material))
+            .chunk_by(|left, right| {
+                (left.draw.mesh, left.draw.material) == (right.draw.mesh, right.draw.material)
+            })
             .count();
         self.last_shadow_draw_calls = draws
-            .chunk_by(|left, right| left.mesh == right.mesh)
+            .chunk_by(|left, right| left.draw.mesh == right.draw.mesh)
             .count();
         record_cpu_phase(
             &mut cpu_phases,
@@ -100,12 +199,17 @@ impl MeshRenderer {
             phase_started.take(),
         );
         phase_started = profile_cpu.then(Instant::now);
-        let to_raw = |instances: &[Draw]| {
+        let to_raw = |instances: &[PreparedDraw]| {
             instances
                 .iter()
-                .map(|draw| RawInstance {
-                    model: draw.model.to_cols_array_2d(),
-                    tint: [draw.tint[0], draw.tint[1], draw.tint[2], 1.0],
+                .map(|prepared| {
+                    let draw = prepared.draw;
+                    RawInstance {
+                        model: draw.model.to_cols_array_2d(),
+                        tint: [draw.tint[0], draw.tint[1], draw.tint[2], 1.0],
+                        bone_offset: prepared.bone_offset,
+                        _padding: [0; 3],
+                    }
                 })
                 .collect::<Vec<_>>()
         };
@@ -251,11 +355,11 @@ impl MeshRenderer {
             pass.set_vertex_buffer(1, self.shadow_instances.slice(..));
             let mut start = 0;
             while start < draws.len() {
-                let mesh_id = draws[start].mesh;
+                let mesh_id = draws[start].draw.mesh;
                 let end = start
                     + draws[start..]
                         .iter()
-                        .take_while(|draw| draw.mesh == mesh_id)
+                        .take_while(|draw| draw.draw.mesh == mesh_id)
                         .count();
                 let mesh = self.meshes[mesh_id.slot]
                     .mesh
@@ -293,11 +397,11 @@ impl MeshRenderer {
             pass.set_vertex_buffer(1, self.shadow_instances.slice(..));
             let mut start = 0;
             while start < draws.len() {
-                let mesh_id = draws[start].mesh;
+                let mesh_id = draws[start].draw.mesh;
                 let end = start
                     + draws[start..]
                         .iter()
-                        .take_while(|draw| draw.mesh == mesh_id)
+                        .take_while(|draw| draw.draw.mesh == mesh_id)
                         .count();
                 let mesh = self.meshes[mesh_id.slot]
                     .mesh
@@ -348,11 +452,14 @@ impl MeshRenderer {
             pass.set_vertex_buffer(1, self.instances.slice(..));
             let mut start = 0;
             while start < visible_draws.len() {
-                let key = (visible_draws[start].mesh, visible_draws[start].material);
+                let key = (
+                    visible_draws[start].draw.mesh,
+                    visible_draws[start].draw.material,
+                );
                 let end = start
                     + visible_draws[start..]
                         .iter()
-                        .take_while(|d| (d.mesh, d.material) == key)
+                        .take_while(|d| (d.draw.mesh, d.draw.material) == key)
                         .count();
                 let mesh = self.meshes[key.0.slot]
                     .mesh

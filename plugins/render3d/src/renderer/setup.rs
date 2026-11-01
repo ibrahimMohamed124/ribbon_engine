@@ -61,6 +61,12 @@ impl MeshRenderer {
             _texture: spot_shadow_texture,
             view: spot_shadow_view,
         };
+        let skin_matrices = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("per-frame skeletal joint matrices"),
+            size: (MAX_SKIN_MATRICES_PER_FRAME * std::mem::size_of::<[[f32; 4]; 4]>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mesh globals layout"),
             entries: &[
@@ -106,21 +112,43 @@ impl MeshRenderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let shadow_globals_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("shadow globals layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mesh material layout"),
@@ -365,6 +393,10 @@ impl MeshRenderer {
                     binding: 4,
                     resource: wgpu::BindingResource::Sampler(&shadow_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: skin_matrices.as_entire_binding(),
+                },
             ],
         });
         let shadow_globals = device.create_buffer(&wgpu::BufferDescriptor {
@@ -376,10 +408,16 @@ impl MeshRenderer {
         let shadow_globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("directional shadow globals bind group"),
             layout: &shadow_globals_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: shadow_globals.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: shadow_globals.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: skin_matrices.as_entire_binding(),
+                },
+            ],
         });
         let spot_shadow_globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("spotlight shadow globals"),
@@ -390,10 +428,16 @@ impl MeshRenderer {
         let spot_shadow_globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("spotlight shadow globals bind group"),
             layout: &shadow_globals_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: spot_shadow_globals.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: spot_shadow_globals.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: skin_matrices.as_entire_binding(),
+                },
+            ],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("mesh sampler"),
@@ -414,6 +458,7 @@ impl MeshRenderer {
             globals_group,
             shadow_globals,
             shadow_globals_group,
+            skin_matrices,
             spot_shadow_globals,
             spot_shadow_globals_group,
             shadow_target,
@@ -437,6 +482,9 @@ impl MeshRenderer {
             last_visible_mesh_instances: 0,
             last_visible_draw_calls: 0,
             last_shadow_draw_calls: 0,
+            last_skinned_draws_after_palette_budget: 0,
+            last_skinned_draws_rejected_palette_capacity: 0,
+            last_skin_palette_matrices_staged: 0,
             instances: instance_buffer(device, 16),
             shadow_instances: instance_buffer(device, 16),
             instance_capacity: MIN_INSTANCE_CAPACITY,

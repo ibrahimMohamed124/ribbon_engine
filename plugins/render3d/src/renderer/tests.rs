@@ -1,5 +1,6 @@
 use super::{
-    build_mips, pack_point_lights, select_spot_lights, Draw, MeshRenderer, Scene, TextureData,
+    build_mips, pack_point_lights, select_spot_lights, Draw, MeshRenderer, Scene, SkinnedDraw,
+    TextureData,
 };
 use crate::components::{Camera3D, FogSettings, PointLight, SpotLight, SunLight, Transform3D};
 use glam::{Mat4, Vec3};
@@ -7,6 +8,7 @@ use ribbon_render::gpu::GpuContext;
 use ribbon_render::gpu_window::clear_view;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 const SIZE: u32 = 64;
 
@@ -75,6 +77,37 @@ fn cube(model: Mat4, tint: [f32; 3]) -> Draw {
 }
 
 #[test]
+fn vertex_attributes_match_the_interleaved_joint_and_weight_storage_layout() {
+    use crate::mesh::Vertex;
+    use std::mem::{offset_of, size_of};
+
+    let offset = |location| {
+        super::VERTEX_ATTRIBUTES
+            .iter()
+            .find(|attribute| attribute.shader_location == location)
+            .unwrap_or_else(|| panic!("missing vertex shader location {location}"))
+            .offset
+    };
+
+    assert_eq!(size_of::<Vertex>(), 80);
+    assert_eq!(offset_of!(Vertex, joints), 32);
+    assert_eq!(offset_of!(Vertex, weights), 48);
+    assert_eq!(offset(0), offset_of!(Vertex, position) as u64);
+    assert_eq!(offset(1), offset_of!(Vertex, normal) as u64);
+    assert_eq!(offset(2), offset_of!(Vertex, uv) as u64);
+    assert_eq!(offset(3), offset_of!(Vertex, joints) as u64);
+    assert_eq!(offset(4), offset_of!(Vertex, weights) as u64);
+    assert_eq!(
+        offset(5),
+        (offset_of!(Vertex, joints) + size_of::<[u16; 4]>()) as u64
+    );
+    assert_eq!(
+        offset(6),
+        (offset_of!(Vertex, weights) + size_of::<[f32; 4]>()) as u64
+    );
+}
+
+#[test]
 fn lighting_post_and_shadow_wgsl_shaders_validate_without_a_gpu_adapter() {
     let shaders = [
         include_str!("../../shaders/mesh.wgsl"),
@@ -93,6 +126,118 @@ fn lighting_post_and_shadow_wgsl_shaders_validate_without_a_gpu_adapter() {
         .validate(&module)
         .unwrap_or_else(|error| panic!("WGSL shader {index} failed validation: {error:?}"));
     }
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter; run tools/test_skeletal_skinning_gpu.ps1"]
+fn skinned_vertex_palette_moves_geometry_in_the_color_pass_on_gpu() {
+    use crate::mesh::Vertex;
+
+    let mut harness = harness().expect(
+        "skeletal skinning GPU test requires a working wgpu adapter; do not treat adapter absence as a pass",
+    );
+    let vertices = [
+        Vertex {
+            position: [-0.45, -0.35, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            uv: [0.0, 0.0],
+            joints: [0, 1, 0, 0, 0, 0, 0, 0],
+            weights: [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        },
+        Vertex {
+            position: [0.45, -0.35, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            uv: [1.0, 0.0],
+            joints: [0, 1, 0, 0, 0, 0, 0, 0],
+            weights: [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        },
+        Vertex {
+            position: [0.0, 0.45, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            uv: [0.5, 1.0],
+            joints: [0, 1, 0, 0, 0, 0, 0, 0],
+            weights: [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        },
+    ];
+    let mesh = harness
+        .renderer
+        .upload_mesh(harness.context.device(), &vertices, &[0, 1, 2]);
+    clear_view(
+        harness.context.device(),
+        harness.context.queue(),
+        harness.context.target().view(),
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    let eye = Transform3D::looking_at(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, Vec3::Y);
+    let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
+    let scene = Scene {
+        view_proj: Camera3D::default().projection(1.0) * view,
+        camera_position: eye.translation,
+        sun: &SunLight::default(),
+        spot_lights: &[],
+        point_lights: &[],
+        fog: FogSettings::default(),
+        draws: &[],
+    };
+    let skin = Arc::<[Mat4]>::from(vec![
+        Mat4::from_translation(Vec3::new(0.4, 0.0, 0.0)),
+        Mat4::from_translation(Vec3::new(1.2, 0.0, 0.0)),
+    ]);
+    harness.renderer.render_with_skinning(
+        harness.context.device(),
+        harness.context.queue(),
+        harness.context.target().view(),
+        (SIZE, SIZE),
+        &scene,
+        &[SkinnedDraw {
+            draw: Draw {
+                mesh,
+                material: MeshRenderer::WHITE,
+                model: Mat4::IDENTITY,
+                tint: [1.0; 3],
+            },
+            joint_matrices: skin,
+        }],
+    );
+    let pixels = harness.context.readback().expect("readback").pixels;
+    let mut lit_count = 0_u32;
+    let mut x_sum = 0_u64;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let (r, g, b) = pixel(&pixels, x, y);
+            if r + g + b > 45 {
+                lit_count += 1;
+                x_sum += u64::from(x);
+            }
+        }
+    }
+    assert!(
+        lit_count > 8,
+        "skinned triangle should produce visible pixels"
+    );
+    let centroid_x = x_sum as f32 / lit_count as f32;
+    assert!(
+        centroid_x > (SIZE as f32 * 0.58),
+        "palette translation was not applied: centroid x={centroid_x}"
+    );
+}
+
+#[test]
+fn joint_palette_capacity_rejects_overflow_without_corrupting_previous_offsets() {
+    use super::draw::append_joint_palette;
+
+    let palette = vec![Mat4::IDENTITY; super::MAX_SKIN_MATRICES_PER_FRAME];
+    let mut destination = Vec::new();
+    assert_eq!(append_joint_palette(&palette, &mut destination), Some(0));
+    assert_eq!(destination.len(), super::MAX_SKIN_MATRICES_PER_FRAME);
+    let before = destination.len();
+    assert_eq!(
+        append_joint_palette(&[Mat4::IDENTITY], &mut destination),
+        None
+    );
+    assert_eq!(destination.len(), before);
+    assert_eq!(append_joint_palette(&[], &mut destination), None);
+    assert_eq!(destination.len(), before);
 }
 
 #[test]

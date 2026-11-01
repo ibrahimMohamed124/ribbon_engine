@@ -2450,10 +2450,13 @@ dependencies = [
 name = "ribbon_plugin_animation"
 version = "0.1.0"
 dependencies = [
+ "glam 0.30.10",
  "ribbon_app",
  "ribbon_assets",
  "ribbon_ecs",
  "ribbon_math",
+ "ribbon_plugin_gltf",
+ "ribbon_plugin_render3d",
  "ribbon_plugins",
  "ron",
  "serde",

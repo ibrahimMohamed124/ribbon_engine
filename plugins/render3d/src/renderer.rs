@@ -158,6 +158,32 @@ pub struct Draw {
     pub tint: [f32; 3],
 }
 
+/// One skinned instance. Its palette is immutable for the duration of a render snapshot.
+#[derive(Clone, Debug)]
+pub struct SkinnedDraw {
+    pub draw: Draw,
+    /// Model-local joint matrices in glTF skin joint order.
+    pub joint_matrices: Arc<[Mat4]>,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedDraw {
+    draw: Draw,
+    palette: Option<Arc<[Mat4]>>,
+    bone_offset: u32,
+}
+
+/// Borrowed resources for one mesh-render submission. Grouping these keeps the internal
+/// renderer entry points small as additional per-frame inputs (for example skinning palettes)
+/// are introduced, without hiding their ownership or extending resource lifetimes.
+pub(crate) struct RenderTarget<'a, 'scene> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub view: &'a wgpu::TextureView,
+    pub size: (u32, u32),
+    pub scene: &'a Scene<'scene>,
+}
+
 /// Everything one render call needs besides the GPU handles.
 pub struct Scene<'a> {
     /// Combined projection and view matrix.
@@ -181,6 +207,8 @@ pub struct Scene<'a> {
 struct RawInstance {
     model: [[f32; 4]; 4],
     tint: [f32; 4],
+    bone_offset: u32,
+    _padding: [u32; 3],
 }
 
 #[repr(C)]
@@ -304,6 +332,12 @@ pub struct MeshRendererResourceStats {
     pub visible_draw_calls: usize,
     /// Number of grouped indexed draw calls issued by the directional shadow pass.
     pub shadow_draw_calls: usize,
+    /// Skinned draws retained for the current frame's color/shadow submissions.
+    pub skinned_draws_after_palette_budget: usize,
+    /// Skinned draws rejected because the frame-local joint palette capacity was exhausted.
+    pub skinned_draws_rejected_palette_capacity: usize,
+    /// Number of joint matrices uploaded to the frame-local storage buffer.
+    pub skin_palette_matrices_staged: usize,
     /// Estimated live vertex/index buffer bytes.
     pub mesh_bytes_estimate: u64,
     /// Estimated material texture and uniform bytes. Texture allocations are counted once even
@@ -353,6 +387,8 @@ pub struct MeshRenderer {
     globals_group: wgpu::BindGroup,
     shadow_globals: wgpu::Buffer,
     shadow_globals_group: wgpu::BindGroup,
+    /// Fixed-capacity per-frame storage palette shared by color and shadow vertex stages.
+    skin_matrices: wgpu::Buffer,
     spot_shadow_globals: wgpu::Buffer,
     spot_shadow_globals_group: wgpu::BindGroup,
     shadow_target: ShadowTarget,
@@ -380,6 +416,9 @@ pub struct MeshRenderer {
     last_visible_mesh_instances: usize,
     last_visible_draw_calls: usize,
     last_shadow_draw_calls: usize,
+    last_skinned_draws_after_palette_budget: usize,
+    last_skinned_draws_rejected_palette_capacity: usize,
+    last_skin_palette_matrices_staged: usize,
     /// Compact, frustum-visible instances used by the main color pass.
     instances: wgpu::Buffer,
     /// All instances, including off-screen casters, used by the shadow pass.
@@ -406,11 +445,52 @@ impl MeshRenderer {
 const MIN_INSTANCE_CAPACITY: usize = 16;
 const INSTANCE_BUFFER_SHRINK_THRESHOLD: usize = 256;
 const INSTANCE_BUFFER_SHRINK_AFTER_FRAMES: u32 = 120;
+/// Per-frame storage palette capacity (mat4x4<f32> per joint); overflow is rejected, never indexed.
+pub const MAX_SKIN_MATRICES_PER_FRAME: usize = 65_536;
 
-const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
-const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
-    3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4
+// `Vertex` stores all eight joint indices before all eight weights. The shader's
+// locations are grouped by influence set, so locations 4 and 5 deliberately do not
+// follow increasing byte offsets. Keep these offsets explicit: `vertex_attr_array!`
+// lays attributes out consecutively and would interpret JOINTS_1 as WEIGHTS_0.
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 7] = [
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x3,
+        offset: 0,
+        shader_location: 0,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x3,
+        offset: 12,
+        shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x2,
+        offset: 24,
+        shader_location: 2,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Uint16x4,
+        offset: 32,
+        shader_location: 3,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 48,
+        shader_location: 4,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Uint16x4,
+        offset: 40,
+        shader_location: 5,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 64,
+        shader_location: 6,
+    },
+];
+const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Uint32
 ];
 
 fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
