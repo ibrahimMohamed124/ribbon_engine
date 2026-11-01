@@ -14,8 +14,8 @@ pub use asset_adapters::{StreamingAssetAdapters, StreamingDependencyState};
 pub use coordinator::{
     RegionActivationBreakdown, RegionCollider, RegionDefinition, RegionId, RegionLifecycleTiming,
     RegionModel, RegionPointLight, RegionPolicy, RegionSnapshot, RegionState, SceneDefinition,
-    SceneId, SceneSnapshot, SceneState, StreamDiagnostics, StreamEvent, StreamObserver,
-    StreamingConfig, StreamingCoordinator, StreamingMemoryBudget, StreamingPlugin,
+    SceneId, SceneSnapshot, SceneState, SceneTransitionParticipant, StreamDiagnostics, StreamEvent,
+    StreamObserver, StreamingConfig, StreamingCoordinator, StreamingMemoryBudget, StreamingPlugin,
     StreamingSnapshot,
 };
 pub use partition::{RegionBounds, WorldPartitionIndex};

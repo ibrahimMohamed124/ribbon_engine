@@ -132,6 +132,22 @@ struct SceneRecord {
     definition: SceneDefinition,
 }
 
+/// Application-owned work that must join a logical scene activation transaction.
+///
+/// Participants should build their content in a hidden/staged representation during `prepare`.
+/// Returning `Ok(false)` means that participant is not ready yet; no participant is committed and
+/// every region in the connected scene group remains render-staged. `prepare` may be called on
+/// multiple Updates and therefore must be idempotent. `commit` is called for all participants in
+/// the same coordinator Update before render extraction. If any commit fails, `rollback` is called
+/// in reverse registration order for every participant. Rollback must be idempotent and compensate
+/// all World mutations made by prepare/commit. External effects outside this World (network calls,
+/// file writes, driver work, etc.) cannot be made transactional by the coordinator.
+pub trait SceneTransitionParticipant: Send + Sync + 'static {
+    fn prepare(&mut self, world: &mut World) -> Result<bool, String>;
+    fn commit(&mut self, world: &mut World) -> Result<(), String>;
+    fn rollback(&mut self, world: &mut World);
+}
+
 /// One renderable model placement owned by a region after activation.
 #[derive(Clone, Debug)]
 pub struct RegionModel {
@@ -615,6 +631,7 @@ pub struct StreamingCoordinator {
     index: WorldPartitionIndex,
     regions: BTreeMap<RegionId, RegionRecord>,
     scenes: BTreeMap<SceneId, SceneRecord>,
+    transition_participants: BTreeMap<SceneId, Vec<Box<dyn SceneTransitionParticipant>>>,
     observers: BTreeMap<u64, StreamObserver>,
     warmup_users: HashMap<ModelKey, (ribbon_assets::Handle<ModelAsset>, usize)>,
     next_use_sequence: u64,
@@ -637,6 +654,7 @@ impl StreamingCoordinator {
             config,
             regions: BTreeMap::new(),
             scenes: BTreeMap::new(),
+            transition_participants: BTreeMap::new(),
             observers: BTreeMap::new(),
             warmup_users: HashMap::new(),
             next_use_sequence: 1,
@@ -940,6 +958,24 @@ impl StreamingCoordinator {
         definition.regions.sort();
         self.scenes
             .insert(definition.id.clone(), SceneRecord { definition });
+        Ok(())
+    }
+
+    /// Register an application-owned participant in the next activation transaction for `scene`.
+    /// Participants are one-shot and are removed after a successful commit. Register them before
+    /// all Regions become ready; duplicate instances are allowed and execute in registration order.
+    pub fn register_scene_transition_participant(
+        &mut self,
+        scene: &SceneId,
+        participant: impl SceneTransitionParticipant,
+    ) -> Result<(), String> {
+        if !self.scenes.contains_key(scene) {
+            return Err(format!("unknown scene `{}`", scene.as_str()));
+        }
+        self.transition_participants
+            .entry(scene.clone())
+            .or_default()
+            .push(Box::new(participant));
         Ok(())
     }
 
@@ -2889,12 +2925,14 @@ impl StreamingCoordinator {
     /// until every member has finished visual spawning and required Rapier collider registration.
     fn try_commit_render_visibility_group(&mut self, world: &mut World, seed: &RegionId) -> bool {
         let mut group = BTreeSet::from([seed.clone()]);
+        let mut connected_scenes = BTreeSet::new();
         loop {
             let scene_ids: BTreeSet<SceneId> = group
                 .iter()
                 .filter_map(|region| self.regions.get(region))
                 .flat_map(|record| record.scene_activation_users.iter().cloned())
                 .collect();
+            connected_scenes.extend(scene_ids.iter().cloned());
             let mut changed = false;
             for scene_id in scene_ids {
                 if let Some(scene) = self.scenes.get(&scene_id) {
@@ -2930,9 +2968,10 @@ impl StreamingCoordinator {
                 .is_some_and(|record| record.state == RegionState::Active);
         }
 
-        // Remove every marker before transitioning any member. `StreamingCoordinator` runs in
-        // Update and render extraction runs later in PostUpdate, so the renderer observes either
-        // the previous hidden group or the complete committed group, never a partial batch.
+        // Ask application-owned systems to stage and commit their scene-owned content before
+        // making any Region render-visible. The callbacks run synchronously inside this Update;
+        // render extraction runs later in PostUpdate, so no frame can observe an intermediate
+        // participant commit. A failed participant triggers reverse-order compensation.
         let activating: Vec<_> = group
             .iter()
             .filter(|region| {
@@ -2942,6 +2981,23 @@ impl StreamingCoordinator {
             })
             .cloned()
             .collect();
+        match self.prepare_and_commit_scene_participants(world, &connected_scenes) {
+            Ok(true) => {}
+            Ok(false) => return false,
+            Err(message) => {
+                for region in activating {
+                    self.fail_region(
+                        world,
+                        &region,
+                        format!("scene activation transaction rolled back: {message}"),
+                    );
+                }
+                return false;
+            }
+        }
+
+        // Remove every marker before transitioning any member. This is the final commit point:
+        // application participants have committed, and the whole connected Region set is ready.
         for region in &group {
             self.commit_region_render_visibility(world, region);
         }
@@ -2949,12 +3005,86 @@ impl StreamingCoordinator {
             self.set_state(
                 &region,
                 RegionState::Active,
-                "scene visibility group committed after all member regions became ready",
+                "scene transaction and multi-region visibility group committed",
             );
         }
         self.regions
             .get(seed)
             .is_some_and(|record| record.state == RegionState::Active)
+    }
+
+    fn prepare_and_commit_scene_participants(
+        &mut self,
+        world: &mut World,
+        scene_ids: &BTreeSet<SceneId>,
+    ) -> Result<bool, String> {
+        // First prepare every participant. A `false` result means keep the full render group
+        // staged and retry on a later Update; already-prepared participants must be idempotent.
+        let mut prepare_error = None;
+        for scene_id in scene_ids {
+            if let Some(participants) = self.transition_participants.get_mut(scene_id) {
+                for participant in participants.iter_mut() {
+                    match participant.prepare(world) {
+                        Ok(true) => {}
+                        Ok(false) => return Ok(false),
+                        Err(message) => {
+                            prepare_error = Some(format!(
+                                "scene `{}` prepare failed: {message}",
+                                scene_id.as_str()
+                            ));
+                            break;
+                        }
+                    }
+                }
+            }
+            if prepare_error.is_some() {
+                break;
+            }
+        }
+        if let Some(message) = prepare_error {
+            self.rollback_scene_participants(world, scene_ids);
+            return Err(message);
+        }
+
+        // Commit callbacks are one Update transaction. Any failure compensates every participant
+        // in reverse order, including participants whose commit was not reached (rollback is
+        // explicitly required to be idempotent).
+        let mut commit_error = None;
+        for scene_id in scene_ids {
+            if let Some(participants) = self.transition_participants.get_mut(scene_id) {
+                for participant in participants.iter_mut() {
+                    if let Err(message) = participant.commit(world) {
+                        commit_error = Some(format!(
+                            "scene `{}` commit failed: {message}",
+                            scene_id.as_str()
+                        ));
+                        break;
+                    }
+                }
+            }
+            if commit_error.is_some() {
+                break;
+            }
+        }
+        if let Some(message) = commit_error {
+            self.rollback_scene_participants(world, scene_ids);
+            return Err(message);
+        }
+
+        for scene_id in scene_ids {
+            self.transition_participants.remove(scene_id);
+        }
+        Ok(true)
+    }
+
+    fn rollback_scene_participants(&mut self, world: &mut World, scene_ids: &BTreeSet<SceneId>) {
+        for scene_id in scene_ids.iter().rev() {
+            if let Some(participants) = self.transition_participants.get_mut(scene_id) {
+                for participant in participants.iter_mut().rev() {
+                    participant.rollback(world);
+                }
+            }
+        }
     }
 
     /// Make all region-owned render entities visible in one ECS update. A staged marker is
@@ -3721,6 +3851,8 @@ mod tests {
     use glam::Vec3;
     use ribbon_app::World;
     use std::collections::HashSet;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     // Mirror the resource installed by StreamingPlugin::build. Unit tests construct the
     // coordinator directly, so they must provide its adapter registry explicitly.
@@ -5275,5 +5407,139 @@ mod tests {
             },
         ));
         assert!(coordinator.register_region(invalid_rotation).is_err());
+    }
+
+    struct ParticipantSignals {
+        ready: Arc<AtomicBool>,
+        committed: Arc<AtomicUsize>,
+        rollback_calls: Arc<AtomicUsize>,
+    }
+
+    struct TestSceneParticipant {
+        signals: ParticipantSignals,
+        fail_commit: bool,
+        committed: bool,
+    }
+
+    impl super::SceneTransitionParticipant for TestSceneParticipant {
+        fn prepare(&mut self, _world: &mut World) -> Result<bool, String> {
+            Ok(self.signals.ready.load(Ordering::Acquire))
+        }
+
+        fn commit(&mut self, _world: &mut World) -> Result<(), String> {
+            self.signals.committed.fetch_add(1, Ordering::AcqRel);
+            self.committed = true;
+            if self.fail_commit {
+                Err("test participant rejected commit".to_owned())
+            } else {
+                Ok(())
+            }
+        }
+
+        fn rollback(&mut self, _world: &mut World) {
+            self.signals.rollback_calls.fetch_add(1, Ordering::AcqRel);
+            if self.committed {
+                self.signals.committed.fetch_sub(1, Ordering::AcqRel);
+                self.committed = false;
+            }
+        }
+    }
+
+    fn participant_signals(ready: bool) -> ParticipantSignals {
+        ParticipantSignals {
+            ready: Arc::new(AtomicBool::new(ready)),
+            committed: Arc::new(AtomicUsize::new(0)),
+            rollback_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn participant(signals: &ParticipantSignals, fail_commit: bool) -> TestSceneParticipant {
+        TestSceneParticipant {
+            signals: ParticipantSignals {
+                ready: Arc::clone(&signals.ready),
+                committed: Arc::clone(&signals.committed),
+                rollback_calls: Arc::clone(&signals.rollback_calls),
+            },
+            fail_commit,
+            committed: false,
+        }
+    }
+
+    #[test]
+    fn scene_transition_participant_readiness_holds_commit_until_all_are_ready() {
+        use super::{SceneDefinition, SceneId};
+
+        let mut coordinator = StreamingCoordinator::default();
+        coordinator
+            .register_region(region_with_id("txn-ready-a"))
+            .unwrap();
+        coordinator
+            .register_scene(SceneDefinition::new(
+                "txn-ready-scene",
+                "Transaction readiness",
+                ["txn-ready-a"],
+            ))
+            .unwrap();
+        let scene = SceneId::new("txn-ready-scene");
+        let signals = participant_signals(false);
+        coordinator
+            .register_scene_transition_participant(&scene, participant(&signals, false))
+            .unwrap();
+        let mut world = test_world();
+        let scene_set = std::collections::BTreeSet::from([scene.clone()]);
+
+        assert!(!coordinator
+            .prepare_and_commit_scene_participants(&mut world, &scene_set)
+            .unwrap());
+        assert_eq!(signals.committed.load(Ordering::Acquire), 0);
+        assert_eq!(signals.rollback_calls.load(Ordering::Acquire), 0);
+
+        signals.ready.store(true, Ordering::Release);
+        assert!(coordinator
+            .prepare_and_commit_scene_participants(&mut world, &scene_set)
+            .unwrap());
+        assert_eq!(signals.committed.load(Ordering::Acquire), 1);
+        // Successful one-shot participants are removed from the pending transaction registry.
+        assert!(coordinator
+            .prepare_and_commit_scene_participants(&mut world, &scene_set)
+            .unwrap());
+        assert_eq!(signals.committed.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn scene_transition_commit_failure_rolls_back_every_participant_in_reverse_transaction() {
+        use super::{SceneDefinition, SceneId};
+
+        let mut coordinator = StreamingCoordinator::default();
+        coordinator
+            .register_region(region_with_id("txn-rollback-a"))
+            .unwrap();
+        coordinator
+            .register_scene(SceneDefinition::new(
+                "txn-rollback-scene",
+                "Transaction rollback",
+                ["txn-rollback-a"],
+            ))
+            .unwrap();
+        let scene = SceneId::new("txn-rollback-scene");
+        let first = participant_signals(true);
+        let second = participant_signals(true);
+        coordinator
+            .register_scene_transition_participant(&scene, participant(&first, false))
+            .unwrap();
+        coordinator
+            .register_scene_transition_participant(&scene, participant(&second, true))
+            .unwrap();
+        let mut world = test_world();
+        let scene_set = std::collections::BTreeSet::from([scene]);
+
+        let error = coordinator
+            .prepare_and_commit_scene_participants(&mut world, &scene_set)
+            .unwrap_err();
+        assert!(error.contains("commit failed"));
+        assert_eq!(first.committed.load(Ordering::Acquire), 0);
+        assert_eq!(second.committed.load(Ordering::Acquire), 0);
+        assert_eq!(first.rollback_calls.load(Ordering::Acquire), 1);
+        assert_eq!(second.rollback_calls.load(Ordering::Acquire), 1);
     }
 }
