@@ -3,9 +3,9 @@
 //! `World` knows nothing about rendering, players or enemies; everything else
 //! asks it questions ("is this tile open?", "what does this ray hit?").
 
-use engine_math::Rng;
-use plugin_voxel::{ChunkedVoxelWorld, VoxelWorld};
+use ribbon_math::Rng;
 use std::ops::Deref;
+use studs_voxel::{ChunkedVoxelWorld, VoxelWorld};
 
 pub const CELLS: usize = 10; // maze is CELLS x CELLS cells, each 2x2 tiles with 1-tile walls
 pub const X_BLOCKS: usize = CELLS * 3 + 1;
@@ -20,7 +20,7 @@ pub const CEIL: u8 = b'c';
 
 /// STUDS maze data backed by the engine's mutable, chunked voxel world.
 /// The maze generator owns block meanings and layout; chunk invalidation and meshing
-/// remain in `plugin_voxel` and the GPU upload path remains in `plugin_render3d`.
+/// remain in `studs_voxel` and the GPU upload path remains in `ribbon_plugin_render3d`.
 pub struct World(ChunkedVoxelWorld);
 
 /// First tile (x or y) of maze cell `c`.
@@ -58,10 +58,10 @@ impl World {
 
     pub fn cast(
         &self,
-        origin: engine_math::Vect,
-        dir: engine_math::Vect,
+        origin: ribbon_math::Vect,
+        dir: ribbon_math::Vect,
         max_dist: f32,
-    ) -> Option<plugin_voxel::Hit> {
+    ) -> Option<studs_voxel::Hit> {
         self.0.cast(origin, dir, max_dist, AIR)
     }
 

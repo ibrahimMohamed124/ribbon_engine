@@ -1,0 +1,8 @@
+(
+    prefab: (
+        format_version: 1,
+        name: "North Path",
+        entities: [],
+    ),
+    metadata: {},
+)

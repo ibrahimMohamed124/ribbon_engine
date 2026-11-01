@@ -13,26 +13,29 @@ path = "src/main.rs"
 
 [features]
 default = ["audio", "gpu"]
-audio = ["plugin_audio/audio"]
-gpu = ["plugin_rendering/gpu", "dep:plugin_render3d"]
+audio = ["ribbon_plugin_audio/audio"]
+# STUDS GPU rendering is the engine's mesh renderer; do not enable the legacy raycaster backend.
+gpu = ["dep:ribbon_plugin_render3d", "dep:studs_voxel_gpu"]
 
 [dependencies]
-engine_app = { path = "../../crates/engine_app" }
-engine_events = { path = "../../crates/engine_events" }
-engine_plugins = { path = "../../crates/engine_plugins" }
-engine_scene = { path = "../../crates/engine_scene" }
-engine_math = { path = "../../crates/engine_math" }
-engine_platform = { path = "../../crates/engine_platform" }
-engine_render = { path = "../../crates/engine_render", default-features = false }
-plugin_audio = { path = "../../plugins/audio", default-features = false }
-plugin_physics = { path = "../../plugins/physics" }
-plugin_voxel = { path = "../../plugins/voxel" }
-plugin_rendering = { path = "../../plugins/rendering", default-features = false, features = ["cpu"] }
-plugin_render3d = { path = "../../plugins/render3d", optional = true }
+ribbon_app = { path = "../../crates/app" }
+ribbon_events = { path = "../../crates/events" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_scene = { path = "../../crates/scene" }
+ribbon_math = { path = "../../crates/math" }
+ribbon_platform = { path = "../../crates/platform" }
+ribbon_render = { path = "../../crates/render", default-features = false }
+ribbon_plugin_audio = { path = "../../plugins/audio", default-features = false }
+studs_voxel = { path = "crates/studs_voxel" }
+studs_cpu_renderer = { path = "crates/studs_cpu_renderer", default-features = false, features = ["cpu"] }
+ribbon_plugin_render3d = { path = "../../plugins/render3d", optional = true }
+studs_voxel_gpu = { path = "crates/studs_voxel_gpu", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
-# Existing audio decode integration coverage still reads this compatibility helper; runtime code
-# no longer depends on the immediate-mode platform runner.
-voxelworks-platform = { path = "../../engine/crates/platform", default-features = false, features = ["audio"] }
-voxelworks-render-cpu = { path = "../../engine/crates/render-cpu" }
+# The legacy decoder is only used by the audio integration test to measure the
+# bundled WAV assets. Keep Rodio out of normal STUDS builds while explicitly
+# enabling the compatibility module for test targets. Cargo unifies these
+# features with the normal ribbon_plugin_audio dependency only during tests.
+ribbon_plugin_audio = { path = "../../plugins/audio", default-features = false, features = ["rodio-compat"] }
+

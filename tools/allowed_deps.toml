@@ -1,162 +1,162 @@
-# Allowed direct dependency edges. Legacy tables are removed as crates migrate.
+# Explicit allowed direct dependency edges for every workspace package. Wildcard allowances are forbidden.
 [allowed]
 
-[allowed."engine_math"]
+[allowed."ribbon_math"]
 workspace = []
 external = []
 
-[allowed."engine_ecs"]
+[allowed."ribbon_ecs"]
 workspace = []
 external = ["hecs"]
 
-[allowed."engine_events"]
-workspace = ["engine_ecs"]
+[allowed."ribbon_events"]
+workspace = ["ribbon_ecs"]
 external = []
 
-[allowed."engine_schedule"]
-workspace = ["engine_ecs"]
+[allowed."ribbon_schedule"]
+workspace = ["ribbon_ecs"]
 external = []
 
-[allowed."engine_reflect"]
-workspace = ["engine_ecs"]
+[allowed."ribbon_reflect"]
+workspace = ["ribbon_ecs"]
 external = ["serde"]
 
-[allowed."engine_app"]
-workspace = ["engine_ecs", "engine_events", "engine_schedule", "engine_math"]
+[allowed."ribbon_app"]
+workspace = ["ribbon_ecs", "ribbon_events", "ribbon_schedule", "ribbon_math"]
 external = []
 
-[allowed."engine_plugins"]
-workspace = ["engine_app"]
+[allowed."ribbon_plugins"]
+workspace = ["ribbon_app"]
 external = []
 
-[allowed."engine_platform"]
-workspace = ["engine_app", "engine_plugins", "engine_events", "engine_math"]
+[allowed."ribbon_platform"]
+workspace = ["ribbon_app", "ribbon_plugins", "ribbon_events", "ribbon_math", "ribbon_input"]
 external = ["winit", "softbuffer"]
 
-[allowed."engine_assets"]
-workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_events"]
+[allowed."ribbon_assets"]
+workspace = ["ribbon_app", "ribbon_plugins", "ribbon_events"]
 external = []
 
-[allowed."engine_scene"]
-workspace = ["engine_ecs", "engine_reflect", "engine_math", "engine_app", "engine_plugins"]
+[allowed."ribbon_scene"]
+workspace = ["ribbon_ecs", "ribbon_reflect", "ribbon_math", "ribbon_app", "ribbon_plugins"]
 external = ["serde", "ron", "glam"]
 
-[allowed."engine_render"]
-workspace = ["engine_app", "engine_plugins", "engine_platform", "engine_assets", "engine_math"]
+[allowed."ribbon_render"]
+workspace = ["ribbon_app", "ribbon_plugins", "ribbon_platform", "ribbon_assets", "ribbon_math", "ribbon_profiling"]
 external = ["wgpu", "pollster"]
 
-[allowed."engine_commands"]
-workspace = ["engine_ecs", "engine_reflect", "engine_scene"]
+[allowed."ribbon_commands"]
+workspace = ["ribbon_ecs", "ribbon_reflect", "ribbon_scene"]
 external = []
 
-[allowed."engine_editor"]
-workspace = ["engine_app", "engine_plugins", "engine_platform", "engine_render", "engine_reflect", "engine_commands", "engine_scene", "engine_ecs", "engine_math"]
+[allowed."ribbon_editor"]
+workspace = ["ribbon_app", "ribbon_plugins", "ribbon_platform", "ribbon_render", "ribbon_reflect", "ribbon_commands", "ribbon_scene", "ribbon_ecs", "ribbon_math"]
 external = []
 
-[allowed."plugin_voxel"]
-workspace = ["engine_math"]
+[allowed."studs_voxel"]
+workspace = ["ribbon_math"]
 external = []
 
-[allowed."plugin_physics"]
-workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_math", "engine_scene", "plugin_voxel"]
-external = []
+[allowed."ribbon_plugin_physics"]
+workspace = ["ribbon_reflect", "ribbon_app", "ribbon_ecs", "ribbon_events", "ribbon_plugins", "ribbon_scene"]
+external = ["glam", "rapier3d", "crossbeam-channel"]
 
-[allowed."plugin_rendering"]
-workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_events", "engine_assets", "engine_platform", "engine_render", "engine_scene", "engine_math", "plugin_voxel"]
-external = ["rayon", "wgpu", "pollster", "bytemuck"]
+[allowed."ribbon_plugin_streaming"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_ecs", "ribbon_plugins", "ribbon_scene", "ribbon_reflect", "ribbon_render", "ribbon_plugin_gltf", "ribbon_plugin_render3d", "ribbon_plugin_physics"]
+external = ["glam", "ron", "serde"]
 
-[allowed."plugin_animation"]
-workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_math"]
-external = []
+[allowed."studs_cpu_renderer"]
+workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_events", "ribbon_assets", "ribbon_platform", "ribbon_render", "ribbon_scene", "ribbon_math", "studs_voxel"]
+external = ["rayon"]
 
-[allowed."plugin_audio"]
-workspace = ["engine_app", "engine_plugins", "engine_ecs", "engine_events", "engine_assets", "engine_math"]
-external = ["rodio"]
+[allowed."ribbon_plugin_animation"]
+workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_math", "ribbon_assets", "ribbon_plugin_gltf", "ribbon_plugin_render3d"]
+external = ["serde", "ron", "glam"]
 
-[allowed."plugin_editor_tools"]
-workspace = ["engine_editor", "engine_commands", "engine_reflect", "engine_scene", "engine_ecs", "engine_app", "engine_plugins", "engine_render", "engine_math"]
+[allowed."ribbon_plugin_audio"]
+workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_events", "ribbon_math", "ribbon_assets", "ribbon_scene"]
+external = ["kira", "rodio"]
+
+[allowed."ribbon_plugin_editor_tools"]
+workspace = ["ribbon_editor", "ribbon_commands", "ribbon_reflect", "ribbon_scene", "ribbon_ecs", "ribbon_app", "ribbon_plugins", "ribbon_render", "ribbon_math", "ribbon_plugin_streaming", "ribbon_assets", "ribbon_plugin_render3d"]
 external = []
 
 [allowed."hello_ecs"]
-workspace = ["engine_app", "engine_ecs", "engine_schedule"]
+workspace = ["ribbon_app", "ribbon_ecs", "ribbon_schedule"]
 external = []
 
 [allowed."voxel_room"]
-workspace = ["engine_app", "engine_assets", "engine_ecs", "engine_math", "engine_platform", "engine_plugins", "engine_scene", "engine_render", "engine_reflect", "plugin_rendering", "plugin_voxel"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_ecs", "ribbon_math", "ribbon_platform", "ribbon_plugins", "ribbon_scene", "ribbon_render", "ribbon_reflect", "studs_cpu_renderer", "studs_voxel"]
 external = ["ron"]
 
 [allowed."voxel_mesh_showcase"]
-workspace = ["engine_app", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_render3d", "plugin_voxel"]
+workspace = ["ribbon_app", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_render3d", "studs_voxel"]
 external = []
 
-[allowed."plugin_render3d"]
-workspace = ["engine_app", "engine_assets", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_voxel"]
-external = ["bytemuck", "glam", "wgpu", "pollster"]
+[allowed."ribbon_plugin_render3d"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_ecs", "ribbon_plugins", "ribbon_reflect", "ribbon_render", "ribbon_scene", "ribbon_plugin_gltf", "ribbon_render_contracts"]
+external = ["bytemuck", "glam", "wgpu", "pollster", "naga", "png"]
 
-[allowed."plugin_gltf"]
-workspace = ["engine_assets"]
+[allowed."ribbon_plugin_gltf"]
+workspace = ["ribbon_assets"]
 external = ["glam", "gltf"]
 
+[allowed."athar"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_ecs", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_gltf", "ribbon_plugin_physics", "ribbon_plugin_render3d", "ribbon_plugin_streaming", "ribbon_plugin_weather"]
+external = ["ron", "serde"]
+
 [allowed."model_viewer"]
-workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_render3d"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_gltf", "ribbon_plugin_render3d"]
 external = []
 
 [allowed."graphics_showcase"]
-workspace = ["engine_app", "engine_assets", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_gltf", "plugin_render3d"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_gltf", "ribbon_plugin_render3d"]
 external = []
 
 [allowed."scene_hierarchy_3d"]
-workspace = ["engine_app", "engine_ecs", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_render3d"]
+workspace = ["ribbon_app", "ribbon_ecs", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_render3d"]
 external = []
 
 [allowed."cube_spin"]
-workspace = ["engine_app", "engine_events", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_render3d"]
+workspace = ["ribbon_app", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_render3d"]
 external = []
 
 [allowed."gpu_window"]
-workspace = ["engine_app", "engine_events", "engine_platform", "engine_plugins", "engine_render"]
+workspace = ["ribbon_app", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render"]
 external = []
 
 [allowed."editor_demo"]
-workspace = ["engine_app", "engine_ecs", "engine_editor", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_rendering", "plugin_editor_tools"]
+workspace = ["ribbon_app", "ribbon_ecs", "ribbon_editor", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "studs_cpu_renderer", "ribbon_plugin_editor_tools"]
 external = []
 
-[allowed.legacy]
-
-[allowed.legacy."voxelworks-core"]
-workspace = ["engine_app", "engine_math", "engine_platform", "plugin_voxel"]
-external = []
-
-[allowed.legacy."voxelworks-scene"]
-workspace = ["plugin_rendering"]
-external = []
-
-[allowed.legacy."voxelworks-api"]
-workspace = ["engine_platform", "engine_render", "voxelworks-core", "voxelworks-scene"]
-external = []
-
-[allowed.legacy."voxelworks-render-cpu"]
-workspace = ["plugin_rendering", "voxelworks-api", "voxelworks-core", "voxelworks-scene"]
-external = ["rayon"]
-
-[allowed.legacy."voxelworks-render-gpu"]
-workspace = ["plugin_rendering"]
-external = []
-
-[allowed.legacy."voxelworks-platform"]
-workspace = ["engine_platform", "engine_render", "plugin_audio", "voxelworks-api", "voxelworks-core", "voxelworks-render-cpu", "voxelworks-render-gpu", "voxelworks-scene"]
-external = ["softbuffer", "winit"]
-
-[allowed.legacy."voxelworks-minimal"]
-workspace = ["voxelworks-api", "voxelworks-core", "voxelworks-platform", "voxelworks-render-cpu", "voxelworks-render-gpu", "voxelworks-scene"]
-external = []
-
-# STUDS runtime now uses the ECS runner; legacy crates remain dev-dependencies
-# for existing compatibility tests/examples until Phase 9 steps 6-7 are completed.
-[allowed.legacy."studs"]
-workspace = ["engine_app", "engine_events", "engine_math", "engine_platform", "engine_plugins", "engine_render", "engine_scene", "plugin_audio", "plugin_physics", "plugin_render3d", "plugin_rendering", "plugin_voxel", "voxelworks-platform", "voxelworks-render-cpu"]
+[allowed."studs"]
+workspace = ["ribbon_app", "ribbon_events", "ribbon_math", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_audio", "ribbon_plugin_render3d", "studs_cpu_renderer", "studs_voxel", "studs_voxel_gpu"]
 external = ["image"]
 
-[allowed.legacy."studs-bake-sprites"]
+[allowed."studs-bake-sprites"]
 workspace = []
 external = ["image", "ufbx"]
+
+[allowed."ribbon_input"]
+workspace = []
+external = []
+
+[allowed."ribbon_profiling"]
+workspace = []
+external = []
+
+[allowed."ribbon_render_contracts"]
+workspace = ["ribbon_scene", "ribbon_reflect"]
+external = ["glam"]
+
+[allowed."ribbon_plugin_weather"]
+workspace = ["ribbon_app", "ribbon_ecs", "ribbon_plugins", "ribbon_render_contracts"]
+external = ["glam"]
+
+[allowed."studs_voxel_gpu"]
+workspace = ["ribbon_plugin_render3d", "studs_voxel"]
+external = []
+
+[allowed."ribbon_streaming_stress"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_gltf", "ribbon_plugin_physics", "ribbon_plugin_render3d", "ribbon_plugin_streaming"]
+external = ["glam"]

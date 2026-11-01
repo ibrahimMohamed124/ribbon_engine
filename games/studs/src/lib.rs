@@ -1,4 +1,4 @@
-//! STUDS - a first-person horror game built on the Voxelworks Engine.
+//! STUDS - a first-person horror game built on the Ribbon Engine.
 //!
 //! Module map (dependencies flow downwards only):
 //!
@@ -14,7 +14,7 @@
 //!     audio.rs      backend-agnostic sound events
 //!     ui/           menus, controls, settings, and pixel UI theme
 //!     settings.rs   persisted user settings
-//!   engine_math, plugin_voxel   shared math and voxel storage
+//!   ribbon_math, studs_voxel   shared math and voxel storage
 //! ```
 
 pub mod app;

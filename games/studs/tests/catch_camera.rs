@@ -1,4 +1,4 @@
-use engine_math::Vect;
+use ribbon_math::Vect;
 use studs::config::DEFAULT_HFOV;
 use studs::{
     enemy::EnemyAnimation,

@@ -1,4 +1,4 @@
-use engine_render::Framebuffer;
+use ribbon_render::Framebuffer;
 use studs::game::{Difficulty, Game};
 use studs::input::Action;
 use studs::input::Key;

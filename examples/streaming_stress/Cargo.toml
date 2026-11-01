@@ -1,0 +1,19 @@
+[package]
+name = "ribbon_streaming_stress"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+glam = "0.30"
+ribbon_app = { path = "../../crates/app" }
+ribbon_assets = { path = "../../crates/assets" }
+ribbon_events = { path = "../../crates/events" }
+ribbon_platform = { path = "../../crates/platform" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_render = { path = "../../crates/render" }
+ribbon_scene = { path = "../../crates/scene" }
+ribbon_plugin_gltf = { path = "../../plugins/gltf" }
+ribbon_plugin_physics = { path = "../../plugins/physics" }
+ribbon_plugin_render3d = { path = "../../plugins/render3d" }
+ribbon_plugin_streaming = { path = "../../plugins/streaming" }

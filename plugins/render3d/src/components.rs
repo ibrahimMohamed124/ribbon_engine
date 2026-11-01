@@ -1,95 +1,124 @@
-//! ECS render components. World space is right-handed and Y-up; a camera looks
-//! down its local -Z axis (the glTF convention). `Transform3D` is re-exported
-//! from `engine_scene` so rendering consumes the shared scene transform model.
+//! Compatibility module preserving the public renderer component paths.
 
-use engine_assets::Handle;
-pub use engine_scene::Transform3D;
-use glam::{Mat4, Vec3};
-use plugin_gltf::ModelAsset;
-use plugin_voxel::VoxelChunkMesh;
+use crate::gpu_streaming::{
+    GpuResourceHandle, GpuResourceLease, GpuResourceWarmup, GpuResourceWarmupStatus,
+};
+use crate::mesh::MeshData;
+use crate::renderer::{MaterialId, MeshId};
+use glam::Mat4;
+use ribbon_assets::Handle;
+use ribbon_plugin_gltf::ModelAsset;
+pub use ribbon_render_contracts::{
+    BuiltinMesh, Camera3D, FogSettings, MeshInstance, PointLight, SpotLight, SunLight, Transform3D,
+};
 use std::sync::Arc;
 
-/// Perspective camera. The first entity with a `Camera3D` and local/global 3D transforms is used.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Camera3D {
-    /// Vertical field of view in radians.
-    pub fov_y: f32,
-    /// Near clip distance.
-    pub near: f32,
-    /// Far clip distance.
-    pub far: f32,
-}
+/// Marker for render entities that have been spawned as part of a streaming activation but have
+/// not reached their region's visibility commit yet. The render extraction pass omits marked
+/// entities; physics and other ECS systems continue to observe them normally.
+///
+/// Streaming removes this marker from every region-owned visual entity in one Update once all
+/// required visuals and colliders are ready. Applications may also use it to stage their own
+/// renderer-facing entity groups.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StagedRender;
 
-impl Default for Camera3D {
-    fn default() -> Self {
-        Self {
-            fov_y: 60_f32.to_radians(),
-            near: 0.1,
-            far: 200.0,
-        }
-    }
-}
-
-impl Camera3D {
-    /// Projection matrix with a 0..1 depth range.
-    pub fn projection(&self, aspect: f32) -> Mat4 {
-        Mat4::perspective_rh(self.fov_y, aspect, self.near, self.far)
-    }
-}
-
-/// Meshes built into the renderer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BuiltinMesh {
-    /// Unit cube centered on the origin.
-    Cube,
-}
-
-/// Draw `mesh` with a flat base color (linear RGB) at the entity's transform.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MeshInstance {
-    /// Mesh to draw.
-    pub mesh: BuiltinMesh,
-    /// Linear RGB base color.
+/// An instance of caller-owned indexed triangle geometry rendered by the native mesh pass.
+///
+/// Geometry is reference-counted so multiple entities can share one CPU mesh and the renderer
+/// can retain its GPU upload until the last placement disappears. This type is renderer-generic;
+/// it deliberately remains independent of game-specific mesh sources and asset formats.
+#[derive(Clone)]
+pub struct DynamicMeshInstance3D {
+    /// Indexed triangle geometry in object-local coordinates.
+    pub mesh: Arc<MeshData>,
+    /// Linear RGB tint multiplier.
     pub color: [f32; 3],
+}
+
+/// Instance of independently warmed GPU mesh/material resources.
+///
+/// The component owns both warmup leases. Despawning the entity releases those claims, and the
+/// renderer drops the GPU objects on its owning thread after the final extracted-frame lease is
+/// gone. `Transform3D` remains a separate ECS component, just like other 3D render instances.
+#[derive(Clone, Debug)]
+pub struct GpuMeshInstance3D {
+    /// Renderer-owned mesh handle.
+    pub mesh: MeshId,
+    /// Renderer-owned PBR material handle.
+    pub material: MaterialId,
+    /// Linear RGB tint multiplier.
+    pub color: [f32; 3],
+    pub(crate) _mesh_lease: GpuResourceLease,
+    pub(crate) _material_lease: GpuResourceLease,
+}
+
+impl GpuMeshInstance3D {
+    /// Build an ECS instance only after both generic GPU warmup requests passed asynchronous
+    /// renderer validation. The instance clones the leases so caller-side handles may be dropped.
+    pub fn from_ready_leases(
+        warmup: &GpuResourceWarmup,
+        mesh_lease: &GpuResourceLease,
+        material_lease: &GpuResourceLease,
+        color: [f32; 3],
+    ) -> Result<Self, String> {
+        let mesh = match warmup.status(mesh_lease) {
+            Some(GpuResourceWarmupStatus::Ready(GpuResourceHandle::Mesh(mesh))) => mesh,
+            Some(GpuResourceWarmupStatus::Failed(error)) => {
+                return Err(format!("mesh GPU warmup failed: {error}"));
+            }
+            Some(status) => return Err(format!("mesh GPU resource is not ready: {status:?}")),
+            None => return Err("mesh GPU warmup lease is no longer registered".to_owned()),
+        };
+        let material = match warmup.status(material_lease) {
+            Some(GpuResourceWarmupStatus::Ready(GpuResourceHandle::Material(material))) => material,
+            Some(GpuResourceWarmupStatus::Failed(error)) => {
+                return Err(format!("material GPU warmup failed: {error}"));
+            }
+            Some(status) => return Err(format!("material GPU resource is not ready: {status:?}")),
+            None => return Err("material GPU warmup lease is no longer registered".to_owned()),
+        };
+        Ok(Self {
+            mesh,
+            material,
+            color,
+            _mesh_lease: mesh_lease.clone(),
+            _material_lease: material_lease.clone(),
+        })
+    }
 }
 
 /// Draw every primitive of a loaded glTF model at the entity's transform.
 ///
 /// The model is drawn once its asset has finished loading in the `AssetServer`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ModelInstance {
     /// Handle of the model in the asset server.
     pub model: Handle<ModelAsset>,
 }
 
-/// Draw a greedy-meshed voxel chunk through the native 3D mesh pipeline.
+/// Evaluated per-model-node skin palettes produced by `AnimationPlugin`.
 ///
-/// The shared mesh data is immutable; multiple entities may instance the same chunk mesh.
+/// `node_palettes[i]` corresponds to `ModelAsset::nodes[i]`; a skinned placement contains
+/// model-local joint matrices (mesh-node inverse * joint-global * inverse-bind). Palettes are
+/// immutable and shared with extracted render snapshots so the GPU upload sees a stable pose.
 #[derive(Clone, Debug)]
-pub struct VoxelMeshInstance3D {
-    /// Greedy surface mesh generated by `plugin_voxel`.
-    pub mesh: Arc<VoxelChunkMesh>,
-    /// Linear RGB tint applied to the block mesh.
-    pub color: [f32; 3],
+pub struct SkeletalPose {
+    pub model_asset_id: u64,
+    pub model_generation: u32,
+    /// Animated model-space global transforms indexed by original glTF node index.
+    pub node_global_transforms: Arc<[Mat4]>,
+    /// Mesh-local joint palettes indexed by `ModelAsset::nodes` placement index.
+    pub node_palettes: Arc<[Option<Arc<[Mat4]>>]>,
 }
 
-/// Directional light plus constant ambient term.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SunLight {
-    /// Direction the light travels (from the sun toward the scene).
-    pub direction: Vec3,
-    /// Linear RGB light color.
-    pub color: Vec3,
-    /// Linear RGB ambient light.
-    pub ambient: Vec3,
-}
-
-impl Default for SunLight {
+impl Default for SkeletalPose {
     fn default() -> Self {
         Self {
-            direction: Vec3::new(-0.4, -0.8, -0.45).normalize(),
-            color: Vec3::new(1.0, 0.96, 0.9),
-            ambient: Vec3::splat(0.12),
+            model_asset_id: 0,
+            model_generation: 0,
+            node_global_transforms: Arc::<[Mat4]>::from(Vec::new().into_boxed_slice()),
+            node_palettes: Arc::<[Option<Arc<[Mat4]>>]>::from(Vec::new().into_boxed_slice()),
         }
     }
 }

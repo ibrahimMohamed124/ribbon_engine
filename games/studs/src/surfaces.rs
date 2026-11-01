@@ -4,29 +4,18 @@ use std::sync::OnceLock;
 
 pub use crate::entities::ENEMY_BOUNDS;
 use crate::entities::{PAGE, WARDEN};
-use engine_math::{hash4, Vect};
-use plugin_rendering::cpu::render::entities::EntitySurface;
-use plugin_rendering::cpu::render::lighting::SurfaceShader;
-use plugin_rendering::entities::{EntityInstance, EntityKind};
-use plugin_rendering::texture::{
+use ribbon_math::{hash4, Vect};
+use studs_cpu_renderer::cpu::render::entities::EntitySurface;
+use studs_cpu_renderer::cpu::render::lighting::SurfaceShader;
+use studs_cpu_renderer::entities::{EntityInstance, EntityKind};
+use studs_cpu_renderer::texture::{
     PbrTextureSet, RgbaMipChain, RgbaMipLevel, SpriteAtlas, Texture, TextureColorSpace, TextureId,
 };
-use plugin_rendering::RenderStyle;
-use plugin_rendering::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
-use plugin_voxel::{face_uv, Hit};
+use studs_cpu_renderer::RenderStyle;
+use studs_cpu_renderer::{BaseAlbedoRule, Material, MaterialTable, TextureKind};
+use studs_voxel::{face_uv, Hit};
 
 use crate::level::{CEIL, FLOOR, WALL};
-#[cfg(feature = "gpu")]
-use crate::settings::VisualStyle;
-#[cfg(feature = "gpu")]
-use plugin_render3d::{TextureData, VoxelBlockMaterial};
-
-#[cfg(feature = "gpu")]
-static GPU_FLOOR_ALBEDO: OnceLock<Option<&'static [u8]>> = OnceLock::new();
-#[cfg(feature = "gpu")]
-static GPU_WALL_ALBEDO: OnceLock<Option<&'static [u8]>> = OnceLock::new();
-#[cfg(feature = "gpu")]
-static GPU_CEILING_ALBEDO: OnceLock<Option<&'static [u8]>> = OnceLock::new();
 
 pub struct StudsSurface;
 
@@ -204,81 +193,6 @@ fn asset_roots() -> Vec<std::path::PathBuf> {
     paths
 }
 
-/// Game-owned mapping from STUDS block IDs to materials consumed by the engine renderer.
-/// Geometry, texture upload, material sampling and mesh lifetime stay in `plugin_render3d`;
-/// only the game chooses its assets and per-style tint here.
-#[cfg(feature = "gpu")]
-pub(crate) fn studs_gpu_voxel_materials(style: VisualStyle) -> [VoxelBlockMaterial<'static>; 3] {
-    let (floor, wall, ceiling) = match style {
-        VisualStyle::Classic => ([0.88, 0.88, 0.88], [0.94, 0.94, 0.94], [0.82, 0.82, 0.82]),
-        VisualStyle::Moody => ([0.34, 0.38, 0.32], [0.58, 0.62, 0.52], [0.30, 0.33, 0.28]),
-        VisualStyle::Realistic => ([0.90, 0.90, 0.86], [0.96, 0.96, 0.92], [0.88, 0.88, 0.84]),
-    };
-    [
-        VoxelBlockMaterial {
-            block: FLOOR,
-            color: floor,
-            metallic: 0.0,
-            roughness: 0.9,
-            base_color_texture: gpu_albedo_texture("concrete_floor_worn_001", &GPU_FLOOR_ALBEDO),
-        },
-        VoxelBlockMaterial {
-            block: WALL,
-            color: wall,
-            metallic: 0.0,
-            roughness: 0.86,
-            base_color_texture: gpu_albedo_texture("concrete_wall_004", &GPU_WALL_ALBEDO),
-        },
-        VoxelBlockMaterial {
-            block: CEIL,
-            color: ceiling,
-            metallic: 0.0,
-            roughness: 0.94,
-            base_color_texture: gpu_albedo_texture("ceiling_interior", &GPU_CEILING_ALBEDO),
-        },
-    ]
-}
-
-#[cfg(feature = "gpu")]
-fn gpu_albedo_texture(
-    material_name: &str,
-    cache: &'static OnceLock<Option<&'static [u8]>>,
-) -> Option<TextureData<'static>> {
-    const SIZE: usize = 256;
-    const BYTES: usize = SIZE * SIZE * 4;
-    let data = (*cache.get_or_init(|| {
-        let path = asset_directories()
-            .into_iter()
-            .map(|root| root.join(material_name).join("albedo.rgba"))
-            .find(|path| path.is_file());
-        let Some(path) = path else {
-            eprintln!("warning: GPU albedo for '{material_name}' is missing; using the block tint");
-            return None;
-        };
-        let Ok(bytes) = std::fs::read(&path) else {
-            eprintln!(
-                "warning: failed to read GPU albedo '{}'; using the block tint",
-                path.display()
-            );
-            return None;
-        };
-        if bytes.len() != BYTES {
-            eprintln!(
-                "warning: GPU albedo '{}' has {} bytes, expected {BYTES}; using the block tint",
-                path.display(),
-                bytes.len()
-            );
-            return None;
-        }
-        Some(Box::leak(bytes.into_boxed_slice()) as &'static [u8])
-    }))?;
-    Some(TextureData {
-        width: SIZE as u32,
-        height: SIZE as u32,
-        rgba8: data,
-    })
-}
-
 impl StudsSurface {
     pub fn materials(&self) -> &'static MaterialTable {
         studs_material_table()
@@ -327,7 +241,7 @@ impl SurfaceShader for StudsSurface {
         if style.pbr_enabled {
             if let Some(set_id) = material.pbr_texture {
                 let (_, _, tint, alternate) =
-                    plugin_rendering::material::cell_uv(hit.cell, (0.0, 0.0));
+                    studs_cpu_renderer::material::cell_uv(hit.cell, (0.0, 0.0));
                 let selected_id = if material.cell_variation && alternate && set_id.0 == 1 {
                     TextureId(2)
                 } else {
@@ -336,7 +250,7 @@ impl SurfaceShader for StudsSurface {
                 if let Some(set) = materials.get_pbr_texture(selected_id) {
                     let (mut u, mut v) = face_uv(hit);
                     if material.cell_variation {
-                        let transformed = plugin_rendering::material::cell_uv(hit.cell, (u, v));
+                        let transformed = studs_cpu_renderer::material::cell_uv(hit.cell, (u, v));
                         u = transformed.0;
                         v = transformed.1;
                     }
@@ -535,9 +449,9 @@ pub fn page_view(pos: Vect, time: f32, index: f32) -> EntityInstance {
 #[cfg(test)]
 mod tests {
     use super::{apply_texture_modulation, wall_texture_modulation};
-    use engine_math::Vect;
-    use plugin_rendering::texture::Texture;
-    use plugin_voxel::Hit;
+    use ribbon_math::Vect;
+    use studs_cpu_renderer::texture::Texture;
+    use studs_voxel::Hit;
 
     #[test]
     fn texture_modulation_preserves_classic_at_zero_and_stays_moderate() {

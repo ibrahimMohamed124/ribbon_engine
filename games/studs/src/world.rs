@@ -3,4 +3,4 @@ pub use crate::level::{
     cell_center, origin, World, AIR, CEIL, CELLS, FLOOR, FLOOR_TOP, WALL, X_BLOCKS, Y_BLOCKS,
     Z_BLOCKS,
 };
-pub use plugin_voxel::Hit;
+pub use studs_voxel::Hit;

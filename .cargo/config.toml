@@ -1,0 +1,4 @@
+# Keep workspace builds within the memory budget used by Windows developer machines.
+# Override on the command line with `cargo -j N` when more parallelism is available.
+[build]
+jobs = 1

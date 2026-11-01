@@ -1,0 +1,9 @@
+[package]
+name = "ribbon_render_contracts"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_scene = { path = "../scene" }
+ribbon_reflect = { path = "../reflect" }
+glam = "0.30"

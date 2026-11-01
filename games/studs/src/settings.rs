@@ -46,7 +46,7 @@ impl VisualStyle {
         }
     }
 
-    pub fn render_style(self, quality: QualityPreset) -> plugin_rendering::RenderStyle {
+    pub fn render_style(self, quality: QualityPreset) -> studs_cpu_renderer::RenderStyle {
         let mut style = match self {
             Self::Classic => crate::styles::classic(),
             Self::Moody => crate::styles::moody(),

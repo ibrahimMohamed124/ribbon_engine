@@ -1,4 +1,4 @@
-use engine_math::{Rng, Vect};
+use ribbon_math::{Rng, Vect};
 use studs::enemy::bfs_next;
 use studs::world::{World, AIR, FLOOR, X_BLOCKS, Y_BLOCKS, Z_BLOCKS};
 

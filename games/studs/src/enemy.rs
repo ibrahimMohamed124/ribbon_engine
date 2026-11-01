@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use crate::world::{World, FLOOR_TOP, X_BLOCKS, Y_BLOCKS};
-use engine_math::{forward_vec, Angles, Vect};
+use ribbon_math::{forward_vec, Angles, Vect};
 
 pub const ENEMY_AWAKE_AFTER: f32 = 12.0; // seconds
 pub const ENEMY_BASE_SPEED: f32 = 3.6;

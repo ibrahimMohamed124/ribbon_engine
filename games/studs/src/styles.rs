@@ -1,4 +1,4 @@
-use plugin_rendering::{Palette, RenderStyle, Tonemap, RENDER_DIST};
+use studs_cpu_renderer::{Palette, RenderStyle, Tonemap, RENDER_DIST};
 
 pub fn classic() -> RenderStyle {
     RenderStyle::default()

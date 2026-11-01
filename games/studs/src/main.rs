@@ -1,13 +1,13 @@
 use std::error::Error;
 use std::io;
 
-use plugin_rendering::ecs::RenderBackend;
+use studs::app::StudsRendererMode;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut backend = if cfg!(feature = "gpu") {
-        RenderBackend::Gpu
+        StudsRendererMode::Gpu
     } else {
-        RenderBackend::Cpu
+        StudsRendererMode::Cpu
     };
     let mut seed = None;
     let mut args = std::env::args().skip(1);
@@ -60,13 +60,37 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn parse_backend(value: &str) -> Result<RenderBackend, io::Error> {
+fn parse_backend(value: &str) -> Result<StudsRendererMode, io::Error> {
     match value.to_ascii_lowercase().as_str() {
-        "cpu" => Ok(RenderBackend::Cpu),
-        "gpu" | "auto" => Ok(RenderBackend::Gpu),
+        "cpu" => Ok(StudsRendererMode::Cpu),
+        "gpu" | "auto" => Ok(StudsRendererMode::Gpu),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("invalid renderer '{value}'; expected cpu, gpu, or auto"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod renderer_argument_tests {
+    use super::{parse_backend, StudsRendererMode};
+
+    #[test]
+    fn cpu_argument_selects_cpu_backend() {
+        assert_eq!(parse_backend("cpu").unwrap(), StudsRendererMode::Cpu);
+        assert_eq!(parse_backend("CPU").unwrap(), StudsRendererMode::Cpu);
+    }
+
+    #[test]
+    fn gpu_and_auto_arguments_select_the_game_mesh_renderer_mode() {
+        assert_eq!(parse_backend("gpu").unwrap(), StudsRendererMode::Gpu);
+        assert_eq!(parse_backend("auto").unwrap(), StudsRendererMode::Gpu);
+        assert_eq!(parse_backend("AuTo").unwrap(), StudsRendererMode::Gpu);
+    }
+
+    #[test]
+    fn invalid_renderer_argument_is_rejected_with_expected_choices() {
+        let error = parse_backend("raycaster").expect_err("invalid renderer must be rejected");
+        assert!(error.to_string().contains("cpu, gpu, or auto"));
     }
 }

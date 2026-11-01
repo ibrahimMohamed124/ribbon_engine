@@ -1,4 +1,4 @@
-use engine_math::{Rng, Vect};
+use ribbon_math::{Rng, Vect};
 use studs::world::{World, AIR, X_BLOCKS, Y_BLOCKS, Z_BLOCKS};
 
 fn unit(rng: &mut Rng) -> f32 {

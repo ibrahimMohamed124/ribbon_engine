@@ -1,7 +1,16 @@
 /target/
+/profiles/
 /dist/
+/.github-actions-runner/
 /settings.cfg
 /games/studs/settings.cfg
 *.zip
 /games/studs/assets/source/
-scripts/
+/games/athar/assets/textures/source/
+
+# Python asset-generator caches
+__pycache__/
+*.pyc
+*.py[cod]
+/NONE
+*.pdb

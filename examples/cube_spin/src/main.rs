@@ -2,14 +2,14 @@
 //!
 //! Usage: `cargo run -p cube_spin [-- --frames N]`.
 
-use engine_app::{App, AppExit, Stage, Time, World};
-use engine_events::WorldEventsExt;
-use engine_platform::{PlatformConfig, PlatformPlugin};
-use engine_plugins::AppPluginExt;
-use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
-use engine_scene::ScenePlugin;
-use plugin_render3d::glam::{Quat, Vec3};
-use plugin_render3d::{BuiltinMesh, Camera3D, MeshInstance, Render3dPlugin, Transform3D};
+use ribbon_app::{App, AppExit, Stage, Time, World};
+use ribbon_events::WorldEventsExt;
+use ribbon_platform::{PlatformConfig, PlatformPlugin};
+use ribbon_plugin_render3d::glam::{Quat, Vec3};
+use ribbon_plugin_render3d::{BuiltinMesh, Camera3D, MeshInstance, Render3dPlugin, Transform3D};
+use ribbon_plugins::AppPluginExt;
+use ribbon_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use ribbon_scene::ScenePlugin;
 use std::error::Error;
 
 /// Radians per second around each axis.
@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let mut app = App::new();
     app.insert_resource(PlatformConfig {
-        title: "Voxelworks cube".to_owned(),
+        title: "Ribbon cube".to_owned(),
         width: 960,
         height: 540,
     });

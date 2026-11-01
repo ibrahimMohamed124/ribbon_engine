@@ -12,6 +12,10 @@ pub struct Vertex {
     pub normal: [f32; 3],
     /// Texture coordinate, origin at the top-left.
     pub uv: [f32; 2],
+    /// Eight 16-bit joint palette indices (glTF JOINTS_0 and JOINTS_1).
+    pub joints: [u16; 8],
+    /// Eight normalized linear-blend skinning weights (glTF WEIGHTS_0 and WEIGHTS_1).
+    pub weights: [f32; 8],
 }
 
 /// Vertices and 32-bit triangle indices (counter-clockwise front faces).
@@ -47,6 +51,8 @@ pub fn cube() -> MeshData {
                 ],
                 normal,
                 uv: [cu + 0.5, 0.5 - cv],
+                joints: [0; 8],
+                weights: [0.0; 8],
             });
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);

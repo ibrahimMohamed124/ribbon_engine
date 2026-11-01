@@ -1,0 +1,18 @@
+[package]
+name = "voxel_room"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_app = { path = "../../../../crates/app" }
+ribbon_assets = { path = "../../../../crates/assets" }
+ribbon_ecs = { path = "../../../../crates/ecs" }
+ribbon_math = { path = "../../../../crates/math" }
+ribbon_platform = { path = "../../../../crates/platform" }
+ribbon_plugins = { path = "../../../../crates/plugins" }
+ribbon_scene = { path = "../../../../crates/scene" }
+ribbon_render = { path = "../../../../crates/render" }
+ribbon_reflect = { path = "../../../../crates/reflect" }
+studs_cpu_renderer = { path = "../../crates/studs_cpu_renderer" }
+studs_voxel = { path = "../../crates/studs_voxel" }
+ron = "0.10"

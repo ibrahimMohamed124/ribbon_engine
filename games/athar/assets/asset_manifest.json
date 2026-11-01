@@ -1,0 +1,519 @@
+{
+  "schema_version": 1,
+  "notice": "Downloaded 9/9 original-room 1K source maps and 0/9 dedicated village maps from the official Poly Haven API. Village models reuse bundled CC0 room maps when dedicated maps are unavailable; generated maps are marked PLACEHOLDER.",
+  "references": [
+    {
+      "path": "games/athar/assets/reference/horror_room_concept_reference.png",
+      "sha256": "acbb547a7809079004c77203a96b2f69b201d0c4af4a8371a9cff0b7fde31044",
+      "status": "GENERATED_CONCEPT_REFERENCE",
+      "note": "Visual target reference only; not loaded by the game at runtime."
+    }
+  ],
+  "sources": [
+    {
+      "asset": "Concrete Wall 003",
+      "url": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal",
+      "recommended_resolution": "1K",
+      "replacements": [
+        "concrete_wall_003_diff_1k.jpg",
+        "concrete_wall_003_arm_1k.jpg",
+        "concrete_wall_003_nor_gl_1k.jpg"
+      ],
+      "maps": [
+        "diff",
+        "arm",
+        "nor_gl"
+      ],
+      "maps_present": 3,
+      "status": "DOWNLOADED"
+    },
+    {
+      "asset": "Concrete Floor Damaged 01",
+      "url": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "recommended_resolution": "1K",
+      "replacements": [
+        "concrete_floor_damaged_01_diff_1k.jpg",
+        "concrete_floor_damaged_01_arm_1k.jpg",
+        "concrete_floor_damaged_01_nor_gl_1k.jpg"
+      ],
+      "maps": [
+        "diff",
+        "arm",
+        "nor_gl"
+      ],
+      "maps_present": 3,
+      "status": "DOWNLOADED"
+    },
+    {
+      "asset": "Rusty Metal 02",
+      "url": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "recommended_resolution": "1K",
+      "replacements": [
+        "rusty_metal_02_diff_1k.jpg",
+        "rusty_metal_02_arm_1k.jpg",
+        "rusty_metal_02_nor_gl_1k.jpg"
+      ],
+      "maps": [
+        "diff",
+        "arm",
+        "nor_gl"
+      ],
+      "maps_present": 3,
+      "status": "DOWNLOADED"
+    },
+    {
+      "asset": "Cobblestone Floor 001",
+      "url": "https://polyhaven.com/a/cobblestone_floor_001",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal",
+      "recommended_resolution": "1K",
+      "replacements": [
+        "cobblestone_floor_001_diff_1k.jpg",
+        "cobblestone_floor_001_arm_1k.jpg",
+        "cobblestone_floor_001_nor_gl_1k.jpg"
+      ],
+      "maps": [
+        "diff",
+        "arm",
+        "nor_gl"
+      ],
+      "maps_present": 0,
+      "status": "OPTIONAL_MAPS_UNAVAILABLE"
+    },
+    {
+      "asset": "Roof Tiles",
+      "url": "https://polyhaven.com/a/roof_tiles",
+      "creator": "Stephan Seeliger",
+      "license": "CC0 1.0 Universal",
+      "recommended_resolution": "1K",
+      "replacements": [
+        "roof_tiles_diff_1k.jpg",
+        "roof_tiles_arm_1k.jpg",
+        "roof_tiles_nor_gl_1k.jpg"
+      ],
+      "maps": [
+        "diff",
+        "arm",
+        "nor_gl"
+      ],
+      "maps_present": 0,
+      "status": "OPTIONAL_MAPS_UNAVAILABLE"
+    },
+    {
+      "asset": "Wood Planks",
+      "url": "https://polyhaven.com/a/wood_planks",
+      "creator": "Amal Kumar",
+      "license": "CC0 1.0 Universal",
+      "recommended_resolution": "1K",
+      "replacements": [
+        "wood_planks_diff_1k.jpg",
+        "wood_planks_arm_1k.jpg",
+        "wood_planks_nor_gl_1k.jpg"
+      ],
+      "maps": [
+        "diff",
+        "arm",
+        "nor_gl"
+      ],
+      "maps_present": 0,
+      "status": "OPTIONAL_MAPS_UNAVAILABLE"
+    }
+  ],
+  "textures": [
+    {
+      "path": "games/athar/assets/textures/placeholders/concrete_wall_003_diff_PLACEHOLDER.png",
+      "sha256": "1e1aaf1bf6731477a3fc31b3d1405c4626f26690992ccb1ab1108e3a0d3ead8a",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Wall 003",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/concrete_wall_003_arm_PLACEHOLDER.png",
+      "sha256": "fc1c496b05bc3b4794c86d9babb28ab1909a833d2d7a22bc0150cfa34783da14",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Wall 003",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/concrete_wall_003_normal_PLACEHOLDER.png",
+      "sha256": "649e85397a12bf5eca74c47943532e7bd7fd91a362ef0687a503ac23379cd619",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Wall 003",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/concrete_floor_damaged_01_diff_PLACEHOLDER.png",
+      "sha256": "adbe8c262c47369ec563c7f32927752f280200379b984eed777612037e67f2f3",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Floor Damaged 01",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/concrete_floor_damaged_01_arm_PLACEHOLDER.png",
+      "sha256": "3686acc95f22f417ba51303694593e447bd6e650681cb9f9946eecddda5897e1",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Floor Damaged 01",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/concrete_floor_damaged_01_normal_PLACEHOLDER.png",
+      "sha256": "d941bbb58e11bf39a90ae02de16678bdbe18a80e27d69edbb05a9fd212742ea1",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Concrete Floor Damaged 01",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/rusty_metal_02_diff_PLACEHOLDER.png",
+      "sha256": "2a69b8297c51184daf5a7f21108a45c1cd1fb5879629266807081475121be36b",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Rusty Metal 02",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/rusty_metal_02_arm_PLACEHOLDER.png",
+      "sha256": "501fb346c2898f20bc338db3fd2d4d23558b34ef1f4fefd154121b2bbe8ca02d",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Rusty Metal 02",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/rusty_metal_02_normal_PLACEHOLDER.png",
+      "sha256": "37ae69afe9ebe0ab7da0db1d202690dab184f6bfdea6f5b1b6ac8a54f1910e68",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Rusty Metal 02",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/cobblestone_floor_001_diff_PLACEHOLDER.png",
+      "sha256": "983a05f9e7be08417f006782dfdc56d01ff52c4838a0f2dc4f21816d7fce42d3",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Cobblestone Floor 001",
+      "source": "https://polyhaven.com/a/cobblestone_floor_001",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/cobblestone_floor_001_arm_PLACEHOLDER.png",
+      "sha256": "cc66af7e5ce01e29ce4d6af15ff61eaeaecc7f532e7477ae28ce9b4d8862b7c5",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Cobblestone Floor 001",
+      "source": "https://polyhaven.com/a/cobblestone_floor_001",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/cobblestone_floor_001_normal_PLACEHOLDER.png",
+      "sha256": "ac5f35e64f032024f0a73433283cb611e8e882fa101280ead5d743e74957c040",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Cobblestone Floor 001",
+      "source": "https://polyhaven.com/a/cobblestone_floor_001",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/roof_tiles_diff_PLACEHOLDER.png",
+      "sha256": "bf58c8243769303c5f258bfb2806d997b2ca23b95c7749f1e103ef13778ce71c",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Roof Tiles",
+      "source": "https://polyhaven.com/a/roof_tiles",
+      "creator": "Stephan Seeliger",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/roof_tiles_arm_PLACEHOLDER.png",
+      "sha256": "93b0b65cf0733e5da9c39d88e5228ccfc361617aaaadc9c3250f354a49b50b50",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Roof Tiles",
+      "source": "https://polyhaven.com/a/roof_tiles",
+      "creator": "Stephan Seeliger",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/roof_tiles_normal_PLACEHOLDER.png",
+      "sha256": "e04fc08c3f4fff3c5b615402d9ed61a22c90a8ea7c74bc5d7bf1fc73968439ad",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Roof Tiles",
+      "source": "https://polyhaven.com/a/roof_tiles",
+      "creator": "Stephan Seeliger",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/wood_planks_diff_PLACEHOLDER.png",
+      "sha256": "adafdadfaa3a90690e442f236f85620dac537b8bfbbac4b1d3008981a045039a",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Wood Planks",
+      "source": "https://polyhaven.com/a/wood_planks",
+      "creator": "Amal Kumar",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/wood_planks_arm_PLACEHOLDER.png",
+      "sha256": "6eddb91a58c3a8ba086bed22313a019bf7025c0d60524d585295cc83ac0707db",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Wood Planks",
+      "source": "https://polyhaven.com/a/wood_planks",
+      "creator": "Amal Kumar",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/wood_planks_normal_PLACEHOLDER.png",
+      "sha256": "f897ddf6692c8fb0abfa37792f4185eca82820e2ff06d5d2482adbaebcbbac77",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "Wood Planks",
+      "source": "https://polyhaven.com/a/wood_planks",
+      "creator": "Amal Kumar",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/emissive_white_PLACEHOLDER.png",
+      "sha256": "7252e79f7df8e63a3eb5c7fed4a25749ca3e87e9098ad50c5d08a219996a1716",
+      "status": "PLACEHOLDER",
+      "intended_replacement": "neutral white emissive texture (no external source)"
+    }
+  ],
+  "asset_records": [
+    {
+      "sha256": "7d1d4b9f5ed1aa3e6385ef3232e26e123a3dac5f364e44f9f34784e39bf8d6bb",
+      "status": "DOWNLOADED_EMBEDDED",
+      "asset": "Concrete Wall 003",
+      "map": "diff"
+    },
+    {
+      "sha256": "55987cae8c5d6eb0bb09bf4cf65d45267a747294eb63b291757501e1664af51f",
+      "status": "DOWNLOADED_EMBEDDED",
+      "asset": "Concrete Wall 003",
+      "map": "arm"
+    },
+    {
+      "sha256": "9ab358a9d51aa2a361103cf6587ee0b598fa57ad8f38b40cccc8015b867938ac",
+      "status": "DOWNLOADED_EMBEDDED",
+      "asset": "Concrete Wall 003",
+      "map": "normal"
+    },
+    {
+      "sha256": "9b41f6e1f66804c3cface2365a7d246618ad8814a5864be43bb9349fc3fb6db6",
+      "status": "DOWNLOADED_EMBEDDED",
+      "asset": "Concrete Floor Damaged 01",
+      "map": "diff"
+    },
+    {
+      "sha256": "b73ad44f6b8c34b791e77ed60777b477fa33d9da21596b2ea56b7f4bbf6c75cb",
+      "status": "DOWNLOADED_EMBEDDED",
+      "asset": "Concrete Floor Damaged 01",
+      "map": "arm"
+    },
+    {
+      "sha256": "9f6d4282857b23daf2d9c87e567047a8f6ede4cc9eb8ec35ebd053bab4e457a0",
+      "status": "DOWNLOADED_EMBEDDED",
+      "asset": "Concrete Floor Damaged 01",
+      "map": "normal"
+    },
+    {
+      "sha256": "adaf094391518b6afe787a123942110aa88ef521c844f970b124420f5ed5d3d9",
+      "status": "DOWNLOADED_EMBEDDED",
+      "asset": "Rusty Metal 02",
+      "map": "diff"
+    },
+    {
+      "sha256": "2982943ffe3273a65bf788b77fc0c7a4fd8227824386d065d13a8c8c0e07db10",
+      "status": "DOWNLOADED_EMBEDDED",
+      "asset": "Rusty Metal 02",
+      "map": "arm"
+    },
+    {
+      "sha256": "995197a62cac6fbb000e6e6591a3330a3b77ef069c4ac58f505b586b9bdbd97b",
+      "status": "DOWNLOADED_EMBEDDED",
+      "asset": "Rusty Metal 02",
+      "map": "normal"
+    },
+    {
+      "path": "games/athar/assets/textures/placeholders/emissive_white_PLACEHOLDER.png",
+      "sha256": "7252e79f7df8e63a3eb5c7fed4a25749ca3e87e9098ad50c5d08a219996a1716",
+      "status": "PLACEHOLDER",
+      "asset": "white emissive multiplier"
+    }
+  ],
+  "models": [
+    {
+      "path": "games/athar/assets/models/room_shell.glb",
+      "sha256": "284f05fc9c575f5069c20d48fba5efd976349ca478e75802550238cbecc759ed",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/door.glb",
+      "sha256": "ddfacef9294b96bfb9f674c829a82d444f052f2a21dd7ab459f97f6613dbf027",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/key.glb",
+      "sha256": "b9cd44c27a190fd533827723a74fb3f638d0f617e11956d7bc065d2524098920",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/save_point.glb",
+      "sha256": "af0de1f93a0d5dafa245026e0a2ac82a04d809aa0372833c5d6c7dab758409ab",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/monster_placeholder.glb",
+      "sha256": "1397502cc50928be96cc30bc101352bdbe04fd6b47a52759cda98b8d265fd243",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/village_house.glb",
+      "sha256": "d939025b314867408be4c35a253dd1eb3633d42d963439b496bb3c8792ef15de",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/village_hall.glb",
+      "sha256": "dad37e31e3bfb37eaa67d2b30b37973be45319a1490ee41f5283cf11ab9a5e45",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/village_tree.glb",
+      "sha256": "e92b251cd3b8b4531e3917f03b61cafb41cfaeb0a0aecb2751edfede7cc4aa2e",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/village_ground.glb",
+      "sha256": "37fe4fba47c53c5d227a42029df0ee9541bc0f12aad27af04bc5700e38da7e3b",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/village_road.glb",
+      "sha256": "52bf7e7c107fbb229d96ce3ee4bed098c8b02814a03f84183500ed82e6f0d59a",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/village_lamp.glb",
+      "sha256": "bf952df8f1a900ed0acdc25942c77068e9c4b8aeaeb32fd03fd2460231b9749d",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    },
+    {
+      "path": "games/athar/assets/models/village_well.glb",
+      "sha256": "d4181018d214de904dba7d539d07bf87c8df107b03c497d8cc93248da1520730",
+      "status": "PROCEDURAL_PLACEHOLDER_GEOMETRY"
+    }
+  ],
+  "source_maps": [
+    {
+      "path": "games/athar/assets/textures/source/concrete_wall_003_diff_1k.jpg",
+      "sha256": "7d1d4b9f5ed1aa3e6385ef3232e26e123a3dac5f364e44f9f34784e39bf8d6bb",
+      "asset": "Concrete Wall 003",
+      "map": "diff",
+      "status": "SOURCE_CC0",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/source/concrete_wall_003_arm_1k.jpg",
+      "sha256": "55987cae8c5d6eb0bb09bf4cf65d45267a747294eb63b291757501e1664af51f",
+      "asset": "Concrete Wall 003",
+      "map": "arm",
+      "status": "SOURCE_CC0",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/source/concrete_wall_003_nor_gl_1k.jpg",
+      "sha256": "9ab358a9d51aa2a361103cf6587ee0b598fa57ad8f38b40cccc8015b867938ac",
+      "asset": "Concrete Wall 003",
+      "map": "nor_gl",
+      "status": "SOURCE_CC0",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "creator": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/source/concrete_floor_damaged_01_diff_1k.jpg",
+      "sha256": "9b41f6e1f66804c3cface2365a7d246618ad8814a5864be43bb9349fc3fb6db6",
+      "asset": "Concrete Floor Damaged 01",
+      "map": "diff",
+      "status": "SOURCE_CC0",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/source/concrete_floor_damaged_01_arm_1k.jpg",
+      "sha256": "b73ad44f6b8c34b791e77ed60777b477fa33d9da21596b2ea56b7f4bbf6c75cb",
+      "asset": "Concrete Floor Damaged 01",
+      "map": "arm",
+      "status": "SOURCE_CC0",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/source/concrete_floor_damaged_01_nor_gl_1k.jpg",
+      "sha256": "9f6d4282857b23daf2d9c87e567047a8f6ede4cc9eb8ec35ebd053bab4e457a0",
+      "asset": "Concrete Floor Damaged 01",
+      "map": "nor_gl",
+      "status": "SOURCE_CC0",
+      "source": "https://polyhaven.com/a/concrete_floor_damaged_01",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/source/rusty_metal_02_diff_1k.jpg",
+      "sha256": "adaf094391518b6afe787a123942110aa88ef521c844f970b124420f5ed5d3d9",
+      "asset": "Rusty Metal 02",
+      "map": "diff",
+      "status": "SOURCE_CC0",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/source/rusty_metal_02_arm_1k.jpg",
+      "sha256": "2982943ffe3273a65bf788b77fc0c7a4fd8227824386d065d13a8c8c0e07db10",
+      "asset": "Rusty Metal 02",
+      "map": "arm",
+      "status": "SOURCE_CC0",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    },
+    {
+      "path": "games/athar/assets/textures/source/rusty_metal_02_nor_gl_1k.jpg",
+      "sha256": "995197a62cac6fbb000e6e6591a3330a3b77ef069c4ac58f505b586b9bdbd97b",
+      "asset": "Rusty Metal 02",
+      "map": "nor_gl",
+      "status": "SOURCE_CC0",
+      "source": "https://polyhaven.com/a/rusty_metal_02",
+      "creator": "Rob Tuytel",
+      "license": "CC0 1.0 Universal"
+    }
+  ],
+  "village_textures": {
+    "dedicated_source_maps_present": 0,
+    "dedicated_source_maps_expected": 9,
+    "fallback_policy": "Reuse bundled downloaded CC0 concrete/floor/metal maps when dedicated village maps are unavailable; procedural maps are explicitly marked PLACEHOLDER."
+  }
+}

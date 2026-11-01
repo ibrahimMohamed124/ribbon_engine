@@ -1,0 +1,11 @@
+[package]
+name = "ribbon_plugin_weather"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_app = { path = "../../crates/app" }
+ribbon_ecs = { path = "../../crates/ecs" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_render_contracts = { path = "../../crates/render_contracts" }
+glam = "0.30"

@@ -1,0 +1,43 @@
+(
+    format_version: 1,
+    id: "starter_world",
+    name: "Starter World",
+    regions: [
+        (
+            id: "starting_courtyard",
+            name: "Starting Courtyard",
+            bounds_min: [-64.0, -16.0, -64.0],
+            bounds_max: [64.0, 48.0, 64.0],
+            scene_doc_path: Some("scenes/starting_courtyard.scenedoc"),
+            models: [],
+            dependencies: [],
+            neighbors: ["north_path"],
+            policy: (
+                preload_distance: 500.0,
+                activation_distance: 180.0,
+                unload_distance: 620.0,
+                base_priority: 100,
+                auto_activate: true,
+                preview_when_ready: false,
+            ),
+        ),
+        (
+            id: "north_path",
+            name: "North Path",
+            bounds_min: [-64.0, -16.0, -192.0],
+            bounds_max: [64.0, 48.0, -64.0],
+            scene_doc_path: Some("scenes/north_path.scenedoc"),
+            models: [],
+            dependencies: ["starting_courtyard"],
+            neighbors: ["starting_courtyard"],
+            policy: (
+                preload_distance: 650.0,
+                activation_distance: 220.0,
+                unload_distance: 800.0,
+                base_priority: 40,
+                auto_activate: true,
+                preview_when_ready: true,
+            ),
+        ),
+    ],
+)

@@ -1,16 +1,27 @@
 [package]
-name = "plugin_audio"
+name = "ribbon_plugin_audio"
 version = "0.1.0"
 edition = "2021"
 
 [features]
 default = ["audio"]
-audio = ["dep:rodio"]
+# Preferred production backend: Kira owns the mixer and audio-device thread.
+audio = ["dep:kira"]
+# Optional compatibility backend for applications that still explicitly use Rodio APIs.
+rodio-compat = ["dep:rodio"]
 
 [dependencies]
-engine_app = { path = "../../crates/engine_app" }
-engine_plugins = { path = "../../crates/engine_plugins" }
-engine_ecs = { path = "../../crates/engine_ecs" }
-engine_events = { path = "../../crates/engine_events" }
-engine_math = { path = "../../crates/engine_math" }
+ribbon_app = { path = "../../crates/app" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_ecs = { path = "../../crates/ecs" }
+ribbon_events = { path = "../../crates/events" }
+ribbon_assets = { path = "../../crates/assets" }
+ribbon_math = { path = "../../crates/math" }
+ribbon_scene = { path = "../../crates/scene" }
+kira = { version = "=0.12.5", optional = true, default-features = false, features = ["cpal", "symphonia", "aiff", "flac", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"], optional = true }
+
+[[example]]
+name = "audio_engine_showcase"
+path = "examples/audio_engine_showcase.rs"
+required-features = ["audio"]

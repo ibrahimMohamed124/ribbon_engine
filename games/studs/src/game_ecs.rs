@@ -11,9 +11,9 @@ use crate::game::{Difficulty, Game, State, PAGES_TOTAL};
 use crate::input::InputFrame;
 use crate::level::World as Maze;
 use crate::player::Player;
-use engine_app::{Time, World};
-use engine_math::{forward_vec, Vect};
-use plugin_rendering::RENDER_DIST;
+use ribbon_app::{Time, World};
+use ribbon_math::{forward_vec, Vect};
+use studs_cpu_renderer::RENDER_DIST;
 
 const PAGE_PICKUP_RADIUS: f32 = 0.9;
 

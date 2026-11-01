@@ -1,0 +1,12 @@
+[package]
+name = "ribbon_assets"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+hot_reload = []
+
+[dependencies]
+ribbon_app = { path = "../app" }
+ribbon_plugins = { path = "../plugins" }
+ribbon_events = { path = "../events" }

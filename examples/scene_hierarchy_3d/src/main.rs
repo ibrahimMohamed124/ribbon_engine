@@ -3,15 +3,15 @@
 //! Run from the workspace root with `cargo run -p scene_hierarchy_3d`.
 //! The example prints a PASS/FAIL report after checking the resolved world transforms.
 
-use engine_app::{App, AppExit, Stage, Time, World};
-use engine_events::WorldEventsExt;
-use engine_platform::input::Key;
-use engine_platform::{Input, PlatformConfig, PlatformPlugin};
-use engine_plugins::AppPluginExt;
-use engine_render::gpu_window::{ClearColor, GpuWindowPlugin};
-use engine_scene::{GlobalTransform3D, HierarchyExt, ScenePlugin};
-use plugin_render3d::glam::{Quat, Vec3};
-use plugin_render3d::{BuiltinMesh, Camera3D, MeshInstance, Render3dPlugin, Transform3D};
+use ribbon_app::{App, AppExit, Stage, Time, World};
+use ribbon_events::WorldEventsExt;
+use ribbon_platform::input::Key;
+use ribbon_platform::{Input, PlatformConfig, PlatformPlugin};
+use ribbon_plugin_render3d::glam::{Quat, Vec3};
+use ribbon_plugin_render3d::{BuiltinMesh, Camera3D, MeshInstance, Render3dPlugin, Transform3D};
+use ribbon_plugins::AppPluginExt;
+use ribbon_render::gpu_window::{ClearColor, GpuWindowPlugin};
+use ribbon_scene::{GlobalTransform3D, HierarchyExt, ScenePlugin};
 use std::error::Error;
 
 #[derive(Clone, Copy)]
@@ -40,7 +40,7 @@ fn spawn_cube(
     position: Vec3,
     scale: Vec3,
     color: [f32; 3],
-) -> engine_ecs::Entity {
+) -> ribbon_ecs::Entity {
     world.spawn((
         Transform3D {
             translation: position,
@@ -100,7 +100,7 @@ fn quat_near(a: Quat, b: Quat) -> bool {
     1.0 - a.normalize().dot(b.normalize()).abs() <= 0.002
 }
 
-/// Verifies the same composition rule used by `engine_scene::propagate_transforms_3d`.
+/// Verifies the same composition rule used by `ribbon_scene::propagate_transforms_3d`.
 /// This is runtime diagnostic output for the example, not a test target.
 fn report_hierarchy(world: &mut World) {
     if world.resource::<DemoState>().hierarchy_reported {
@@ -230,7 +230,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut app = App::new();
     app.insert_resource(PlatformConfig {
-        title: "Voxelworks | Scene Hierarchy 3D".to_owned(),
+        title: "Ribbon | Scene Hierarchy 3D".to_owned(),
         width: 1152,
         height: 720,
     });
@@ -368,7 +368,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // ScenePlugin registers transform propagation first; this diagnostic observes the results.
     app.add_system(Stage::PostUpdate, report_hierarchy);
 
-    println!("Voxelworks Scene Hierarchy 3D");
+    println!("Ribbon Scene Hierarchy 3D");
     println!(
         "Visual: cyan root pivot, orange arm, yellow tip, magenta counterweight, green satellite."
     );
