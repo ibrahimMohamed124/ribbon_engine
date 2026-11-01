@@ -573,6 +573,22 @@ pub fn audio_emitter_system(world: &mut World) {
                     occlusion,
                 };
                 let spatial = spatial::calculate(listener, emitter, 343.0);
+                #[cfg(feature = "steam-audio")]
+                let binaural_direction = {
+                    // Ribbon's listener-local direction is (right, forward, up), while Steam
+                    // Audio's point-source direction is (right, up, behind).
+                    let direction = [
+                        spatial.local_direction.x,
+                        spatial.local_direction.z,
+                        -spatial.local_direction.y,
+                    ];
+                    let length_squared = direction.iter().map(|value| value * value).sum::<f32>();
+                    Some(if length_squared <= f32::EPSILON {
+                        [0.0, 0.0, -1.0]
+                    } else {
+                        direction
+                    })
+                };
                 let rate = spatial.doppler_ratio;
                 let gain = spatial.gain * transmission_gain;
                 let entity = snapshot.entity;
@@ -595,6 +611,8 @@ pub fn audio_emitter_system(world: &mut World) {
                                     occlusion,
                                     transmission_gain,
                                     low_pass_cutoff_hz,
+                                    #[cfg(feature = "steam-audio")]
+                                    binaural_direction,
                                 },
                             );
                         } else if sink.supports_managed_voices()
@@ -611,6 +629,8 @@ pub fn audio_emitter_system(world: &mut World) {
                                 looping: snapshot.emitter.looping,
                                 priority: snapshot.emitter.priority,
                                 bus: snapshot.emitter.bus,
+                                #[cfg(feature = "steam-audio")]
+                                binaural_direction,
                             });
                             if let Some(voice) = voice {
                                 sink.update_managed_emitter_acoustics(
@@ -622,6 +642,8 @@ pub fn audio_emitter_system(world: &mut World) {
                                         occlusion,
                                         transmission_gain,
                                         low_pass_cutoff_hz,
+                                        #[cfg(feature = "steam-audio")]
+                                        binaural_direction,
                                     },
                                 );
                             }
@@ -650,6 +672,8 @@ pub fn audio_emitter_system(world: &mut World) {
                             looping: snapshot.emitter.looping,
                             priority: snapshot.emitter.priority,
                             bus: snapshot.emitter.bus,
+                            #[cfg(feature = "steam-audio")]
+                            binaural_direction,
                         });
                         if let Some(voice) = voice {
                             sink.update_managed_emitter_acoustics(
@@ -661,6 +685,8 @@ pub fn audio_emitter_system(world: &mut World) {
                                     occlusion,
                                     transmission_gain,
                                     low_pass_cutoff_hz,
+                                    #[cfg(feature = "steam-audio")]
+                                    binaural_direction,
                                 },
                             );
                         }
@@ -688,6 +714,8 @@ pub fn audio_emitter_system(world: &mut World) {
                             looping: snapshot.emitter.looping,
                             priority: snapshot.emitter.priority,
                             bus: snapshot.emitter.bus,
+                            #[cfg(feature = "steam-audio")]
+                            binaural_direction,
                         });
                         if let Some(voice) = voice {
                             sink.update_managed_emitter_acoustics(
@@ -699,6 +727,8 @@ pub fn audio_emitter_system(world: &mut World) {
                                     occlusion,
                                     transmission_gain,
                                     low_pass_cutoff_hz,
+                                    #[cfg(feature = "steam-audio")]
+                                    binaural_direction,
                                 },
                             );
                         }

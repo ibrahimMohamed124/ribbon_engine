@@ -358,8 +358,12 @@ fn effect_key(effect: AudioEffect) -> u8 {
     match effect {
         AudioEffect::LowPass { .. } => 0,
         AudioEffect::HighPass { .. } => 1,
-        AudioEffect::Reverb { .. } => 2,
-        AudioEffect::Compressor { .. } => 3,
+        AudioEffect::Eq { .. } => 2,
+        AudioEffect::Reverb { .. } => 3,
+        AudioEffect::Delay { .. } => 4,
+        AudioEffect::Distortion { .. } => 5,
+        AudioEffect::Convolution { .. } => 6,
+        AudioEffect::Compressor { .. } => 7,
     }
 }
 

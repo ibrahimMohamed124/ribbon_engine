@@ -26,6 +26,7 @@ pub struct AmbienceAsset {
     pub gain: f32,
 }
 
+#[derive(Clone)]
 pub struct SoundBank {
     sounds: Vec<SoundAsset>,
     ambiences: Vec<AmbienceAsset>,

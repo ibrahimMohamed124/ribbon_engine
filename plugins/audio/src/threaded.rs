@@ -7,9 +7,10 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crate::assets::AudioAssetHandle;
 use crate::automation::AutomationCommand;
@@ -17,6 +18,7 @@ use crate::bank::{AmbienceId, SoundBank, SoundId};
 use crate::debug::AudioDiagnostics;
 use crate::kira_backend::{KiraAudioBackend, PlaybackOptions};
 use crate::mixer::{validate_effect_chain, AudioEffect, AudioSnapshotRegistry, MixerSnapshot};
+use crate::mixer_graph::{AudioSendConfig, AudioSendId, CustomBusConfig, CustomBusId};
 use crate::registry::{AudioBus, ResolvedAudioEvent};
 use crate::voices::{PlaybackStatus, VoiceCompletions, VoiceId};
 use crate::{AudioSink, ManagedEmitterAcoustics};
@@ -144,6 +146,47 @@ enum Command {
         voice: VoiceId,
         acoustics: ManagedEmitterAcoustics,
     },
+    #[cfg(feature = "steam-audio")]
+    BinauralDirection {
+        voice: VoiceId,
+        direction: [f32; 3],
+    },
+    CreateSend(AudioSendConfig),
+    RemoveSend(AudioSendId),
+    SendGain {
+        id: AudioSendId,
+        gain: f32,
+        fade_seconds: f32,
+    },
+    CreateCustomBus(CustomBusConfig),
+    RemoveCustomBus(CustomBusId),
+    CustomBusGain {
+        id: CustomBusId,
+        gain: f32,
+        fade_seconds: f32,
+    },
+    CustomBusMute {
+        id: CustomBusId,
+        muted: bool,
+        fade_seconds: f32,
+    },
+    CustomBusEffects {
+        id: CustomBusId,
+        effects: Vec<AudioEffect>,
+        fade_seconds: f32,
+    },
+    CustomBusSendGain {
+        bus: CustomBusId,
+        send: AudioSendId,
+        gain: f32,
+        fade_seconds: f32,
+    },
+    StopCustomBus {
+        id: CustomBusId,
+        fade_seconds: f32,
+    },
+    PauseCustomBus(CustomBusId),
+    ResumeCustomBus(CustomBusId),
 }
 
 /// Thread-safe façade over Kira with a strictly bounded command queue.
@@ -535,6 +578,108 @@ impl ThreadedAudioSink {
         })
     }
 
+    /// Create a shared effect send. Custom bus routes to this send are declared when the bus
+    /// is created; route topology is intentionally immutable while its Kira track is alive.
+    pub fn create_audio_send(&self, config: AudioSendConfig) -> Result<(), String> {
+        self.enqueue(Command::CreateSend(config))
+    }
+    pub fn remove_audio_send(&self, id: AudioSendId) -> Result<(), String> {
+        self.enqueue(Command::RemoveSend(id))
+    }
+    pub fn set_audio_send_gain(
+        &self,
+        id: AudioSendId,
+        gain: f32,
+        fade_seconds: f32,
+    ) -> Result<(), String> {
+        if !gain.is_finite() || !(0.0..=2.0).contains(&gain) {
+            return Err("send gain must be finite and within [0, 2]".into());
+        }
+        validate_transition_seconds(fade_seconds)?;
+        self.enqueue(Command::SendGain {
+            id,
+            gain,
+            fade_seconds,
+        })
+    }
+    pub fn create_custom_bus(&self, config: CustomBusConfig) -> Result<(), String> {
+        self.enqueue(Command::CreateCustomBus(config))
+    }
+    pub fn remove_custom_bus(&self, id: CustomBusId) -> Result<(), String> {
+        self.enqueue(Command::RemoveCustomBus(id))
+    }
+    pub fn set_custom_bus_gain(
+        &self,
+        id: CustomBusId,
+        gain: f32,
+        fade_seconds: f32,
+    ) -> Result<(), String> {
+        if !gain.is_finite() || !(0.0..=2.0).contains(&gain) {
+            return Err("custom bus gain must be finite and within [0, 2]".into());
+        }
+        validate_transition_seconds(fade_seconds)?;
+        self.enqueue(Command::CustomBusGain {
+            id,
+            gain,
+            fade_seconds,
+        })
+    }
+    pub fn set_custom_bus_muted(
+        &self,
+        id: CustomBusId,
+        muted: bool,
+        fade_seconds: f32,
+    ) -> Result<(), String> {
+        validate_transition_seconds(fade_seconds)?;
+        self.enqueue(Command::CustomBusMute {
+            id,
+            muted,
+            fade_seconds,
+        })
+    }
+    pub fn set_custom_bus_effects(
+        &self,
+        id: CustomBusId,
+        effects: Vec<AudioEffect>,
+        fade_seconds: f32,
+    ) -> Result<(), String> {
+        validate_effect_chain(&effects)?;
+        validate_transition_seconds(fade_seconds)?;
+        self.enqueue(Command::CustomBusEffects {
+            id,
+            effects,
+            fade_seconds,
+        })
+    }
+    pub fn set_custom_bus_send_gain(
+        &self,
+        bus: CustomBusId,
+        send: AudioSendId,
+        gain: f32,
+        fade_seconds: f32,
+    ) -> Result<(), String> {
+        if !gain.is_finite() || !(0.0..=2.0).contains(&gain) {
+            return Err("send route gain must be finite and within [0, 2]".into());
+        }
+        validate_transition_seconds(fade_seconds)?;
+        self.enqueue(Command::CustomBusSendGain {
+            bus,
+            send,
+            gain,
+            fade_seconds,
+        })
+    }
+    pub fn stop_custom_bus(&self, id: CustomBusId, fade_seconds: f32) -> Result<(), String> {
+        validate_transition_seconds(fade_seconds)?;
+        self.enqueue(Command::StopCustomBus { id, fade_seconds })
+    }
+    pub fn pause_custom_bus(&self, id: CustomBusId) -> Result<(), String> {
+        self.enqueue(Command::PauseCustomBus(id))
+    }
+    pub fn resume_custom_bus(&self, id: CustomBusId) -> Result<(), String> {
+        self.enqueue(Command::ResumeCustomBus(id))
+    }
+
     /// Submit one bounded automation frame as a single queue message. This guarantees all
     /// commands in the frame are either accepted together or rejected together when the queue is
     /// saturated. The backend still reports individual stale-voice failures asynchronously.
@@ -627,6 +772,21 @@ impl ThreadedAudioSink {
         })
     }
 
+    /// Update the listener-local HRTF direction of a voice created with `binaural_direction`.
+    #[cfg(feature = "steam-audio")]
+    pub fn set_voice_binaural_direction(
+        &self,
+        voice: VoiceId,
+        direction: [f32; 3],
+    ) -> Result<(), String> {
+        if direction.iter().any(|value| !value.is_finite())
+            || direction.iter().map(|value| value * value).sum::<f32>() <= f32::EPSILON
+        {
+            return Err("binaural direction must be finite and non-zero".into());
+        }
+        self.enqueue(Command::BinauralDirection { voice, direction })
+    }
+
     /// Update a moving 3D voice with a material-aware transmission response.
     pub fn update_voice_spatial_acoustics(
         &self,
@@ -651,6 +811,11 @@ impl ThreadedAudioSink {
                 occlusion: acoustics.occlusion.clamp(0.0, 1.0),
                 transmission_gain: acoustics.transmission_gain.clamp(0.0, 1.0),
                 low_pass_cutoff_hz: acoustics.low_pass_cutoff_hz.clamp(20.0, 20_000.0),
+                #[cfg(feature = "steam-audio")]
+                binaural_direction: acoustics.binaural_direction.filter(|direction| {
+                    direction.iter().all(|value| value.is_finite())
+                        && direction.iter().map(|value| value * value).sum::<f32>() > f32::EPSILON
+                }),
             },
         })
     }
@@ -749,6 +914,8 @@ impl AudioSink for ThreadedAudioSink {
             looping: playback.looping,
             priority: playback.priority,
             bus: playback.bus,
+            #[cfg(feature = "steam-audio")]
+            binaural_direction: playback.binaural_direction,
             ..PlaybackOptions::default()
         };
         match self.play_voice(playback.sound, options) {
@@ -783,6 +950,8 @@ impl AudioSink for ThreadedAudioSink {
                 occlusion,
                 transmission_gain: 1.0,
                 low_pass_cutoff_hz: cutoff,
+                #[cfg(feature = "steam-audio")]
+                binaural_direction: None,
             },
         ) {
             self.record_facade_failure(&error);
@@ -878,274 +1047,395 @@ fn worker_main(
     if ready.send(Ok(())).is_err() {
         return;
     }
-    while let Ok(command) = receiver.recv() {
-        let result: Result<(), String> = match command {
-            Command::Play {
-                voice,
-                sound,
-                options,
-                doppler,
-            } => {
-                let result = backend.play_voice(voice, sound, options, doppler);
-                if result.is_err() {
-                    backend.report_voice_start_failed(voice);
+    let mut recovery_pending = false;
+    let mut recovery_attempts = 0u64;
+    let mut successful_recoveries = 0u64;
+    let mut last_device_error: Option<String> = None;
+    let mut retry_at = Instant::now();
+    let mut retry_delay = Duration::from_secs(1);
+    loop {
+        let command = match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(command) => Some(command),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+        if let Some(command) = command {
+            let result: Result<(), String> = match command {
+                Command::Play {
+                    voice,
+                    sound,
+                    options,
+                    doppler,
+                } => {
+                    let result = backend.play_voice(voice, sound, options, doppler);
+                    if result.is_err() {
+                        backend.report_voice_start_failed(voice);
+                    }
+                    result
                 }
-                result
-            }
-            Command::StreamFile {
-                voice,
-                path,
-                options,
-            } => {
-                let result = backend.play_streaming_file(voice, path, options);
-                if result.is_err() {
-                    backend.report_voice_start_failed(voice);
+                Command::StreamFile {
+                    voice,
+                    path,
+                    options,
+                } => {
+                    let result = backend.play_streaming_file(voice, path, options);
+                    if result.is_err() {
+                        backend.report_voice_start_failed(voice);
+                    }
+                    result
                 }
-                result
-            }
-            Command::StreamBytes {
-                voice,
-                bytes,
-                options,
-            } => {
-                pending_stream_bytes.fetch_sub(bytes.len() as u64, Ordering::AcqRel);
-                let result = backend.play_streaming_bytes(voice, bytes, options);
-                if result.is_err() {
-                    backend.report_voice_start_failed(voice);
+                Command::StreamBytes {
+                    voice,
+                    bytes,
+                    options,
+                } => {
+                    pending_stream_bytes.fetch_sub(bytes.len() as u64, Ordering::AcqRel);
+                    let result = backend.play_streaming_bytes(voice, bytes, options);
+                    if result.is_err() {
+                        backend.report_voice_start_failed(voice);
+                    }
+                    result
                 }
-                result
-            }
-            Command::Stop {
-                voice,
-                fade_seconds,
-            } => {
-                backend.stop_voice(voice, fade_seconds);
-                Ok(())
-            }
-            Command::Pause { voice } => {
-                if backend.pause_voice(voice) {
+                Command::Stop {
+                    voice,
+                    fade_seconds,
+                } => {
+                    backend.stop_voice(voice, fade_seconds);
                     Ok(())
-                } else {
-                    Err(format!("cannot pause unknown or stale voice {:?}", voice))
                 }
-            }
-            Command::Resume { voice } => {
-                if backend.resume_voice(voice) {
-                    Ok(())
-                } else {
-                    Err(format!("cannot resume unknown or stale voice {:?}", voice))
-                }
-            }
-            Command::Gain {
-                voice,
-                gain,
-                fade_seconds,
-            } => {
-                if backend.set_voice_gain(voice, gain, fade_seconds) {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "cannot set gain for unknown or stale voice {:?}",
-                        voice
-                    ))
-                }
-            }
-            Command::Rate {
-                voice,
-                rate,
-                fade_seconds,
-            } => {
-                if backend.set_voice_rate(voice, rate, fade_seconds) {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "cannot set playback rate for unknown or stale voice {:?}",
-                        voice
-                    ))
-                }
-            }
-            Command::Pan {
-                voice,
-                pan,
-                fade_seconds,
-            } => {
-                if backend.set_voice_pan(voice, pan, fade_seconds) {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "cannot set pan for unknown or stale voice {:?}",
-                        voice
-                    ))
-                }
-            }
-            Command::Looping { voice, looping } => {
-                if backend.set_voice_looping(voice, looping) {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "cannot change looping for unknown or stale voice {:?}",
-                        voice
-                    ))
-                }
-            }
-            Command::StopBus { bus, fade_seconds } => {
-                backend.stop_bus(bus, fade_seconds);
-                Ok(())
-            }
-            Command::PauseBus { bus } => {
-                backend.pause_bus(bus);
-                Ok(())
-            }
-            Command::ResumeBus { bus } => {
-                backend.resume_bus(bus);
-                Ok(())
-            }
-            Command::StopAll { fade_seconds } => {
-                backend.stop_all_voices(fade_seconds);
-                Ok(())
-            }
-            Command::Ambience { id, gain } => backend.set_ambience_checked(id, gain),
-            Command::AmbienceLayer {
-                id,
-                gain,
-                fade_seconds,
-            } => backend.set_ambience_layer(id, gain, fade_seconds),
-            Command::StopAmbienceLayer { id, fade_seconds } => {
-                backend.stop_ambience_layer(id, fade_seconds);
-                Ok(())
-            }
-            Command::BusGain {
-                bus,
-                gain,
-                fade_seconds,
-            } => {
-                backend.set_bus_gain(bus, gain, fade_seconds);
-                Ok(())
-            }
-            Command::BusMute {
-                bus,
-                muted,
-                fade_seconds,
-            } => {
-                backend.set_bus_muted(bus, muted, fade_seconds);
-                Ok(())
-            }
-            Command::BusZoneGain {
-                bus,
-                gain,
-                fade_seconds,
-            } => {
-                backend.set_bus_zone_gain(bus, gain, fade_seconds);
-                Ok(())
-            }
-            Command::Effects {
-                bus,
-                effects,
-                transition_seconds,
-            } => {
-                backend.set_bus_effects_faded(bus, &effects, transition_seconds);
-                Ok(())
-            }
-            Command::Snapshot {
-                gains,
-                mutes,
-                zone_gains,
-                effects,
-                transition_seconds,
-            } => {
-                for (bus, gain) in gains {
-                    backend.set_bus_gain(bus, gain, transition_seconds);
-                }
-                for (bus, muted) in mutes {
-                    backend.set_bus_muted(bus, muted, transition_seconds);
-                }
-                for (bus, gain) in zone_gains {
-                    backend.set_bus_zone_gain(bus, gain, transition_seconds);
-                }
-                for (bus, chain) in effects {
-                    backend.set_bus_effects_faded(bus, &chain, transition_seconds);
-                }
-                Ok(())
-            }
-            Command::AutomationFrame {
-                commands,
-                transition_seconds,
-            } => {
-                let mut first_error = None;
-                for command in commands {
-                    let result = match command {
-                        AutomationCommand::SetBusGain { bus, gain } => {
-                            backend.set_bus_gain(bus, gain, transition_seconds);
-                            Ok(())
-                        }
-                        AutomationCommand::SetVoiceGain { voice, gain } => {
-                            if backend.set_voice_gain(voice, gain, transition_seconds) {
-                                Ok(())
-                            } else {
-                                Err(format!("automation references stale voice {voice:?}"))
-                            }
-                        }
-                        AutomationCommand::SetVoicePlaybackRate { voice, rate } => {
-                            if backend.set_voice_rate(voice, rate, transition_seconds) {
-                                Ok(())
-                            } else {
-                                Err(format!("automation references stale voice {voice:?}"))
-                            }
-                        }
-                        AutomationCommand::SetVoicePan { voice, pan } => {
-                            if backend.set_voice_pan(voice, pan, transition_seconds) {
-                                Ok(())
-                            } else {
-                                Err(format!("automation references stale voice {voice:?}"))
-                            }
-                        }
-                        AutomationCommand::SetBusEffects { bus, effects } => {
-                            backend.set_bus_effects_faded(bus, &effects, transition_seconds);
-                            Ok(())
-                        }
-                    };
-                    if first_error.is_none() {
-                        first_error = result.err();
+                Command::Pause { voice } => {
+                    if backend.pause_voice(voice) {
+                        Ok(())
+                    } else {
+                        Err(format!("cannot pause unknown or stale voice {:?}", voice))
                     }
                 }
-                first_error.map_or(Ok(()), Err)
-            }
-            Command::VoiceState { voice, reply } => {
-                let _ = reply.send(backend.voice_state(voice));
-                Ok(())
-            }
-            Command::CompletedVoices { reply } => {
-                let (voices, dropped_notifications_total, active_voices) =
-                    backend.take_completed_voices();
-                let _ = reply.send(VoiceCompletions {
-                    voices,
-                    dropped_notifications_total,
-                    active_voices: Some(active_voices),
-                });
-                Ok(())
-            }
-            Command::Diagnostics { reply } => {
-                let _ = reply.send(backend.diagnostics());
-                Ok(())
-            }
-            Command::SpatialUpdate { voice, acoustics } => {
-                if backend.update_voice_spatial_acoustics(voice, acoustics) {
+                Command::Resume { voice } => {
+                    if backend.resume_voice(voice) {
+                        Ok(())
+                    } else {
+                        Err(format!("cannot resume unknown or stale voice {:?}", voice))
+                    }
+                }
+                Command::Gain {
+                    voice,
+                    gain,
+                    fade_seconds,
+                } => {
+                    if backend.set_voice_gain(voice, gain, fade_seconds) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "cannot set gain for unknown or stale voice {:?}",
+                            voice
+                        ))
+                    }
+                }
+                Command::Rate {
+                    voice,
+                    rate,
+                    fade_seconds,
+                } => {
+                    if backend.set_voice_rate(voice, rate, fade_seconds) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "cannot set playback rate for unknown or stale voice {:?}",
+                            voice
+                        ))
+                    }
+                }
+                Command::Pan {
+                    voice,
+                    pan,
+                    fade_seconds,
+                } => {
+                    if backend.set_voice_pan(voice, pan, fade_seconds) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "cannot set pan for unknown or stale voice {:?}",
+                            voice
+                        ))
+                    }
+                }
+                Command::Looping { voice, looping } => {
+                    if backend.set_voice_looping(voice, looping) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "cannot change looping for unknown or stale voice {:?}",
+                            voice
+                        ))
+                    }
+                }
+                Command::StopBus { bus, fade_seconds } => {
+                    backend.stop_bus(bus, fade_seconds);
                     Ok(())
-                } else {
-                    Err(format!(
-                        "cannot update spatial state for unknown or stale voice {:?}",
-                        voice
-                    ))
+                }
+                Command::PauseBus { bus } => {
+                    backend.pause_bus(bus);
+                    Ok(())
+                }
+                Command::ResumeBus { bus } => {
+                    backend.resume_bus(bus);
+                    Ok(())
+                }
+                Command::StopAll { fade_seconds } => {
+                    backend.stop_all_voices(fade_seconds);
+                    Ok(())
+                }
+                Command::Ambience { id, gain } => backend.set_ambience_checked(id, gain),
+                Command::AmbienceLayer {
+                    id,
+                    gain,
+                    fade_seconds,
+                } => backend.set_ambience_layer(id, gain, fade_seconds),
+                Command::StopAmbienceLayer { id, fade_seconds } => {
+                    backend.stop_ambience_layer(id, fade_seconds);
+                    Ok(())
+                }
+                Command::BusGain {
+                    bus,
+                    gain,
+                    fade_seconds,
+                } => {
+                    backend.set_bus_gain(bus, gain, fade_seconds);
+                    Ok(())
+                }
+                Command::BusMute {
+                    bus,
+                    muted,
+                    fade_seconds,
+                } => {
+                    backend.set_bus_muted(bus, muted, fade_seconds);
+                    Ok(())
+                }
+                Command::BusZoneGain {
+                    bus,
+                    gain,
+                    fade_seconds,
+                } => {
+                    backend.set_bus_zone_gain(bus, gain, fade_seconds);
+                    Ok(())
+                }
+                Command::Effects {
+                    bus,
+                    effects,
+                    transition_seconds,
+                } => {
+                    backend.set_bus_effects_faded(bus, &effects, transition_seconds);
+                    Ok(())
+                }
+                Command::Snapshot {
+                    gains,
+                    mutes,
+                    zone_gains,
+                    effects,
+                    transition_seconds,
+                } => {
+                    for (bus, gain) in gains {
+                        backend.set_bus_gain(bus, gain, transition_seconds);
+                    }
+                    for (bus, muted) in mutes {
+                        backend.set_bus_muted(bus, muted, transition_seconds);
+                    }
+                    for (bus, gain) in zone_gains {
+                        backend.set_bus_zone_gain(bus, gain, transition_seconds);
+                    }
+                    for (bus, chain) in effects {
+                        backend.set_bus_effects_faded(bus, &chain, transition_seconds);
+                    }
+                    Ok(())
+                }
+                Command::AutomationFrame {
+                    commands,
+                    transition_seconds,
+                } => {
+                    let mut first_error = None;
+                    for command in commands {
+                        let result = match command {
+                            AutomationCommand::SetBusGain { bus, gain } => {
+                                backend.set_bus_gain(bus, gain, transition_seconds);
+                                Ok(())
+                            }
+                            AutomationCommand::SetVoiceGain { voice, gain } => {
+                                if backend.set_voice_gain(voice, gain, transition_seconds) {
+                                    Ok(())
+                                } else {
+                                    Err(format!("automation references stale voice {voice:?}"))
+                                }
+                            }
+                            AutomationCommand::SetVoicePlaybackRate { voice, rate } => {
+                                if backend.set_voice_rate(voice, rate, transition_seconds) {
+                                    Ok(())
+                                } else {
+                                    Err(format!("automation references stale voice {voice:?}"))
+                                }
+                            }
+                            AutomationCommand::SetVoicePan { voice, pan } => {
+                                if backend.set_voice_pan(voice, pan, transition_seconds) {
+                                    Ok(())
+                                } else {
+                                    Err(format!("automation references stale voice {voice:?}"))
+                                }
+                            }
+                            AutomationCommand::SetBusEffects { bus, effects } => {
+                                backend.set_bus_effects_faded(bus, &effects, transition_seconds);
+                                Ok(())
+                            }
+                        };
+                        if first_error.is_none() {
+                            first_error = result.err();
+                        }
+                    }
+                    first_error.map_or(Ok(()), Err)
+                }
+                Command::VoiceState { voice, reply } => {
+                    let _ = reply.send(backend.voice_state(voice));
+                    Ok(())
+                }
+                Command::CompletedVoices { reply } => {
+                    let (voices, dropped_notifications_total, active_voices) =
+                        backend.take_completed_voices();
+                    let _ = reply.send(VoiceCompletions {
+                        voices,
+                        dropped_notifications_total,
+                        active_voices: Some(active_voices),
+                    });
+                    Ok(())
+                }
+                Command::Diagnostics { reply } => {
+                    let _ = reply.send(backend.diagnostics());
+                    Ok(())
+                }
+                Command::SpatialUpdate { voice, acoustics } => {
+                    if backend.update_voice_spatial_acoustics(voice, acoustics) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "cannot update spatial state for unknown or stale voice {:?}",
+                            voice
+                        ))
+                    }
+                }
+                #[cfg(feature = "steam-audio")]
+                Command::BinauralDirection { voice, direction } => {
+                    if backend.set_voice_binaural_direction(voice, direction) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "voice {:?} does not have an active Steam Audio HRTF",
+                            voice
+                        ))
+                    }
+                }
+                Command::CreateSend(config) => backend.create_audio_send(config),
+                Command::RemoveSend(id) => backend.remove_audio_send(id),
+                Command::SendGain {
+                    id,
+                    gain,
+                    fade_seconds,
+                } => backend.set_audio_send_gain(id, gain, fade_seconds),
+                Command::CreateCustomBus(config) => backend.create_custom_bus(config),
+                Command::RemoveCustomBus(id) => backend.remove_custom_bus(id),
+                Command::CustomBusGain {
+                    id,
+                    gain,
+                    fade_seconds,
+                } => backend.set_custom_bus_gain(id, gain, fade_seconds),
+                Command::CustomBusMute {
+                    id,
+                    muted,
+                    fade_seconds,
+                } => backend.set_custom_bus_muted(id, muted, fade_seconds),
+                Command::CustomBusEffects {
+                    id,
+                    effects,
+                    fade_seconds,
+                } => backend.set_custom_bus_effects(id, &effects, fade_seconds),
+                Command::CustomBusSendGain {
+                    bus,
+                    send,
+                    gain,
+                    fade_seconds,
+                } => backend.set_custom_bus_send_gain(bus, send, gain, fade_seconds),
+                Command::StopCustomBus { id, fade_seconds } => {
+                    backend.stop_custom_bus(id, fade_seconds);
+                    Ok(())
+                }
+                Command::PauseCustomBus(id) => {
+                    if backend.pause_custom_bus(id) {
+                        Ok(())
+                    } else {
+                        Err(format!("unknown custom bus {:?}", id))
+                    }
+                }
+                Command::ResumeCustomBus(id) => {
+                    if backend.resume_custom_bus(id) {
+                        Ok(())
+                    } else {
+                        Err(format!("unknown custom bus {:?}", id))
+                    }
+                }
+            };
+            if let Err(error) = result {
+                failures.fetch_add(1, Ordering::Relaxed);
+                if let Ok(mut stored) = last_error.lock() {
+                    if stored.as_deref() != Some(error.as_str()) {
+                        *stored = Some(error);
+                    }
                 }
             }
-        };
-        if let Err(error) = result {
-            failures.fetch_add(1, Ordering::Relaxed);
-            if let Ok(mut stored) = last_error.lock() {
-                if stored.as_deref() != Some(error.as_str()) {
-                    *stored = Some(error);
+        }
+
+        if let Some(error) = backend.take_device_error() {
+            last_device_error = Some(error);
+            // A backend may report multiple queued errors while disconnected. Only the first
+            // error starts the recovery cycle; later reports must not reset the backoff timer or
+            // turn a persistent device failure into a tight reopen loop.
+            if !recovery_pending {
+                recovery_pending = true;
+                retry_at = Instant::now();
+                retry_delay = Duration::from_secs(1);
+            }
+        }
+        if recovery_pending && Instant::now() >= retry_at {
+            recovery_attempts = recovery_attempts.saturating_add(1);
+            backend.set_device_recovery_state(
+                recovery_attempts,
+                successful_recoveries,
+                last_device_error.clone(),
+            );
+            match backend.recover_output_device() {
+                Ok(()) => {
+                    successful_recoveries = successful_recoveries.saturating_add(1);
+                    recovery_pending = false;
+                    last_device_error = None;
+                    retry_delay = Duration::from_secs(1);
+                    if let Ok(mut stored) = last_error.lock() {
+                        if stored.as_deref().is_some_and(|message| {
+                            message.starts_with("audio device recovery failed:")
+                        }) {
+                            *stored = None;
+                        }
+                    }
+                }
+                Err(error) => {
+                    last_device_error = Some(format!("audio device recovery failed: {error}"));
+                    retry_at = Instant::now() + retry_delay;
+                    retry_delay = next_device_recovery_delay(retry_delay);
+                    failures.fetch_add(1, Ordering::Relaxed);
+                    if let Ok(mut stored) = last_error.lock() {
+                        *stored = last_device_error.clone();
+                    }
                 }
             }
+            backend.set_device_recovery_state(
+                recovery_attempts,
+                successful_recoveries,
+                last_device_error.clone(),
+            );
         }
     }
     backend.stop_all_voices(0.05);
@@ -1161,6 +1451,13 @@ fn bus_order(bus: AudioBus) -> u8 {
         AudioBus::Voice => 5,
         AudioBus::Ui => 6,
     }
+}
+
+fn next_device_recovery_delay(current: Duration) -> Duration {
+    current
+        .checked_mul(2)
+        .unwrap_or(Duration::from_secs(30))
+        .min(Duration::from_secs(30))
 }
 
 fn validate_transition_seconds(seconds: f32) -> Result<(), String> {
@@ -1224,6 +1521,17 @@ mod tests {
         assert_eq!(sanitize_pan(5.0), 1.0);
         assert_eq!(sanitize_pan(f32::NAN), 0.0);
         assert_eq!(sanitize_doppler(9.0), 2.0);
+    }
+
+    #[test]
+    fn device_recovery_backoff_doubles_and_caps_at_thirty_seconds() {
+        let mut delay = Duration::from_secs(1);
+        let mut observed = Vec::new();
+        for _ in 0..8 {
+            observed.push(delay.as_secs());
+            delay = next_device_recovery_delay(delay);
+        }
+        assert_eq!(observed, vec![1, 2, 4, 8, 16, 30, 30, 30]);
     }
 
     #[test]

@@ -14,14 +14,19 @@ pub mod assets;
 pub mod automation;
 pub mod bank;
 pub mod debug;
+pub mod decode_budget;
 pub mod ecs;
 #[cfg(feature = "audio")]
 pub mod kira_backend;
 pub mod mixer;
+pub mod mixer_graph;
+pub mod propagation;
 pub mod registry;
 #[cfg(feature = "rodio-compat")]
 pub mod rodio_backend;
 pub mod spatial;
+#[cfg(feature = "steam-audio")]
+pub mod steam_audio;
 #[cfg(feature = "audio")]
 pub mod threaded;
 pub mod voices;
@@ -38,7 +43,15 @@ pub use ecs::{
 };
 #[cfg(feature = "audio")]
 pub use kira_backend::PlaybackOptions;
-pub use mixer::{AudioEffect, AudioSnapshotRegistry, MixerSnapshot};
+pub use mixer::{AudioDistortionKind, AudioEffect, AudioSnapshotRegistry, MixerSnapshot};
+pub use mixer_graph::{
+    AudioSendConfig, AudioSendEffect, AudioSendId, CustomBusConfig, CustomBusId, MixerBusNode,
+    MixerBusParent, MixerBusParent as AudioMixerBusParent, MixerGraph, MixerSendRoute,
+};
+pub use propagation::{
+    AcousticMaterial, AcousticPortalId, AcousticPropagationGraph, AcousticPropagationResult,
+    AcousticZoneId, DoorPortalState, PortalAcousticEdge,
+};
 pub use registry::{
     AudioBus, AudioEventDef, AudioEventDescriptor, AudioEventKind, AudioEventRegistry,
     AudioEventRuntime, AudioParameter, AudioParameters, ResolvedAudioEvent,
@@ -46,6 +59,11 @@ pub use registry::{
 pub use spatial::{
     calculate_with_model, AcousticZone, DistanceModel, Emitter3d, Listener3d, SpatialResult,
     Vec3 as AudioVec3,
+};
+#[cfg(feature = "steam-audio")]
+pub use steam_audio::{
+    SteamAudioBinauralEffectBuilder, SteamAudioBinauralHandle, SteamAudioBinauralRenderer,
+    SteamAudioDirectEffectBuilder, SteamAudioDirectEffectHandle,
 };
 #[cfg(feature = "audio")]
 pub use threaded::ThreadedAudioSink;
@@ -93,6 +111,9 @@ pub struct ManagedEmitterPlayback {
     pub looping: bool,
     pub priority: u8,
     pub bus: AudioBus,
+    /// Steam Audio listener-local direction (right, up, behind) for automatic ECS binaural playback.
+    #[cfg(feature = "steam-audio")]
+    pub binaural_direction: Option<[f32; 3]>,
 }
 
 /// Listener-relative controls and material response for an already-playing spatial voice.
@@ -104,6 +125,9 @@ pub struct ManagedEmitterAcoustics {
     pub occlusion: f32,
     pub transmission_gain: f32,
     pub low_pass_cutoff_hz: f32,
+    /// Updated source direction for an already-playing Steam Audio binaural voice.
+    #[cfg(feature = "steam-audio")]
+    pub binaural_direction: Option<[f32; 3]>,
 }
 
 /// Platform-facing output. A missing output keeps the engine in silent mode.

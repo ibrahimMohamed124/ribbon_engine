@@ -1,73 +1,140 @@
 # Ribbon Audio Plugin (`ribbon_plugin_audio`)
 
-`ribbon_plugin_audio` is Ribbon's game-facing audio subsystem. Kira 0.12.5 is the preferred output, mixing and voice backend; the previous Rodio adapter remains opt-in through `rodio-compat`. Backend-owned types stay inside this crate. `ThreadedAudioSink` confines Kira managers, playback handles, streaming decoders and track handles to a dedicated worker thread.
+`ribbon_plugin_audio` is Ribbon's game-facing audio subsystem. Kira 0.12.5 owns the preferred mixer, sound playback and CPAL output; `ThreadedAudioSink` confines Kira managers, track handles and streaming decoders to a dedicated worker. The compatibility Rodio adapter remains opt-in.
 
-## Features and device behavior
+## Features and supported decoders
 
-- `audio` (default): enables the Kira backend, CPAL output, Symphonia decoding, and the declared WAV, AIFF, FLAC, MP3, Ogg/Vorbis and PCM codec features.
-- `rodio-compat`: enables `rodio_backend::RodioBackend` for applications explicitly retaining that API. It is not initialized by the Kira backend and is not started automatically by STUDS.
-- `--no-default-features`: excludes Kira/CPAL from this crate and retains the backend-independent APIs, spatial math, registry, ECS adapters and tests for headless configurations.
+- `audio` (default): Kira + CPAL, Symphonia, and the enabled AIFF, FLAC, MP3, Ogg, PCM, Vorbis and WAV codecs.
+- `steam-audio`: optional native Steam Audio integration through AudioNimbus. It implies `audio` and is not enabled by default.
+- `rodio-compat`: optional legacy Rodio adapter.
+- `--no-default-features`: backend-independent APIs and headless tests without Kira/CPAL.
 
-Codec capabilities depend on enabled Kira/Symphonia codec features and actual input files. Kira 0.12.5 does not expose an `opus` feature, so `.opus` files are intentionally rejected instead of being advertised as decodable. The included automated fixture is WAV; other codec families have not been independently fixture-tested in this environment. No HRTF or Steam Audio SDK feature is exposed: the present baseline uses world-space distance/direction, stereo panning, Doppler ratio, low-pass occlusion and zones, and does not pretend to provide binaural rendering or ray-traced reflections.
+The embedded decoder integration test uses real fixture files for WAV/PCM, AIFF/PCM, FLAC, MP3 and Ogg Vorbis. These are the codec/container families enabled by this crate. Opus is not enabled by Kira 0.12.5 here and is intentionally not advertised as supported.
 
-If Kira cannot initialize an output device, `ThreadedAudioSink::new` returns an actionable error. Games such as STUDS can log this once and continue with silent output. The application can retry by constructing a new sink and replacing `AudioOutput`; **automatic in-place device-loss detection/recovery is not implemented** by this version. One-shot events consumed while there is no output are intentionally dropped rather than replayed late; the latest `SetAmbience` value is retained and applied when an output is installed. The command queue is bounded at 256 commands; streaming byte commands have a bounded 64 MiB queued-source budget. Prefer file-backed streaming for long tracks.
+## Hierarchical mixer, custom buses and sends
 
-## Minimal usage
+The mixer is a real Kira hierarchy: `main output -> Master -> Music/Ambience/Sfx/Ui/Dialogue/Voice -> per-voice track`. Runtime custom buses are real child tracks and may be nested beneath a built-in or custom bus. The graph validates names, IDs, cycles, parent existence, route IDs, duplicate routes, gains and resource limits before mirroring the graph into Kira.
+
+Current caps are 16 custom buses, 16 send tracks and 8 send routes per custom bus. A custom bus declares its send topology at creation because Kira only allows `set_send` to change the gain of an already-declared route; it cannot add a new route to an existing live track. Live send gains can be automated. To change a bus's parent or add/remove one of its routes, stop its voices, remove and recreate the bus (child buses must be removed first). A send cannot be removed while a custom bus still references it.
 
 ```rust,no_run
 use ribbon_plugin_audio::{
-    AmbienceAsset, AmbienceId, PlaybackOptions, SoundAsset, SoundBank, SoundId,
+    AudioBus, AudioSendConfig, AudioSendEffect, AudioSendId, CustomBusConfig,
+    CustomBusId, MixerBusParent, MixerSendRoute, PlaybackOptions, SoundId,
     ThreadedAudioSink,
 };
 
-static CLICK: &[u8] = include_bytes!("click.wav");
-let bank = SoundBank::try_new(
-    vec![SoundAsset { id: SoundId(1), data: CLICK, gain: 1.0, speed: 1.0, spatial: false }],
-    Vec::<AmbienceAsset>::new(),
-)?;
-let sink = ThreadedAudioSink::new(bank)?;
-let voice = sink.play_voice(SoundId(1), PlaybackOptions::default())?;
-sink.set_voice_gain(voice, 0.5, 0.1)?;
-sink.stop_voice(voice, 0.2)?;
+fn configure_cave_audio(sink: &ThreadedAudioSink, sound_id: SoundId) -> Result<(), String> {
+    let send_id = AudioSendId(1);
+    sink.create_audio_send(AudioSendConfig {
+        id: send_id,
+        name: "shared-delay".into(),
+        effect: AudioSendEffect::Delay {
+            delay_seconds: 0.35, feedback_db: -12.0, wet: 0.25,
+        },
+        gain: 1.0,
+    })?;
+    let bus_id = CustomBusId(100);
+    sink.create_custom_bus(CustomBusConfig {
+        id: bus_id,
+        name: "cave-sfx".into(),
+        parent: MixerBusParent::BuiltIn(AudioBus::Sfx),
+        gain: 0.8, muted: false,
+        sends: vec![MixerSendRoute { send: send_id, gain: 0.4 }],
+    })?;
+    let _voice = sink.play_voice(sound_id, PlaybackOptions {
+        custom_bus: Some(bus_id), ..PlaybackOptions::default()
+    })?;
+    sink.set_custom_bus_send_gain(bus_id, send_id, 0.2, 0.15)?;
+    sink.set_custom_bus_gain(bus_id, 0.6, 0.2)?;
+    Ok(())
+}
+
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-### Streaming
+Custom bus gain, mute, effects, pause, resume and stop operations are sent through the bounded worker queue. Parent bus controls apply to nested descendants, including voices created while a parent is paused. Bus-level pause state is restored during device recovery independently from per-voice pause state. Built-in buses also retain their separate user gain, mute and acoustic-zone gain controls.
 
-`play_streaming_file(path, options)` delegates to Kira's file-backed `StreamingSoundData`, which decodes gradually and avoids retaining the complete decoded PCM track. `play_streaming_bytes` is also chunk-decoded but intentionally retains the compressed/encoded input bytes; it is limited to 64 MiB per active retained byte source and the same total backend byte budget. Static sound-bank clips are decoded during backend initialization, deduplicated by encoded content, and bounded to 16 MiB per unique encoded asset / 64 MiB aggregate unique encoded source bytes plus 64 MiB per decoded clip / 128 MiB aggregate retained PCM frames. The PCM metric measures Kira's actual stereo frame allocation and is exposed as `AudioDiagnostics::decoded_static_pcm_bytes`. The PCM admission check occurs after Kira decoding, so a single oversized compressed clip can still create a temporary decode allocation before it is rejected; use file-backed streaming for untrusted or long-form content. A corrupt or over-budget static clip is skipped and exposed through bounded diagnostics; other clips can remain playable. Long music and ambience should use file-backed streaming.
+## DSP effects
 
-`AudioPlugin` registers `AudioAssetLoader` on the existing `AssetServer` (including when `AssetPlugin` is installed later in plugin-build order). `AudioAssetHandle::load` and `AudioAssetHandle::request` provide synchronous and asynchronous typed loading with a strong `AssetRef` lease. Call `refresh(&AssetServer)` after asset polling to observe the current revision; successful hot reload replaces the immutable encoded snapshot, while a failed reload reports `ReloadFailed` and retains the last good bytes. `ThreadedAudioSink::play_audio_asset` submits a revision snapshot to Kira's chunked streaming decoder. A live voice therefore keeps the submitted source revision stable while later playbacks use the refreshed one. This path is streaming and copies the bounded encoded bytes into the worker command; use the embedded `SoundBank` path for frequently reused short clips that should be predecoded. The bank retains its embedded `&'static [u8]` API for compatibility.
+Each built-in and custom bus exposes these real Kira track stages: low-pass, high-pass, four independent bell EQ bands, reverb, delay, distortion, convolution and compressor. The effect-chain validator rejects non-finite/out-of-range settings, duplicate single-instance stages and more than four EQ bands. EQ, filters, reverb, distortion and compressor controls use Kira tweens; delay and convolution wet/feedback/time controls are smoothed in the custom realtime processor. Delay is bounded to 1 second.
 
-### Voices and buses
+**Convolution scope:** the current convolution stage is a bounded 48-tap stereo FIR using a generated synthetic decaying impulse response (up to 1 second). This is a real convolution processor, but it does not yet load arbitrary recorded room impulse-response WAV/AIFF assets or expose per-bus custom IR file management. Kira's built-in reverb and the shared reverb send are available for longer diffuse tails.
 
-Playback IDs are opaque `VoiceId` values. `ThreadedAudioSink` offers pause/resume/stop, gain, rate, pan, looping, bus-wide stop/pause/resume, asynchronous state queries, diagnostics (including a bounded latest decode error and count), independent ambience layers, and interruptible snapshot transitions. `AudioPlugin` polls completions without blocking the game thread and publishes `AudioVoiceCompleted`; when an `AudioEventRuntime` is inserted as a world resource, it releases matching bound event slots automatically. Threaded Kira completion batches include an authoritative bounded active-voice snapshot (at most the configured active and retiring voice budgets), so event reservations are reconciled even if the bounded completion notification queue overflowed. Standalone integrations can use `poll_completed_voices` and `finish_completions` directly. Legacy sinks may omit the active snapshot. Unknown or stale controls are recorded as backend errors; stopping an already stopped voice is idempotent. The Kira bus graph is `main output -> Master -> Music/Ambience/Sfx/Ui/Dialogue/Voice -> per-voice track`. This is a real but currently fixed six-child graph; arbitrary named child buses and user-defined parent routing are not yet exposed. The root includes a peak-protection compressor. Bus gains and mute states are separate from the acoustic-zone multiplier. Snapshots carry gain, mute, zone-gain and effect overrides in one queue command; omitted buses retain their current state.
+The master route includes a high-ratio compressor as practical peak protection. It is not a guaranteed brick-wall true-peak limiter.
 
-Available DSP descriptors are `LowPass`, `HighPass`, `Reverb` and `Compressor`. They are applied on real Kira tracks and transition over a tween. The current public effect set does **not** yet expose Kira's EQ, delay or distortion builders, and the implementation does not claim per-voice convolution or a physically accurate limiter. The root compressor is a practical peak-protection stage, not a guarantee against every possible inter-sample peak. The six built-in child buses form a real fixed hierarchy, but runtime-created named sub-buses and independently configurable send levels are still outstanding.
+## HRTF / binaural and Steam Audio
 
-### Spatial audio and ECS
+When the `steam-audio` feature is enabled, Kira voices receive a Steam Audio direct-path effect for the live engine occlusion value. A voice can also be created with a listener-local `PlaybackOptions::binaural_direction` (`[right, up, behind]`); the Kira track then receives a BinauralEffect. `ThreadedAudioSink::set_voice_binaural_direction` updates its direction atomically without rebuilding the track. ECS-managed emitters populate this direction automatically and update it as the emitter/listener relationship changes. The direct-path stage preserves stereo for ordinary voices; only binaural HRTF voices are downmixed for point-source rendering. Both processors use shared process-level Steam Audio context/HRTF resources and bounded preallocated buffers. The current direct effect consumes occlusion; material transmission gain and low-pass filtering remain composed by Ribbon's material/portal path so those controls are not applied twice.
 
-`AudioEmitter` synchronizes with `ribbon_scene::GlobalTransform`; moving voices update gain, stereo pan, rate/Doppler and an occlusion low-pass filter rather than spawning a new player every frame. `SpatialAudioListener` takes its world pose from `GlobalTransform`. If more than one listener exists, the entity with the lowest stable entity bits is used; if none exists, spatial events are ignored and non-spatial events continue. Coordinates use Ribbon's scene convention with +Z up; `ribbon_math::Angles::default()` faces +X (`psi` is pitch and `phi` is yaw), and scene listeners follow `ribbon_math::forward_vec`. The legacy `AudioListener` yaw adapter keeps its historical +Y-at-zero convention. `calculate_with_model` exposes listener-local right/forward/up direction, azimuth and elevation values plus inverse, linear and exponential attenuation curves, with a silent cutoff beyond maximum distance. The Kira backend remains stereo panning rather than HRTF/binaural spatial rendering; the extra direction fields are available to future or external spatial renderers.
+```rust,no_run
+use ribbon_plugin_audio::{PlaybackOptions, SoundId, ThreadedAudioSink};
 
-`AudioOcclusionProvider` is an adapter to an engine/game collision query. Queries are staggered by entity and frame, cached for a bounded age, and smoothed before application. The material adapter's filter cutoff is preserved as its own response; only the emitter's explicit baseline occlusion is composed as an additional low-pass constraint. Existing adapters can keep implementing `query_occlusion`; material-aware adapters may additionally override `query_acoustics` to return transmission gain and an explicit low-pass cutoff. Those values reach the live Kira voice filter and gain path. The audio plugin does not infer wall materials itself: the game/physics adapter supplies material transmission. `AudioZoneVolume` is an oriented box centered on an entity's global translation and rotated by its scene transform. Overlapping zones at the highest active priority blend their acoustic values by influence weight; lower-priority zones are ignored while that tier is active. The blended zone fades its low-pass, shared bus reverb and ambience level. The audio adapter does not own geometry or materials: applications must implement `query_acoustics` using their collision/material system. Door/portal graphs, ray-traced reflections, a physically modelled propagation solver and HRTF rendering are not implemented here.
+fn configure_binaural_voice(
+    sink: &ThreadedAudioSink,
+    sound_id: SoundId,
+) -> Result<(), String> {
+    let voice = sink.play_voice(sound_id, PlaybackOptions {
+        binaural_direction: Some([1.0, 0.0, 0.0]), // source at listener-right
+        ..PlaybackOptions::default()
+    })?;
+    sink.set_voice_binaural_direction(voice, [0.0, 0.0, 1.0])?;
+    Ok(())
+}
 
-### Sound events and parameters
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
-The legacy `AudioEventDef` registry remains available. `AudioEventDescriptor` adds validated variant lists, gain/rate ranges, bus, priority, looping, cooldown and per-event concurrency limits. `AudioEventRuntime` uses a caller-supplied seed and game-clock time for repeatable variant selection. Prefer `trigger_and_play` to resolve, submit and bind a voice atomically from game code; use `finish_completions` when consuming completion batches. The legacy `trigger` + `bind_voice` + `finish` sequence remains available for custom backends. `AudioParameters` provides bounded finite parameters. `AudioAutomation` maps registered parameters to bus gain, voice gain/rate/pan, low-pass/high-pass cutoff and reverb wet controls with deterministic delta-time smoothing. `AudioAutomation::submit` creates one bounded command batch per update; if the command queue is full, the batch is rejected as one unit.
+Steam Audio is optional because it links a native SDK. AudioNimbus 0.16.0 tracks Steam Audio 4.8.1; its `auto-install` feature downloads the platform SDK during the first enabled build. The documented build requirements include `curl` or `wget` and Clang 9.0 or later; the first SDK download is approximately 180 MB and is cached by the build script. See the [AudioNimbus installation and API documentation](https://docs.rs/crate/audionimbus/0.16.0) before enabling it on a build agent.
+
+**Windows bindgen headers:** the Steam Audio feature also needs Clang to resolve the host C/C++ headers. If the build reports `fatal error: 'stddef.h' file not found`, the native SDK download succeeded but `libclang` cannot see the MSVC/Windows SDK include directories. Install Visual Studio Build Tools with the **Desktop development with C++** workload, the latest MSVC x86/x64 toolset and a Windows 10/11 SDK. Then run `tools/build_audio_with_steam_audio.ps1`; it discovers the installed MSVC and SDK include paths, configures `BINDGEN_EXTRA_CLANG_ARGS` for the current PowerShell process, and runs the Steam Audio check, tests and Clippy. The script does not download or install Visual Studio components.
+
+This integration wires per-voice Steam Audio direct occlusion and optional HRTF binaural rendering. It does not yet build Steam Audio scene geometry, ray-traced direct simulation, baked/reflected sound simulations, pathing or convolution IRs. Ribbon's room/portal graph and the application's physics/material adapter currently provide occlusion, transmission and filtering inputs. Steam Audio itself supports geometry-driven direct, reflection and pathing workflows, but those simulation systems still need a separate scene adapter and lifecycle integration.
+
+## Material-aware propagation, doors and portals
+
+`AudioOcclusionProvider::query_acoustics` can return material transmission gain and low-pass cutoff from the game's collision/material system. `AcousticPropagationGraph` adds a bounded room/zone and portal graph (256 zones, 1024 portals). Portal edges carry acoustic material response; doors interpolate between closed and open response using `open_fraction`. A Dijkstra query chooses the most transmissive path, composes transmission multiplicatively and chooses the most restrictive cutoff. Fully opaque portals are excluded from audible routes, so a low-gain alternate path is not hidden by an artificial epsilon cost. `AcousticPropagationResult::apply_to_managed_emitter` sanitizes direct material inputs and composes the route before `ThreadedAudioSink::update_voice_spatial_acoustics`.
+
+The graph is deliberately geometry-agnostic: the game must map scene rooms and doors to zone/portal IDs and update open fractions. It does not ray-cast arbitrary meshes, infer material IDs or calculate diffraction/reflection from triangle geometry.
+
+## Device-loss recovery
+
+After successful initialization, the audio worker polls Kira/CPAL backend errors and attempts to recreate the output backend with exponential backoff from 1 to 30 seconds. Repeated queued errors do not reset the retry timer. A successful recovery rebuilds the standard/custom mixer graph, shared sends, bus gains/mutes/effects/pause state and replayable embedded sound-bank voices/ambience layers. Sound-bank voices restart from the beginning; their precise playback cursor is not restored. File-backed and cursor/byte streaming voices whose original rewindable source is not retained by the backend are reported as completed instead of being resumed with invalid data. Recovery attempts, successes and the latest device error are exposed through `AudioDiagnostics`.
+
+If no output device is available at the initial `ThreadedAudioSink::new` call, construction still returns an error; the caller should retry sink creation when the operating system reports that an output device has returned. In-place recovery is for device loss after initialization.
+
+## PCM decode peak-memory management
+
+Static sound-bank admission parses duration/frame metadata before invoking Kira/Symphonia's full decoder for WAV, AIFF, FLAC, Ogg Vorbis and MP3. It estimates decoded stereo-f32 storage and temporary encoded cursor storage, adds a 512 KiB safety margin, and checks per-sound, bank-total and peak limits before decode. Current limits are 16 MiB encoded per static clip, 64 MiB aggregate unique encoded static assets, 64 MiB PCM per clip, 128 MiB aggregate retained PCM and 128 MiB estimated decode peak. Unique encoded assets share one decoded cache entry. If metadata is malformed, unsupported or cannot be estimated safely, or any limit would be exceeded, the embedded asset is left out of the static cache and is played through chunked streaming instead. File-backed streaming is preferred for large or untrusted content; byte-backed streaming retains compressed input and is separately bounded.
+
+`AudioDiagnostics::decoded_static_pcm_bytes` reports actual retained frame storage. `peak_static_decode_bytes` reports the maximum conservative preflight estimate. The estimate bounds the allocations visible to this plugin but cannot guarantee a strict OS process peak because a codec may use implementation-specific temporary scratch memory.
+
+## Voices, assets and events
+
+`VoiceId` is opaque and stable. `ThreadedAudioSink` offers non-blocking play/stream commands, voice controls, bus controls, snapshots, automation, diagnostics, ambience layers, sends and custom buses. The command queue and streaming-byte budget are bounded. Asset hot reload preserves a stable encoded revision per voice. `AudioPlugin` polls completions and updates event-runtime concurrency reservations.
+
+`AudioEmitter` synchronizes moving ECS sources without restarting the voice, and the material-aware occlusion provider can feed the same update path. `AudioZoneVolume` is an oriented box; highest-priority overlapping zones blend their environmental acoustics.
 
 ## Validation
 
-Run from the repository root in a Rust environment. Kira is a new dependency and the lockfile must be resolved by Cargo in the target environment before using `--locked` builds.
+Run from the repository root on a Rust toolchain. First run an ordinary Cargo command to resolve the newly added optional dependency and update `Cargo.lock`; do not use `--locked` until that updated lockfile is committed.
 
 ```powershell
-cargo fmt --all --check
+cargo fmt --all -- --check
 cargo check -p ribbon_plugin_audio --all-targets
-cargo check -p ribbon_plugin_audio --examples
-cargo test -p ribbon_plugin_audio --all-targets --all-features
+cargo test -p ribbon_plugin_audio --all-targets --no-fail-fast
+cargo clippy -p ribbon_plugin_audio --all-targets -- -D warnings
+cargo test -p ribbon_plugin_audio --test decoder_integration -- --nocapture
 cargo test -p ribbon_plugin_audio --no-default-features
-cargo test -p studs --test audio
-cargo check --workspace --all-targets
-cargo test --workspace --all-targets
-cargo run -p ribbon_plugin_audio --example audio_engine_showcase
 ```
 
-The editing container used to prepare this continuation has no Rust toolchain (`cargo`, `rustc`, `rustfmt`) and cannot access the package registry from shell. Therefore those Rust commands, the Windows audio-device path, and the full workspace/STUDS test matrix have **not** been run here. Treat them as required validation, not as passed checks. In particular, run ordinary `cargo check` once online to resolve Kira 0.12.5 and update `Cargo.lock`, then review that generated lockfile into source control.
+After those pass, run `cargo check --workspace --all-targets`, `cargo test --workspace --no-fail-fast`, `cargo clippy --workspace --all-targets -- -D warnings` and `py -3 tools/check_deps.py`.
+
+The optional native integration requires a separate feature build on a machine with the documented Steam Audio prerequisites:
+
+```powershell
+cargo check -p ribbon_plugin_audio --features steam-audio --all-targets
+cargo test -p ribbon_plugin_audio --features steam-audio --all-targets
+```
+
+The editing container used for this overlay has no Rust toolchain, so Cargo formatting/build/test/clippy commands could not be executed here. These commands are validation instructions, not claimed successes.

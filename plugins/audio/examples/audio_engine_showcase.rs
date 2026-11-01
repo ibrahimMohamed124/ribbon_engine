@@ -5,6 +5,8 @@
 use std::time::Duration;
 
 use ribbon_plugin_audio::mixer::Audio;
+#[cfg(feature = "steam-audio")]
+use ribbon_plugin_audio::ManagedEmitterAcoustics;
 use ribbon_plugin_audio::{
     AcousticZone, AmbienceAsset, AmbienceId, AudioBus, AudioEffect, AudioEventDescriptor,
     AudioEventRegistry, AudioEventRuntime, AudioParameter, AudioVec3, Emitter3d, Listener3d,
@@ -150,11 +152,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SoundId(1),
         PlaybackOptions {
             gain: 0.22,
-            pan: -0.35,
+            pan: 0.0,
             looping: true,
             priority: 180,
             bus: AudioBus::Ambience,
             fade_in_seconds: 0.2,
+            #[cfg(feature = "steam-audio")]
+            binaural_direction: Some([0.0, 0.0, -1.0]),
             ..PlaybackOptions::default()
         },
     )?;
@@ -189,6 +193,96 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?
     };
 
+    #[cfg(feature = "steam-audio")]
+    {
+        const STEPS: u32 = 160;
+
+        println!("Steam Audio HRTF runtime sweep started.");
+        println!("Source orbit: 360 degrees.");
+        println!("Occlusion: alternating clear and fully occluded.");
+
+        for step in 0..STEPS {
+            let phase = (step as f32 / STEPS as f32) * std::f32::consts::TAU;
+
+            // Steam Audio coordinate convention: right, up, behind.
+            let direction = [phase.sin(), 0.0, -phase.cos()];
+
+            // Alternate clear and fully occluded intervals.
+            let occlusion = if (step / 40) % 2 == 0 { 0.0 } else { 1.0 };
+
+            sink.update_voice_spatial_acoustics(
+                loop_voice,
+                ManagedEmitterAcoustics {
+                    gain: 0.22,
+                    pan: 0.0,
+                    playback_rate: 0.85,
+                    occlusion,
+                    transmission_gain: 1.0,
+                    low_pass_cutoff_hz: 20_000.0,
+                    binaural_direction: Some(direction),
+                },
+            )?;
+
+            if step % 40 == 0 {
+                println!(
+                    "HRTF azimuth={:.0} degrees, occlusion={}",
+                    phase.to_degrees(),
+                    if occlusion >= 0.5 { "FULL" } else { "CLEAR" },
+                );
+            }
+
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        println!("Steam Audio HRTF runtime sweep completed.");
+    }
+
+    #[cfg(not(feature = "steam-audio"))]
+    #[cfg(feature = "steam-audio")]
+    {
+        const STEPS: u32 = 160;
+
+        println!("Steam Audio HRTF runtime sweep started.");
+        println!("Source orbit: 360 degrees.");
+        println!("Occlusion: alternating clear and fully occluded.");
+
+        for step in 0..STEPS {
+            let phase = (step as f32 / STEPS as f32) * std::f32::consts::TAU;
+
+            // Steam Audio coordinate convention: right, up, behind.
+            let direction = [phase.sin(), 0.0, -phase.cos()];
+
+            // Alternate clear and fully occluded intervals.
+            let occlusion = if (step / 40) % 2 == 0 { 0.0 } else { 1.0 };
+
+            sink.update_voice_spatial_acoustics(
+                loop_voice,
+                ManagedEmitterAcoustics {
+                    gain: 0.22,
+                    pan: 0.0,
+                    playback_rate: 0.85,
+                    occlusion,
+                    transmission_gain: 1.0,
+                    low_pass_cutoff_hz: 20_000.0,
+                    binaural_direction: Some(direction),
+                },
+            )?;
+
+            if step % 40 == 0 {
+                println!(
+                    "HRTF azimuth={:.0} degrees, occlusion={}",
+                    phase.to_degrees(),
+                    if occlusion >= 0.5 { "FULL" } else { "CLEAR" },
+                );
+            }
+
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        println!("Steam Audio HRTF runtime sweep completed.");
+    }
+
+    #[cfg(not(feature = "steam-audio"))]
     std::thread::sleep(Duration::from_millis(700));
     sink.stop_voice(one_shot, 0.05)?;
     event_runtime.finish(&resolved.name);

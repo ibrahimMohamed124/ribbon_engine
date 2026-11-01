@@ -119,12 +119,49 @@ pub struct NullBackend;
 
 /// Backend-neutral effect descriptors. They are safe to store in snapshots; backends may
 /// implement supported effects and should ignore unsupported ones explicitly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AudioDistortionKind {
+    SoftClip,
+    HardClip,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AudioEffect {
-    LowPass { cutoff_hz: f32 },
-    HighPass { cutoff_hz: f32 },
-    Reverb { wet: f32, decay_seconds: f32 },
-    Compressor { threshold_db: f32, ratio: f32 },
+    LowPass {
+        cutoff_hz: f32,
+    },
+    HighPass {
+        cutoff_hz: f32,
+    },
+    /// One of up to four independent bell-shaped parametric EQ bands per bus.
+    Eq {
+        frequency_hz: f32,
+        gain_db: f32,
+        q: f32,
+    },
+    Reverb {
+        wet: f32,
+        decay_seconds: f32,
+    },
+    Delay {
+        delay_seconds: f32,
+        feedback_db: f32,
+        wet: f32,
+    },
+    Distortion {
+        kind: AudioDistortionKind,
+        drive_db: f32,
+        wet: f32,
+    },
+    /// Bounded synthetic-room FIR convolution; `decay_seconds` controls the generated impulse.
+    Convolution {
+        decay_seconds: f32,
+        wet: f32,
+    },
+    Compressor {
+        threshold_db: f32,
+        ratio: f32,
+    },
 }
 
 impl AudioEffect {
@@ -136,9 +173,40 @@ impl AudioEffect {
             Self::HighPass { cutoff_hz } => Self::HighPass {
                 cutoff_hz: finite(cutoff_hz, 20.0, 20_000.0, 20.0),
             },
+            Self::Eq {
+                frequency_hz,
+                gain_db,
+                q,
+            } => Self::Eq {
+                frequency_hz: finite(frequency_hz, 20.0, 20_000.0, 1_000.0),
+                gain_db: finite(gain_db, -24.0, 24.0, 0.0),
+                q: finite(q, 0.1, 18.0, 1.0),
+            },
             Self::Reverb { wet, decay_seconds } => Self::Reverb {
                 wet: finite(wet, 0.0, 1.0, 0.0),
                 decay_seconds: finite(decay_seconds, 0.0, 10.0, 0.0),
+            },
+            Self::Delay {
+                delay_seconds,
+                feedback_db,
+                wet,
+            } => Self::Delay {
+                delay_seconds: finite(delay_seconds, 0.01, 1.0, 0.25),
+                feedback_db: finite(feedback_db, -60.0, 0.0, -12.0),
+                wet: finite(wet, 0.0, 1.0, 0.0),
+            },
+            Self::Distortion {
+                kind,
+                drive_db,
+                wet,
+            } => Self::Distortion {
+                kind,
+                drive_db: finite(drive_db, 0.0, 36.0, 0.0),
+                wet: finite(wet, 0.0, 1.0, 0.0),
+            },
+            Self::Convolution { decay_seconds, wet } => Self::Convolution {
+                decay_seconds: finite(decay_seconds, 0.05, 1.0, 0.8),
+                wet: finite(wet, 0.0, 1.0, 0.0),
             },
             Self::Compressor {
                 threshold_db,
@@ -162,13 +230,16 @@ fn finite(value: f32, min: f32, max: f32, default: f32) -> f32 {
 /// Validate the representable backend effect chain. Kira currently owns one handle per effect
 /// kind on a bus, so duplicates would otherwise be accepted while only the last value wins.
 pub(crate) fn validate_effect_chain(effects: &[AudioEffect]) -> Result<(), String> {
-    const MAX_EFFECTS_PER_BUS: usize = 8;
+    // One each of the seven fixed effect stages plus up to four independent parametric EQ bands.
+    const MAX_EFFECTS_PER_BUS: usize = 11;
+    const MAX_EQ_BANDS: usize = 4;
     if effects.len() > MAX_EFFECTS_PER_BUS {
         return Err(format!(
-            "effect chains are limited to {MAX_EFFECTS_PER_BUS} effects"
+            "effect chains are limited to {MAX_EFFECTS_PER_BUS} effect stages"
         ));
     }
     let mut kinds = std::collections::HashSet::with_capacity(effects.len());
+    let mut eq_bands = 0usize;
     for effect in effects {
         if *effect != effect.sanitized() {
             return Err("effect chain contains non-finite or out-of-range parameters".into());
@@ -176,11 +247,23 @@ pub(crate) fn validate_effect_chain(effects: &[AudioEffect]) -> Result<(), Strin
         let kind = match effect {
             AudioEffect::LowPass { .. } => 0,
             AudioEffect::HighPass { .. } => 1,
-            AudioEffect::Reverb { .. } => 2,
-            AudioEffect::Compressor { .. } => 3,
+            AudioEffect::Eq { .. } => {
+                eq_bands += 1;
+                if eq_bands > MAX_EQ_BANDS {
+                    return Err(format!(
+                        "parametric EQ supports at most {MAX_EQ_BANDS} bands per bus"
+                    ));
+                }
+                continue;
+            }
+            AudioEffect::Reverb { .. } => 3,
+            AudioEffect::Delay { .. } => 4,
+            AudioEffect::Distortion { .. } => 5,
+            AudioEffect::Convolution { .. } => 6,
+            AudioEffect::Compressor { .. } => 7,
         };
         if !kinds.insert(kind) {
-            return Err("effect chain contains duplicate effect types".into());
+            return Err("effect chains cannot contain duplicate non-EQ effect types".into());
         }
     }
     Ok(())
@@ -521,7 +604,7 @@ impl Audio {
 
 #[cfg(test)]
 mod tests {
-    use super::{AmbienceId, Audio, AudioBackend, SoundId};
+    use super::{validate_effect_chain, AmbienceId, Audio, AudioBackend, AudioEffect, SoundId};
     use crate::bank::{AmbienceAsset, SoundAsset, SoundBank};
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -697,6 +780,72 @@ mod tests {
     }
 
     #[test]
+    fn effect_chain_accepts_eq_delay_distortion_and_bounded_convolution() {
+        let effects = vec![
+            AudioEffect::LowPass { cutoff_hz: 8_000.0 },
+            AudioEffect::HighPass { cutoff_hz: 40.0 },
+            AudioEffect::Eq {
+                frequency_hz: 100.0,
+                gain_db: 2.0,
+                q: 0.8,
+            },
+            AudioEffect::Eq {
+                frequency_hz: 500.0,
+                gain_db: -1.0,
+                q: 1.2,
+            },
+            AudioEffect::Eq {
+                frequency_hz: 2_000.0,
+                gain_db: 1.5,
+                q: 1.0,
+            },
+            AudioEffect::Eq {
+                frequency_hz: 8_000.0,
+                gain_db: -2.0,
+                q: 1.4,
+            },
+            AudioEffect::Reverb {
+                wet: 0.25,
+                decay_seconds: 1.8,
+            },
+            AudioEffect::Delay {
+                delay_seconds: 0.5,
+                feedback_db: -9.0,
+                wet: 0.2,
+            },
+            AudioEffect::Distortion {
+                kind: super::AudioDistortionKind::SoftClip,
+                drive_db: 8.0,
+                wet: 0.1,
+            },
+            AudioEffect::Convolution {
+                decay_seconds: 0.75,
+                wet: 0.15,
+            },
+            AudioEffect::Compressor {
+                threshold_db: -18.0,
+                ratio: 3.0,
+            },
+        ];
+        validate_effect_chain(&effects).unwrap();
+
+        let mut too_many_eq = effects.clone();
+        too_many_eq.push(AudioEffect::Eq {
+            frequency_hz: 12_000.0,
+            gain_db: 1.0,
+            q: 1.0,
+        });
+        assert!(validate_effect_chain(&too_many_eq).is_err());
+
+        let too_long_delay = vec![AudioEffect::Delay {
+            delay_seconds: 1.5,
+            feedback_db: -12.0,
+            wet: 0.3,
+        }];
+        assert!(validate_effect_chain(&too_long_delay).is_err());
+    }
+
+    #[test]
     fn effective_bus_gain_multiplies_master_and_child_without_losing_state_on_mute() {
         use super::AudioBus;
         let mut audio = Audio::null(0.5);
@@ -771,5 +920,39 @@ mod tests {
         assert!(registry.replace("Normal", chase).unwrap().is_some());
         assert_eq!(registry.get("Normal").unwrap().gains[&AudioBus::Music], 0.3);
         assert!(registry.get("missing").is_none());
+    }
+
+    #[test]
+    fn parametric_eq_supports_four_independent_bands() {
+        let bands = vec![
+            AudioEffect::Eq {
+                frequency_hz: 80.0,
+                gain_db: -3.0,
+                q: 0.8,
+            },
+            AudioEffect::Eq {
+                frequency_hz: 250.0,
+                gain_db: 2.0,
+                q: 1.0,
+            },
+            AudioEffect::Eq {
+                frequency_hz: 2_000.0,
+                gain_db: 1.5,
+                q: 1.2,
+            },
+            AudioEffect::Eq {
+                frequency_hz: 8_000.0,
+                gain_db: -2.0,
+                q: 0.7,
+            },
+        ];
+        assert!(validate_effect_chain(&bands).is_ok());
+        let mut five = bands;
+        five.push(AudioEffect::Eq {
+            frequency_hz: 12_000.0,
+            gain_db: 1.0,
+            q: 1.0,
+        });
+        assert!(validate_effect_chain(&five).is_err());
     }
 }

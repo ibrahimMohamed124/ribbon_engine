@@ -9,6 +9,9 @@ default = ["audio"]
 audio = ["dep:kira"]
 # Optional compatibility backend for applications that still explicitly use Rodio APIs.
 rodio-compat = ["dep:rodio"]
+# Optional Valve Steam Audio SDK integration for true HRTF/binaural processing.
+# Enabling this feature auto-installs the native SDK at build time.
+steam-audio = ["audio", "dep:audionimbus"]
 
 [dependencies]
 ribbon_app = { path = "../../crates/app" }
@@ -20,6 +23,7 @@ ribbon_math = { path = "../../crates/math" }
 ribbon_scene = { path = "../../crates/scene" }
 kira = { version = "=0.12.5", optional = true, default-features = false, features = ["cpal", "symphonia", "aiff", "flac", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"], optional = true }
+audionimbus = { version = "=0.16.0", default-features = false, features = ["auto-install"], optional = true }
 
 [[example]]
 name = "audio_engine_showcase"

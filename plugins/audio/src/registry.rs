@@ -434,6 +434,7 @@ impl AudioEventRuntime {
     }
 }
 
+#[cfg(feature = "audio")]
 fn restore_map_value<V>(map: &mut HashMap<String, V>, key: &str, value: Option<V>) {
     if let Some(value) = value {
         map.insert(key.to_owned(), value);
