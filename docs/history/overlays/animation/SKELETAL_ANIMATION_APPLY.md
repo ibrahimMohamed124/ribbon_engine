@@ -16,7 +16,7 @@ Expand-Archive `
   -Force
 ```
 
-Run `cargo fmt` first, then the validation commands in `SKELETAL_ANIMATION_IMPLEMENTATION_REPORT.md`.
+Run `cargo fmt` first, then the validation commands in the [implementation report](../../../animation/SKELETAL_ANIMATION_IMPLEMENTATION_REPORT.md).
 
 ## GPU-specific validation
 

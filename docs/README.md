@@ -11,7 +11,7 @@ Start with the [project overview](guides/PROJECT_OVERVIEW.md).
   - [Athar reports](history/athar/) — physics, transitions, and compatibility.
   - [Audio reports](history/audio/) — earlier integration and compile fixes.
   - [Streaming reports](history/streaming/) — delivery, validation, and follow-up reports.
-  - [Overlay archive](history/overlays/) — retained patch instructions and overlay documentation.
+  - [Overlay archive](history/overlays/README.md) — retained patch instructions and overlay documentation.
   - [Restoration inventory](history/restore-inventory.md) — source comparison and restoration status.
 - [decisions/](decisions/) — architectural decision records.
 

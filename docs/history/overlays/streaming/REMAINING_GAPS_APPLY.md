@@ -26,4 +26,4 @@ The ignored real-adapter device-recreation test is intentionally separate from t
 
 The new source files and changes in this overlay have **not** been compiled or tested in the artifact-preparation environment. The previous 15/15 result belongs to the preceding checkout and must not be reused as evidence for this overlay.
 
-See `README_STREAMING_REMAINING_GAPS.md` for exact implementation scope and known limitations.
+See [the remaining-gaps report](../../streaming/REMAINING_GAPS_REPORT.md) for implementation scope and known limitations.
