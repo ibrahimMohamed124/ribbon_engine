@@ -17,7 +17,102 @@ pub trait AudioBackend {
     fn set_ambience(&mut self, _ambience: Option<AmbienceId>, _volume: f32) {}
     fn stop_all(&mut self) {}
     fn set_bus_gain(&mut self, _bus: AudioBus, _gain: f32) {}
+    fn set_bus_muted(&mut self, _bus: AudioBus, _muted: bool, _fade_seconds: f32) {}
+    fn set_bus_zone_gain(&mut self, _bus: AudioBus, _gain: f32, _fade_seconds: f32) {}
     fn set_effects(&mut self, _bus: AudioBus, _effects: &[AudioEffect]) {}
+    /// Apply an effect-chain change over the requested transition interval. Backends that do
+    /// not support effect parameter tweening retain the immediate default behavior.
+    fn set_effects_faded(&mut self, bus: AudioBus, effects: &[AudioEffect], _fade_seconds: f32) {
+        self.set_effects(bus, effects);
+    }
+}
+
+/// Bounded named collection of mixer states for gameplay transitions.
+///
+/// Snapshots are immutable after registration; replace one explicitly when updating a profile.
+pub struct AudioSnapshotRegistry {
+    snapshots: HashMap<String, MixerSnapshot>,
+}
+
+impl Default for AudioSnapshotRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AudioSnapshotRegistry {
+    pub const MAX_SNAPSHOTS: usize = 64;
+    pub const MAX_NAME_BYTES: usize = 64;
+
+    pub fn new() -> Self {
+        Self {
+            snapshots: HashMap::new(),
+        }
+    }
+
+    pub fn register(
+        &mut self,
+        name: impl Into<String>,
+        snapshot: MixerSnapshot,
+    ) -> Result<(), String> {
+        let name = name.into();
+        validate_snapshot_name(&name)?;
+        snapshot.validate()?;
+        if self.snapshots.contains_key(&name) {
+            return Err(format!("audio snapshot `{name}` is already registered"));
+        }
+        if self.snapshots.len() >= Self::MAX_SNAPSHOTS {
+            return Err(format!(
+                "audio snapshot registry is limited to {} entries",
+                Self::MAX_SNAPSHOTS
+            ));
+        }
+        self.snapshots.insert(name, snapshot);
+        Ok(())
+    }
+
+    pub fn replace(
+        &mut self,
+        name: impl Into<String>,
+        snapshot: MixerSnapshot,
+    ) -> Result<Option<MixerSnapshot>, String> {
+        let name = name.into();
+        validate_snapshot_name(&name)?;
+        snapshot.validate()?;
+        if !self.snapshots.contains_key(&name) && self.snapshots.len() >= Self::MAX_SNAPSHOTS {
+            return Err(format!(
+                "audio snapshot registry is limited to {} entries",
+                Self::MAX_SNAPSHOTS
+            ));
+        }
+        Ok(self.snapshots.insert(name, snapshot))
+    }
+
+    pub fn get(&self, name: &str) -> Option<&MixerSnapshot> {
+        self.snapshots.get(name)
+    }
+
+    pub fn remove(&mut self, name: &str) -> Option<MixerSnapshot> {
+        self.snapshots.remove(name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.snapshots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.snapshots.is_empty()
+    }
+}
+
+fn validate_snapshot_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() || name.len() > AudioSnapshotRegistry::MAX_NAME_BYTES {
+        return Err(format!(
+            "audio snapshot name must contain 1..={} bytes",
+            AudioSnapshotRegistry::MAX_NAME_BYTES
+        ));
+    }
+    Ok(())
 }
 
 pub struct NullBackend;
@@ -64,15 +159,73 @@ fn finite(value: f32, min: f32, max: f32, default: f32) -> f32 {
     }
 }
 
+/// Validate the representable backend effect chain. Kira currently owns one handle per effect
+/// kind on a bus, so duplicates would otherwise be accepted while only the last value wins.
+pub(crate) fn validate_effect_chain(effects: &[AudioEffect]) -> Result<(), String> {
+    const MAX_EFFECTS_PER_BUS: usize = 8;
+    if effects.len() > MAX_EFFECTS_PER_BUS {
+        return Err(format!(
+            "effect chains are limited to {MAX_EFFECTS_PER_BUS} effects"
+        ));
+    }
+    let mut kinds = std::collections::HashSet::with_capacity(effects.len());
+    for effect in effects {
+        if *effect != effect.sanitized() {
+            return Err("effect chain contains non-finite or out-of-range parameters".into());
+        }
+        let kind = match effect {
+            AudioEffect::LowPass { .. } => 0,
+            AudioEffect::HighPass { .. } => 1,
+            AudioEffect::Reverb { .. } => 2,
+            AudioEffect::Compressor { .. } => 3,
+        };
+        if !kinds.insert(kind) {
+            return Err("effect chain contains duplicate effect types".into());
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct MixerSnapshot {
     pub gains: HashMap<AudioBus, f32>,
+    /// Optional per-bus mute overrides. Omitted buses retain their current state.
+    pub mutes: HashMap<AudioBus, bool>,
+    /// Acoustic-zone gain multipliers, independent of user-configured bus gains.
+    pub zone_gains: HashMap<AudioBus, f32>,
     pub effects: HashMap<AudioBus, Vec<AudioEffect>>,
 }
 
 impl MixerSnapshot {
+    /// Validate a snapshot even when callers have modified its public maps directly.
+    pub fn validate(&self) -> Result<(), String> {
+        for (bus, gain) in &self.gains {
+            if !gain.is_finite() || !(0.0..=2.0).contains(gain) {
+                return Err(format!("snapshot contains invalid gain for {bus:?}"));
+            }
+        }
+        for (bus, gain) in &self.zone_gains {
+            if !gain.is_finite() || !(0.0..=2.0).contains(gain) {
+                return Err(format!("snapshot contains invalid zone gain for {bus:?}"));
+            }
+        }
+        for (bus, effects) in &self.effects {
+            validate_effect_chain(effects)
+                .map_err(|error| format!("snapshot has invalid effects for {bus:?}: {error}"))?;
+        }
+        Ok(())
+    }
+
     pub fn set_gain(&mut self, bus: AudioBus, gain: f32) {
         self.gains.insert(bus, finite(gain, 0.0, 2.0, 1.0));
+    }
+
+    pub fn set_muted(&mut self, bus: AudioBus, muted: bool) {
+        self.mutes.insert(bus, muted);
+    }
+
+    pub fn set_zone_gain(&mut self, bus: AudioBus, gain: f32) {
+        self.zone_gains.insert(bus, finite(gain, 0.0, 2.0, 1.0));
     }
 
     pub fn set_effects(&mut self, bus: AudioBus, effects: Vec<AudioEffect>) {
@@ -97,6 +250,7 @@ pub struct Audio {
     bus_gains: HashMap<AudioBus, f32>,
     bus_effects: HashMap<AudioBus, Vec<AudioEffect>>,
     bus_mutes: HashMap<AudioBus, bool>,
+    bus_zone_gains: HashMap<AudioBus, f32>,
     transitions: HashMap<AudioBus, (f32, f32)>,
     transition_elapsed: f32,
     transition_duration: f32,
@@ -114,6 +268,7 @@ impl Audio {
             bus_gains: HashMap::new(),
             bus_effects: HashMap::new(),
             bus_mutes: HashMap::new(),
+            bus_zone_gains: HashMap::new(),
             transitions: HashMap::new(),
             transition_elapsed: 0.0,
             transition_duration: 0.0,
@@ -137,8 +292,31 @@ impl Audio {
 
     /// Mute a bus without overwriting its configured gain. Unmuting restores that gain.
     pub fn set_bus_muted(&mut self, bus: AudioBus, muted: bool) {
+        self.set_bus_muted_faded(bus, muted, 0.0);
+    }
+
+    pub fn set_bus_muted_faded(&mut self, bus: AudioBus, muted: bool, fade_seconds: f32) {
         self.bus_mutes.insert(bus, muted);
+        self.backend
+            .set_bus_muted(bus, muted, finite(fade_seconds, 0.0, 60.0, 0.0));
         self.update_ambience();
+    }
+
+    /// Change the acoustic-zone multiplier without modifying the configured user bus gain.
+    pub fn set_bus_zone_gain(&mut self, bus: AudioBus, gain: f32) {
+        self.set_bus_zone_gain_faded(bus, gain, 0.0);
+    }
+
+    pub fn set_bus_zone_gain_faded(&mut self, bus: AudioBus, gain: f32, fade_seconds: f32) {
+        let gain = finite(gain, 0.0, 2.0, 1.0);
+        self.bus_zone_gains.insert(bus, gain);
+        self.backend
+            .set_bus_zone_gain(bus, gain, finite(fade_seconds, 0.0, 60.0, 0.0));
+        self.update_ambience();
+    }
+
+    pub fn bus_zone_gain(&self, bus: AudioBus) -> f32 {
+        self.bus_zone_gains.get(&bus).copied().unwrap_or(1.0)
     }
 
     pub fn is_bus_muted(&self, bus: AudioBus) -> bool {
@@ -165,7 +343,7 @@ impl Audio {
         } else {
             self.bus_gain(bus)
         };
-        self.effective_master_volume() * leaf_gain
+        self.effective_master_volume() * leaf_gain * self.bus_zone_gain(bus)
     }
 
     /// Start or replace a snapshot gain transition. Calling this during a transition
@@ -173,25 +351,47 @@ impl Audio {
     /// The backend-neutral wrapper sends effect descriptors to the backend, which is responsible
     /// for smoothing supported parameters; Kira's threaded façade has an explicit-duration API.
     pub fn transition_to_snapshot(&mut self, snapshot: &MixerSnapshot, duration_seconds: f32) {
+        let _ = self.try_transition_to_snapshot(snapshot, duration_seconds);
+    }
+
+    /// Checked variant of [`transition_to_snapshot`](Self::transition_to_snapshot). Invalid
+    /// snapshots or timing values are rejected before any backend state is changed.
+    pub fn try_transition_to_snapshot(
+        &mut self,
+        snapshot: &MixerSnapshot,
+        duration_seconds: f32,
+    ) -> Result<(), String> {
+        snapshot.validate()?;
+        if !duration_seconds.is_finite() || !(0.0..=60.0).contains(&duration_seconds) {
+            return Err(
+                "snapshot transition duration must be finite and within [0, 60] seconds".into(),
+            );
+        }
         self.transitions.clear();
         self.transition_elapsed = 0.0;
-        self.transition_duration = if duration_seconds.is_finite() {
-            duration_seconds.clamp(0.0, 3600.0)
-        } else {
-            0.0
-        };
+        self.transition_duration = duration_seconds;
+        let fade_seconds = self.transition_duration;
         for (bus, target) in &snapshot.gains {
-            let target = finite(*target, 0.0, 2.0, 1.0);
             let start = self.bus_gain(*bus);
-            if self.transition_duration == 0.0 || (start - target).abs() <= f32::EPSILON {
-                self.set_bus_gain(*bus, target);
+            if self.transition_duration == 0.0 || (start - *target).abs() <= f32::EPSILON {
+                self.set_bus_gain(*bus, *target);
             } else {
-                self.transitions.insert(*bus, (start, target));
+                self.transitions.insert(*bus, (start, *target));
             }
         }
         for (bus, effects) in &snapshot.effects {
-            self.set_bus_effects(*bus, effects.clone());
+            // The snapshot duration applies to DSP parameters as well as gain/mute state.
+            // Validate the whole snapshot above before issuing any backend operations.
+            self.backend.set_effects_faded(*bus, effects, fade_seconds);
+            self.bus_effects.insert(*bus, effects.clone());
         }
+        for (bus, muted) in &snapshot.mutes {
+            self.set_bus_muted_faded(*bus, *muted, fade_seconds);
+        }
+        for (bus, gain) in &snapshot.zone_gains {
+            self.set_bus_zone_gain_faded(*bus, *gain, fade_seconds);
+        }
+        Ok(())
     }
 
     /// Advance mixer transitions using the game's chosen time step. Invalid or negative
@@ -224,17 +424,41 @@ impl Audio {
         !self.transitions.is_empty()
     }
     pub fn set_bus_effects(&mut self, bus: AudioBus, effects: Vec<AudioEffect>) {
-        let effects: Vec<_> = effects.into_iter().map(AudioEffect::sanitized).collect();
+        let _ = self.try_set_bus_effects(bus, effects);
+    }
+
+    /// Set a bus effect chain and return a validation error instead of silently accepting a
+    /// chain that the current backend cannot represent.
+    pub fn try_set_bus_effects(
+        &mut self,
+        bus: AudioBus,
+        effects: Vec<AudioEffect>,
+    ) -> Result<(), String> {
+        validate_effect_chain(&effects)?;
         self.backend.set_effects(bus, &effects);
         self.bus_effects.insert(bus, effects);
+        Ok(())
     }
     pub fn apply_snapshot(&mut self, snapshot: &MixerSnapshot) {
+        let _ = self.try_apply_snapshot(snapshot);
+    }
+
+    /// Validate and apply the complete state before changing any mixer value.
+    pub fn try_apply_snapshot(&mut self, snapshot: &MixerSnapshot) -> Result<(), String> {
+        snapshot.validate()?;
         for (bus, gain) in &snapshot.gains {
             self.set_bus_gain(*bus, *gain);
         }
         for (bus, effects) in &snapshot.effects {
-            self.set_bus_effects(*bus, effects.clone());
+            self.try_set_bus_effects(*bus, effects.clone())?;
         }
+        for (bus, muted) in &snapshot.mutes {
+            self.set_bus_muted(*bus, *muted);
+        }
+        for (bus, gain) in &snapshot.zone_gains {
+            self.set_bus_zone_gain(*bus, *gain);
+        }
+        Ok(())
     }
     pub fn stop_all(&mut self) {
         self.backend.stop_all();
@@ -306,6 +530,9 @@ mod tests {
     struct Calls {
         sounds: Vec<(SoundId, f32, f32)>,
         ambience: Vec<(Option<AmbienceId>, f32)>,
+        bus_mutes: Vec<(super::AudioBus, bool, f32)>,
+        zone_gains: Vec<(super::AudioBus, f32, f32)>,
+        effect_fades: Vec<(super::AudioBus, f32)>,
     }
 
     struct Recorder(Rc<RefCell<Calls>>);
@@ -321,6 +548,29 @@ mod tests {
 
         fn set_ambience(&mut self, ambience: Option<AmbienceId>, volume: f32) {
             self.0.borrow_mut().ambience.push((ambience, volume));
+        }
+
+        fn set_bus_muted(&mut self, bus: super::AudioBus, muted: bool, fade_seconds: f32) {
+            self.0
+                .borrow_mut()
+                .bus_mutes
+                .push((bus, muted, fade_seconds));
+        }
+
+        fn set_bus_zone_gain(&mut self, bus: super::AudioBus, gain: f32, fade_seconds: f32) {
+            self.0
+                .borrow_mut()
+                .zone_gains
+                .push((bus, gain, fade_seconds));
+        }
+
+        fn set_effects_faded(
+            &mut self,
+            bus: super::AudioBus,
+            _effects: &[super::AudioEffect],
+            fade_seconds: f32,
+        ) {
+            self.0.borrow_mut().effect_fades.push((bus, fade_seconds));
         }
     }
 
@@ -389,6 +639,64 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_restores_mutes_and_zone_gains_without_overwriting_user_gain() {
+        use super::{AudioBus, MixerSnapshot};
+        let calls = Rc::new(RefCell::new(Calls::default()));
+        let mut audio = Audio::new(Box::new(Recorder(Rc::clone(&calls))), 1.0);
+        audio.set_bus_gain(AudioBus::Ambience, 0.65);
+
+        let mut snapshot = MixerSnapshot::default();
+        snapshot.set_muted(AudioBus::Ambience, true);
+        snapshot.set_zone_gain(AudioBus::Ambience, 0.25);
+        audio.transition_to_snapshot(&snapshot, 0.4);
+
+        assert!(audio.is_bus_muted(AudioBus::Ambience));
+        assert_eq!(audio.bus_gain(AudioBus::Ambience), 0.65);
+        assert_eq!(audio.bus_zone_gain(AudioBus::Ambience), 0.25);
+        assert_eq!(audio.effective_bus_gain(AudioBus::Ambience), 0.0);
+        let calls = calls.borrow();
+        assert_eq!(
+            calls.bus_mutes.last(),
+            Some(&(AudioBus::Ambience, true, 0.4))
+        );
+        assert_eq!(
+            calls.zone_gains.last(),
+            Some(&(AudioBus::Ambience, 0.25, 0.4))
+        );
+    }
+
+    #[test]
+    fn snapshot_transition_duration_is_applied_to_effect_chains() {
+        use super::{AudioBus, AudioEffect, MixerSnapshot};
+        let calls = Rc::new(RefCell::new(Calls::default()));
+        let mut audio = Audio::new(Box::new(Recorder(Rc::clone(&calls))), 1.0);
+        let effects = vec![AudioEffect::LowPass { cutoff_hz: 1_200.0 }];
+        let mut snapshot = MixerSnapshot::default();
+        snapshot.set_effects(AudioBus::Music, effects.clone());
+
+        audio.try_transition_to_snapshot(&snapshot, 1.75).unwrap();
+
+        assert_eq!(calls.borrow().effect_fades, vec![(AudioBus::Music, 1.75)]);
+        assert_eq!(audio.bus_effects.get(&AudioBus::Music), Some(&effects));
+    }
+
+    #[test]
+    fn invalid_duplicate_effect_chain_is_rejected_without_replacing_last_good_chain() {
+        use super::{AudioBus, AudioEffect};
+        let mut audio = Audio::null(1.0);
+        let valid = vec![AudioEffect::LowPass { cutoff_hz: 2_000.0 }];
+        audio
+            .try_set_bus_effects(AudioBus::Music, valid.clone())
+            .unwrap();
+        let invalid = vec![
+            AudioEffect::LowPass { cutoff_hz: 1_000.0 },
+            AudioEffect::LowPass { cutoff_hz: 500.0 },
+        ];
+        assert!(audio.try_set_bus_effects(AudioBus::Music, invalid).is_err());
+        assert_eq!(audio.bus_effects.get(&AudioBus::Music), Some(&valid));
+    }
+
+    #[test]
     fn effective_bus_gain_multiplies_master_and_child_without_losing_state_on_mute() {
         use super::AudioBus;
         let mut audio = Audio::null(0.5);
@@ -438,5 +746,30 @@ mod tests {
         let calls = calls.borrow();
         assert_eq!(calls.sounds, vec![(sound, 0.4, 0.0), (sound, 0.4, 1.0)]);
         assert_eq!(calls.ambience.last(), Some(&(Some(ambience), 0.0)));
+    }
+
+    #[test]
+    fn named_snapshot_registry_validates_names_values_and_replacement() {
+        use super::{AudioBus, AudioSnapshotRegistry, MixerSnapshot};
+
+        let mut registry = AudioSnapshotRegistry::new();
+        let mut normal = MixerSnapshot::default();
+        normal.set_gain(AudioBus::Music, 0.8);
+        registry.register("Normal", normal).unwrap();
+        assert_eq!(registry.len(), 1);
+        assert!(registry
+            .register("Normal", MixerSnapshot::default())
+            .is_err());
+        assert!(registry.register("  ", MixerSnapshot::default()).is_err());
+
+        let mut invalid = MixerSnapshot::default();
+        invalid.gains.insert(AudioBus::Sfx, f32::NAN);
+        assert!(registry.register("Invalid", invalid).is_err());
+
+        let mut chase = MixerSnapshot::default();
+        chase.set_gain(AudioBus::Music, 0.3);
+        assert!(registry.replace("Normal", chase).unwrap().is_some());
+        assert_eq!(registry.get("Normal").unwrap().gains[&AudioBus::Music], 0.3);
+        assert!(registry.get("missing").is_none());
     }
 }

@@ -21,7 +21,14 @@ impl Vec3 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
     pub fn length(self) -> f32 {
-        self.dot(self).sqrt()
+        self.x.hypot(self.y).hypot(self.z)
+    }
+    pub fn cross(self, rhs: Self) -> Self {
+        Self::new(
+            self.y * rhs.z - self.z * rhs.y,
+            self.z * rhs.x - self.x * rhs.z,
+            self.x * rhs.y - self.y * rhs.x,
+        )
     }
     pub fn normalized(self) -> Self {
         let length = self.length();
@@ -41,6 +48,22 @@ impl std::ops::Sub for Vec3 {
     }
 }
 
+impl std::ops::Add for Vec3 {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::new(self.x + rhs.x, self.y + rhs.y, self.z + rhs.z)
+    }
+}
+
+impl std::ops::Mul<f32> for Vec3 {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self::new(self.x * rhs, self.y * rhs, self.z * rhs)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Listener3d {
     pub position: Vec3,
@@ -53,7 +76,8 @@ impl Default for Listener3d {
     fn default() -> Self {
         Self {
             position: Vec3::ZERO,
-            forward: Vec3::new(0.0, 1.0, 0.0),
+            // Matches ribbon_math::forward_vec(Angles::default()).
+            forward: Vec3::new(1.0, 0.0, 0.0),
             up: Vec3::new(0.0, 0.0, 1.0),
             velocity: Vec3::ZERO,
         }
@@ -88,28 +112,95 @@ impl Default for Emitter3d {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpatialResult {
     pub distance: f32,
+    /// Stereo pan from the listener's local right axis. This is not an HRTF renderer.
     pub pan: f32,
     pub attenuation: f32,
     pub gain: f32,
     pub doppler_ratio: f32,
+    /// Normalized source direction in listener-local right/forward/up coordinates.
+    pub local_direction: Vec3,
+    /// Signed azimuth in radians; positive means listener-right.
+    pub azimuth_radians: f32,
+    /// Signed elevation in radians; positive means listener-up.
+    pub elevation_radians: f32,
 }
 
-/// Inverse-distance attenuation with near/far clamps and a conservative Doppler ratio.
+/// Supported distance attenuation curves. Sources beyond `max_distance` are silent for all models.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DistanceModel {
+    /// Classic inverse-distance rolloff, normalized to unity at the near distance.
+    Inverse,
+    /// Linear interpolation from unity at the near distance to silence at the far distance.
+    Linear,
+    /// Exponential falloff, normalized to unity at the near distance.
+    Exponential,
+}
+
+/// Inverse-distance attenuation with near/far limits and a conservative Doppler ratio.
 pub fn calculate(listener: Listener3d, emitter: Emitter3d, speed_of_sound: f32) -> SpatialResult {
-    let raw_delta = emitter.position - listener.position;
-    let delta = if raw_delta.x.is_finite() && raw_delta.y.is_finite() && raw_delta.z.is_finite() {
-        raw_delta
-    } else {
-        Vec3::ZERO
-    };
+    calculate_with_model(listener, emitter, speed_of_sound, DistanceModel::Inverse)
+}
+
+/// Calculate listener-local 3D direction, a stereo-compatible pan approximation, attenuation,
+/// and Doppler. Ribbon scenes use +Z up and `forward_vec(Angles::default())` = +X; listener
+/// `forward` and `up` define orientation. Positive pan is listener-right.
+pub fn calculate_with_model(
+    listener: Listener3d,
+    emitter: Emitter3d,
+    speed_of_sound: f32,
+    model: DistanceModel,
+) -> SpatialResult {
+    // Subtract in f64 first so large, finite f32 world coordinates cannot overflow to infinity.
+    let delta = Vec3::new(
+        ((emitter.position.x as f64) - (listener.position.x as f64))
+            .clamp(-(f32::MAX as f64), f32::MAX as f64) as f32,
+        ((emitter.position.y as f64) - (listener.position.y as f64))
+            .clamp(-(f32::MAX as f64), f32::MAX as f64) as f32,
+        ((emitter.position.z as f64) - (listener.position.z as f64))
+            .clamp(-(f32::MAX as f64), f32::MAX as f64) as f32,
+    );
     let distance = delta.length();
-    let forward = listener.forward.normalized();
-    let right = Vec3::new(forward.y, -forward.x, 0.0).normalized();
-    let pan = if distance > 1.0e-5 {
-        delta.normalized().dot(right).clamp(-1.0, 1.0)
+    let distance = if distance.is_finite() {
+        distance
+    } else {
+        f32::MAX
+    };
+
+    let mut forward = listener.forward.normalized();
+    if forward == Vec3::ZERO {
+        forward = Vec3::new(1.0, 0.0, 0.0);
+    }
+    let mut up = listener.up;
+    if !up.x.is_finite() || !up.y.is_finite() || !up.z.is_finite() {
+        up = Vec3::new(0.0, 0.0, 1.0);
+    }
+    // Gram-Schmidt makes the listener basis orthonormal and stable when forward/up are not.
+    up = (up - forward * up.dot(forward)).normalized();
+    if up == Vec3::ZERO {
+        let fallback = if forward.z.abs() < 0.9 {
+            Vec3::new(0.0, 0.0, 1.0)
+        } else {
+            Vec3::new(1.0, 0.0, 0.0)
+        };
+        up = (fallback - forward * fallback.dot(forward)).normalized();
+    }
+    let right = forward.cross(up).normalized();
+    let up = right.cross(forward).normalized();
+
+    let direction = delta.normalized();
+    let local_direction = Vec3::new(
+        direction.dot(right),
+        direction.dot(forward),
+        direction.dot(up),
+    );
+    let horizontal = local_direction.x.hypot(local_direction.y);
+    let pan = if distance > 1.0e-5 && horizontal > 1.0e-5 {
+        (local_direction.x / horizontal).clamp(-1.0, 1.0)
     } else {
         0.0
     };
+    let azimuth_radians = local_direction.x.atan2(local_direction.y);
+    let elevation_radians = local_direction.z.atan2(horizontal);
     let min_distance = if emitter.min_distance.is_finite() {
         emitter.min_distance.max(0.01)
     } else {
@@ -120,13 +211,29 @@ pub fn calculate(listener: Listener3d, emitter: Emitter3d, speed_of_sound: f32) 
     } else {
         100.0
     };
-    let clamped_distance = distance.clamp(min_distance, max_distance);
     let rolloff = if emitter.rolloff.is_finite() {
         emitter.rolloff.clamp(0.0, 4.0)
     } else {
         1.0
     };
-    let attenuation = 1.0 / (1.0 + rolloff * ((clamped_distance / min_distance) - 1.0).max(0.0));
+    let attenuation = if distance > max_distance {
+        0.0
+    } else {
+        let clamped_distance = distance.max(min_distance);
+        match model {
+            DistanceModel::Inverse => {
+                1.0 / (1.0 + rolloff * ((clamped_distance / min_distance) - 1.0).max(0.0))
+            }
+            DistanceModel::Linear => {
+                let span = (max_distance - min_distance).max(f32::EPSILON);
+                (1.0 - rolloff.min(1.0) * ((clamped_distance - min_distance) / span))
+                    .clamp(0.0, 1.0)
+            }
+            DistanceModel::Exponential => {
+                (min_distance / clamped_distance.max(min_distance)).powf(rolloff)
+            }
+        }
+    };
     let occlusion = if emitter.occlusion.is_finite() {
         emitter.occlusion.clamp(0.0, 1.0)
     } else {
@@ -143,8 +250,15 @@ pub fn calculate(listener: Listener3d, emitter: Emitter3d, speed_of_sound: f32) 
     } else {
         343.0
     };
-    let relative_velocity = emitter.velocity - listener.velocity;
-    let radial_raw = relative_velocity.dot(delta.normalized());
+    let finite_velocity = |velocity: Vec3| {
+        if velocity.x.is_finite() && velocity.y.is_finite() && velocity.z.is_finite() {
+            velocity
+        } else {
+            Vec3::ZERO
+        }
+    };
+    let relative_velocity = finite_velocity(emitter.velocity) - finite_velocity(listener.velocity);
+    let radial_raw = relative_velocity.dot(direction);
     let radial_velocity = if radial_raw.is_finite() {
         radial_raw
     } else {
@@ -159,6 +273,17 @@ pub fn calculate(listener: Listener3d, emitter: Emitter3d, speed_of_sound: f32) 
         attenuation,
         gain: gain.clamp(0.0, 4.0),
         doppler_ratio,
+        local_direction,
+        azimuth_radians: if azimuth_radians.is_finite() {
+            azimuth_radians
+        } else {
+            0.0
+        },
+        elevation_radians: if elevation_radians.is_finite() {
+            elevation_radians
+        } else {
+            0.0
+        },
     }
 }
 
@@ -224,5 +349,66 @@ mod tests {
             343.0,
         );
         assert!(blocked.gain < clear.gain);
+    }
+
+    #[test]
+    fn listener_basis_respects_rotation_and_elevation() {
+        let listener = Listener3d {
+            position: Vec3::ZERO,
+            forward: Vec3::new(1.0, 0.0, 0.0),
+            up: Vec3::new(0.0, 0.0, 1.0),
+            velocity: Vec3::ZERO,
+        };
+        let right = calculate(
+            listener,
+            Emitter3d {
+                position: Vec3::new(0.0, -10.0, 0.0),
+                ..Emitter3d::default()
+            },
+            343.0,
+        );
+        assert!(right.pan > 0.99);
+        assert!(right.azimuth_radians > 1.5);
+
+        let above = calculate(
+            listener,
+            Emitter3d {
+                position: Vec3::new(0.0, 0.0, 10.0),
+                ..Emitter3d::default()
+            },
+            343.0,
+        );
+        assert!(above.elevation_radians > 1.5);
+    }
+
+    #[test]
+    fn distance_models_are_distinct_and_far_cutoff_is_silent() {
+        let emitter = Emitter3d {
+            position: Vec3::new(0.0, 10.0, 0.0),
+            min_distance: 1.0,
+            max_distance: 20.0,
+            rolloff: 1.0,
+            ..Emitter3d::default()
+        };
+        let listener = Listener3d::default();
+        let inverse = calculate_with_model(listener, emitter, 343.0, DistanceModel::Inverse);
+        let linear = calculate_with_model(listener, emitter, 343.0, DistanceModel::Linear);
+        let exponential =
+            calculate_with_model(listener, emitter, 343.0, DistanceModel::Exponential);
+        assert!((0.0..1.0).contains(&inverse.attenuation));
+        assert!((0.0..1.0).contains(&linear.attenuation));
+        assert!((0.0..1.0).contains(&exponential.attenuation));
+        assert_ne!(inverse.attenuation, linear.attenuation);
+
+        let beyond = calculate(
+            listener,
+            Emitter3d {
+                position: Vec3::new(0.0, 21.0, 0.0),
+                ..emitter
+            },
+            343.0,
+        );
+        assert_eq!(beyond.attenuation, 0.0);
+        assert_eq!(beyond.gain, 0.0);
     }
 }

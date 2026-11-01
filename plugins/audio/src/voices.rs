@@ -4,6 +4,19 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VoiceId(pub u64);
 
+/// Bounded batch of playback handles which naturally completed or finished stopping.
+/// `dropped_notifications_total` is cumulative for the lifetime of the backend; a non-zero value
+/// means the consumer did not poll completion batches quickly enough and should reconcile its
+/// own event bookkeeping against current voice state.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VoiceCompletions {
+    pub voices: Vec<VoiceId>,
+    pub dropped_notifications_total: u64,
+    /// Current live IDs at the time of the backend poll. `Some` enables reconciliation when a
+    /// bounded completion queue overflowed; `None` is used by legacy sinks without snapshots.
+    pub active_voices: Option<Vec<VoiceId>>,
+}
+
 /// Backend-independent state reported for a live Kira playback handle. Completed voices are
 /// removed from the active registry and queried as `None` rather than keeping stale records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

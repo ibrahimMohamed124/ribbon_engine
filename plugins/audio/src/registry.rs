@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 
 use crate::bank::{AmbienceId, SoundId};
+use crate::voices::{VoiceCompletions, VoiceId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AudioEventKind {
@@ -122,6 +123,12 @@ impl AudioEventRegistry {
         if name.trim().is_empty() {
             return Err("audio event name cannot be empty".into());
         }
+        if name.len() > 128 {
+            return Err("audio event names are limited to 128 bytes".into());
+        }
+        if self.len() >= 4096 {
+            return Err("audio event registry is limited to 4096 entries".into());
+        }
         if !def.gain.is_finite() || !(0.0..=4.0).contains(&def.gain) {
             return Err(format!("invalid gain for audio event `{name}`"));
         }
@@ -146,6 +153,12 @@ impl AudioEventRegistry {
         let name = name.into();
         if name.trim().is_empty() {
             return Err("audio event name cannot be empty".into());
+        }
+        if name.len() > 128 {
+            return Err("audio event names are limited to 128 bytes".into());
+        }
+        if self.len() >= 4096 {
+            return Err("audio event registry is limited to 4096 entries".into());
         }
         if self.by_name.contains_key(&name) || self.variants_by_name.contains_key(&name) {
             return Err(format!("duplicate audio event `{name}`"));
@@ -179,6 +192,15 @@ pub struct AudioEventRuntime {
     last_played: HashMap<String, f64>,
     active_instances: HashMap<String, u16>,
     previous_variant: HashMap<String, SoundId>,
+    /// Playback handles bound to the event slots they own. This lets completion notifications
+    /// release exactly the corresponding slot instead of requiring callers to match names.
+    voice_events: HashMap<VoiceId, VoiceEventBinding>,
+}
+
+#[derive(Clone, Debug)]
+struct VoiceEventBinding {
+    event_name: String,
+    consecutive_missing_snapshots: u8,
 }
 
 impl AudioEventRuntime {
@@ -192,6 +214,7 @@ impl AudioEventRuntime {
             last_played: HashMap::new(),
             active_instances: HashMap::new(),
             previous_variant: HashMap::new(),
+            voice_events: HashMap::new(),
         }
     }
 
@@ -249,8 +272,131 @@ impl AudioEventRuntime {
         Ok(result)
     }
 
-    /// Release one instance slot after its playback handle has completed or has been stopped.
+    /// Resolve and submit a registered event in one operation, binding the returned playback ID
+    /// to its concurrency slot. Submission or binding failure releases the reserved slot; a voice
+    /// that could not be bound is stopped rather than leaked.
+    #[cfg(feature = "audio")]
+    pub fn trigger_and_play(
+        &mut self,
+        registry: &AudioEventRegistry,
+        name: &str,
+        now_seconds: f64,
+        sink: &crate::threaded::ThreadedAudioSink,
+    ) -> Result<VoiceId, String> {
+        let previous_rng = self.rng_state;
+        let previous_last_played = self.last_played.get(name).copied();
+        let previous_variant = self.previous_variant.get(name).copied();
+        let event = self.trigger(registry, name, now_seconds)?;
+        let voice = match sink.play_resolved_event(&event) {
+            Ok(voice) => voice,
+            Err(error) => {
+                self.release_event_slot(name);
+                self.rng_state = previous_rng;
+                restore_map_value(&mut self.last_played, name, previous_last_played);
+                restore_map_value(&mut self.previous_variant, name, previous_variant);
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.bind_voice(name, voice) {
+            let _ = sink.stop_voice(voice, 0.0);
+            self.release_event_slot(name);
+            self.rng_state = previous_rng;
+            restore_map_value(&mut self.last_played, name, previous_last_played);
+            restore_map_value(&mut self.previous_variant, name, previous_variant);
+            return Err(error);
+        }
+        Ok(voice)
+    }
+
+    /// Associate a successfully submitted voice with a previously resolved event.
+    /// A caller should bind immediately after `play_resolved_event` succeeds.
+    pub fn bind_voice(&mut self, event_name: &str, voice: VoiceId) -> Result<(), String> {
+        if self.active_instances.get(event_name).copied().unwrap_or(0) == 0 {
+            return Err(format!(
+                "audio event `{event_name}` has no reserved instance slot"
+            ));
+        }
+        if self.voice_events.contains_key(&voice) {
+            return Err(format!(
+                "voice {voice:?} is already bound to an audio event"
+            ));
+        }
+        if self.voice_events.len() >= 4096 {
+            return Err("audio event voice-binding limit reached".into());
+        }
+        self.voice_events.insert(
+            voice,
+            VoiceEventBinding {
+                event_name: event_name.to_owned(),
+                consecutive_missing_snapshots: 0,
+            },
+        );
+        Ok(())
+    }
+
+    /// Release the exact event slot associated with a completed/stopped/failed playback voice.
+    pub fn finish_voice(&mut self, voice: VoiceId) -> bool {
+        let Some(binding) = self.voice_events.remove(&voice) else {
+            return false;
+        };
+        self.release_event_slot(&binding.event_name)
+    }
+
+    /// Consume one worker completion batch and release all matching event slots.
+    /// Returns the number of slots actually released. Inspect
+    /// `VoiceCompletions::dropped_notifications_total` and reconcile voice state if it is non-zero.
+    pub fn finish_completions(&mut self, completions: &VoiceCompletions) -> usize {
+        let mut released = completions
+            .voices
+            .iter()
+            .filter(|voice| self.finish_voice(**voice))
+            .count();
+
+        // A bounded completion notification queue may overflow during a long period without
+        // polling. The backend's active-ID snapshot makes missed completions recoverable without
+        // retaining event slots indefinitely. Legacy sinks return `None` and remain event-driven.
+        if let Some(active_voices) = &completions.active_voices {
+            let active: std::collections::HashSet<VoiceId> =
+                active_voices.iter().copied().collect();
+            let mut finished = Vec::new();
+            for (voice, binding) in &mut self.voice_events {
+                if active.contains(voice) {
+                    binding.consecutive_missing_snapshots = 0;
+                } else {
+                    binding.consecutive_missing_snapshots =
+                        binding.consecutive_missing_snapshots.saturating_add(1);
+                    // A completion snapshot may have been queued before a just-submitted Play
+                    // command. Require two consecutive authoritative misses before reconciling
+                    // an absent voice, while explicit completion notifications remain immediate.
+                    if binding.consecutive_missing_snapshots >= 2 {
+                        finished.push(*voice);
+                    }
+                }
+            }
+            for voice in finished {
+                if self.finish_voice(voice) {
+                    released += 1;
+                }
+            }
+        }
+        released
+    }
+
+    /// Release one instance slot by event name for legacy integrations.
+    /// When voices are bound, the oldest stable voice ID is detached as well.
     pub fn finish(&mut self, event_name: &str) -> bool {
+        if let Some(voice) = self
+            .voice_events
+            .iter()
+            .filter_map(|(voice, binding)| (binding.event_name == event_name).then_some(*voice))
+            .min_by_key(|voice| voice.0)
+        {
+            self.voice_events.remove(&voice);
+        }
+        self.release_event_slot(event_name)
+    }
+
+    fn release_event_slot(&mut self, event_name: &str) -> bool {
         let Some(active_count) = self.active_instances.get(event_name).copied() else {
             return false;
         };
@@ -262,6 +408,11 @@ impl AudioEventRuntime {
             self.active_instances.remove(event_name);
         }
         true
+    }
+
+    /// Number of voice-to-event bindings still waiting for a completion notification.
+    pub fn bound_voice_count(&self) -> usize {
+        self.voice_events.len()
     }
 
     pub fn active_instances(&self, event_name: &str) -> u16 {
@@ -280,6 +431,14 @@ impl AudioEventRuntime {
 
     fn next_unit(&mut self) -> f32 {
         self.next_u32() as f32 / u32::MAX as f32
+    }
+}
+
+fn restore_map_value<V>(map: &mut HashMap<String, V>, key: &str, value: Option<V>) {
+    if let Some(value) = value {
+        map.insert(key.to_owned(), value);
+    } else {
+        map.remove(key);
     }
 }
 
@@ -325,6 +484,12 @@ impl AudioParameters {
         let name = name.into();
         if name.trim().is_empty() {
             return Err("parameter name cannot be empty".into());
+        }
+        if name.len() > 128 {
+            return Err("parameter names are limited to 128 bytes".into());
+        }
+        if self.values.len() >= 256 {
+            return Err("audio parameter registry is limited to 256 entries".into());
         }
         if self.values.contains_key(&name) {
             return Err(format!("duplicate audio parameter `{name}`"));
@@ -492,5 +657,77 @@ mod tests {
         assert!(registry
             .register_variants("bad", invalid, &[SoundId(1)])
             .is_err());
+    }
+
+    #[test]
+    fn voice_completion_releases_the_matching_event_slot_once() {
+        let known = [SoundId(11), SoundId(12)];
+        let descriptor = AudioEventDescriptor {
+            variants: known.to_vec(),
+            gain_min: 1.0,
+            gain_max: 1.0,
+            playback_rate_min: 1.0,
+            playback_rate_max: 1.0,
+            priority: 10,
+            max_instances: 2,
+            cooldown_seconds: 0.0,
+            bus: AudioBus::Sfx,
+            looping: false,
+        };
+        let mut registry = AudioEventRegistry::default();
+        registry
+            .register_variants("impact", descriptor, &known)
+            .unwrap();
+        let mut runtime = AudioEventRuntime::new(5);
+        runtime.trigger(&registry, "impact", 1.0).unwrap();
+        runtime.bind_voice("impact", VoiceId(42)).unwrap();
+        assert_eq!(runtime.active_instances("impact"), 1);
+        assert_eq!(runtime.bound_voice_count(), 1);
+        assert!(runtime.finish_voice(VoiceId(42)));
+        assert!(!runtime.finish_voice(VoiceId(42)));
+        assert_eq!(runtime.active_instances("impact"), 0);
+        assert_eq!(runtime.bound_voice_count(), 0);
+    }
+
+    #[test]
+    fn active_voice_snapshot_repairs_slots_after_completion_queue_overflow() {
+        let known = [SoundId(21)];
+        let descriptor = AudioEventDescriptor {
+            variants: known.to_vec(),
+            gain_min: 1.0,
+            gain_max: 1.0,
+            playback_rate_min: 1.0,
+            playback_rate_max: 1.0,
+            priority: 10,
+            max_instances: 1,
+            cooldown_seconds: 0.0,
+            bus: AudioBus::Sfx,
+            looping: false,
+        };
+        let mut registry = AudioEventRegistry::default();
+        registry
+            .register_variants("ambient_ping", descriptor, &known)
+            .unwrap();
+        let mut runtime = AudioEventRuntime::new(1);
+        runtime.trigger(&registry, "ambient_ping", 0.0).unwrap();
+        runtime.bind_voice("ambient_ping", VoiceId(99)).unwrap();
+
+        let first_miss = runtime.finish_completions(&VoiceCompletions {
+            voices: Vec::new(),
+            dropped_notifications_total: 1,
+            active_voices: Some(Vec::new()),
+        });
+        assert_eq!(
+            first_miss, 0,
+            "one stale snapshot must not race a queued Play"
+        );
+        let released = runtime.finish_completions(&VoiceCompletions {
+            voices: Vec::new(),
+            dropped_notifications_total: 1,
+            active_voices: Some(Vec::new()),
+        });
+        assert_eq!(released, 1);
+        assert_eq!(runtime.active_instances("ambient_ping"), 0);
+        assert_eq!(runtime.bound_voice_count(), 0);
     }
 }

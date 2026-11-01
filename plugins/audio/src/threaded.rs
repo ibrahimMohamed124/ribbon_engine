@@ -11,16 +11,21 @@ use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
+use crate::assets::AudioAssetHandle;
+use crate::automation::AutomationCommand;
 use crate::bank::{AmbienceId, SoundBank, SoundId};
 use crate::debug::AudioDiagnostics;
 use crate::kira_backend::{KiraAudioBackend, PlaybackOptions};
-use crate::mixer::{AudioEffect, MixerSnapshot};
+use crate::mixer::{validate_effect_chain, AudioEffect, AudioSnapshotRegistry, MixerSnapshot};
 use crate::registry::{AudioBus, ResolvedAudioEvent};
-use crate::voices::{PlaybackStatus, VoiceId};
-use crate::AudioSink;
+use crate::voices::{PlaybackStatus, VoiceCompletions, VoiceId};
+use crate::{AudioSink, ManagedEmitterAcoustics};
 
 const COMMAND_CAPACITY: usize = 256;
 const MAX_PENDING_STREAM_BYTES: u64 = 64 * 1024 * 1024;
+// 256 parameter bindings may additionally collapse into one effect-chain command for each of
+// the seven built-in buses.
+const MAX_AUTOMATION_COMMANDS: usize = 263;
 
 enum Command {
     Play {
@@ -116,22 +121,28 @@ enum Command {
     },
     Snapshot {
         gains: Vec<(AudioBus, f32)>,
+        mutes: Vec<(AudioBus, bool)>,
+        zone_gains: Vec<(AudioBus, f32)>,
         effects: Vec<(AudioBus, Vec<AudioEffect>)>,
+        transition_seconds: f32,
+    },
+    AutomationFrame {
+        commands: Vec<AutomationCommand>,
         transition_seconds: f32,
     },
     VoiceState {
         voice: VoiceId,
         reply: SyncSender<Option<PlaybackStatus>>,
     },
+    CompletedVoices {
+        reply: SyncSender<VoiceCompletions>,
+    },
     Diagnostics {
         reply: SyncSender<AudioDiagnostics>,
     },
     SpatialUpdate {
         voice: VoiceId,
-        gain: f32,
-        pan: f32,
-        rate: f32,
-        occlusion: f32,
+        acoustics: ManagedEmitterAcoustics,
     },
 }
 
@@ -144,6 +155,7 @@ pub struct ThreadedAudioSink {
     backend_failures: Arc<AtomicU64>,
     last_backend_error: Arc<Mutex<Option<String>>>,
     pending_stream_bytes: Arc<AtomicU64>,
+    completion_reply: Mutex<Option<Receiver<VoiceCompletions>>>,
     known_sounds: HashSet<SoundId>,
 }
 
@@ -185,6 +197,7 @@ impl ThreadedAudioSink {
                 backend_failures,
                 last_backend_error,
                 pending_stream_bytes,
+                completion_reply: Mutex::new(None),
                 known_sounds,
             }),
             Ok(Err(error)) => {
@@ -229,9 +242,8 @@ impl ThreadedAudioSink {
         })
     }
 
-    fn allocate_voice(&self) -> VoiceId {
-        let id = self.next_voice.fetch_add(1, Ordering::Relaxed);
-        VoiceId(id.max(1))
+    fn allocate_voice(&self) -> Result<VoiceId, String> {
+        allocate_voice_id(&self.next_voice)
     }
 
     fn record_facade_failure(&self, error: &str) {
@@ -249,7 +261,7 @@ impl ThreadedAudioSink {
         if !self.known_sounds.contains(&sound) {
             return Err(format!("unknown sound id {:?}", sound));
         }
-        let voice = self.allocate_voice();
+        let voice = self.allocate_voice()?;
         self.enqueue(Command::Play {
             voice,
             sound,
@@ -281,7 +293,7 @@ impl ThreadedAudioSink {
         path: impl AsRef<Path>,
         options: PlaybackOptions,
     ) -> Result<VoiceId, String> {
-        let voice = self.allocate_voice();
+        let voice = self.allocate_voice()?;
         self.enqueue(Command::StreamFile {
             voice,
             path: path.as_ref().to_path_buf(),
@@ -292,6 +304,36 @@ impl ThreadedAudioSink {
 
     /// Play an encoded byte source through Kira's streaming decoder (encoded bytes are retained;
     /// decoded PCM is produced in chunks). Useful for packaged long tracks.
+    /// Stream a dynamic Ribbon audio asset through Kira's chunked decoder. The handle must have
+    /// completed its initial load (`AudioAssetHandle::snapshot` is then available). The immutable
+    /// revision snapshot makes a hot reload affect future playbacks without mutating bytes already
+    /// submitted to a live voice. Use the embedded `SoundBank` path for frequently reused short
+    /// clips that should be predecoded and cached as static sounds.
+    pub fn play_audio_asset(
+        &self,
+        asset: &AudioAssetHandle,
+        options: PlaybackOptions,
+    ) -> Result<VoiceId, String> {
+        let snapshot = asset
+            .snapshot()
+            .ok_or_else(|| format!("audio asset `{}` is not loaded yet", asset.path()))?;
+        if snapshot.bytes.is_empty() {
+            return Err(format!(
+                "audio asset `{}` has no encoded data",
+                snapshot.path
+            ));
+        }
+        // Check before cloning: an oversized in-memory AssetServer source must not allocate a
+        // second large Vec merely to be rejected by `play_streaming_bytes`.
+        if snapshot.bytes.len() as u64 > MAX_PENDING_STREAM_BYTES {
+            return Err(format!(
+                "audio asset `{}` exceeds the 64 MiB in-memory stream limit; use play_streaming_file for long tracks",
+                snapshot.path
+            ));
+        }
+        self.play_streaming_bytes(snapshot.bytes.as_ref().to_vec(), options)
+    }
+
     pub fn play_streaming_bytes(
         &self,
         bytes: Vec<u8>,
@@ -306,7 +348,13 @@ impl ThreadedAudioSink {
             return Err("streaming byte source exceeds the 64 MiB command-budget limit; use play_streaming_file for long tracks".into());
         }
         self.reserve_stream_bytes(size)?;
-        let voice = self.allocate_voice();
+        let voice = match self.allocate_voice() {
+            Ok(voice) => voice,
+            Err(error) => {
+                self.pending_stream_bytes.fetch_sub(size, Ordering::AcqRel);
+                return Err(error);
+            }
+        };
         match self.enqueue(Command::StreamBytes {
             voice,
             bytes,
@@ -388,6 +436,49 @@ impl ThreadedAudioSink {
         self.enqueue(Command::VoiceState { voice, reply })?;
         Ok(result)
     }
+    /// Request completed playback handles without blocking the caller. Feed the returned voice
+    /// IDs to `AudioEventRuntime::finish_voice` to release event concurrency slots automatically.
+    /// The response reports cumulative notification overflow so consumers can detect missed IDs.
+    pub fn request_completed_voices(&self) -> Result<Receiver<VoiceCompletions>, String> {
+        let (reply, result) = mpsc::sync_channel(1);
+        self.enqueue(Command::CompletedVoices { reply })?;
+        Ok(result)
+    }
+
+    /// Poll completed playback handles without waiting for the Kira worker.
+    ///
+    /// A query is submitted on the first call. Its response is collected on the next call, which
+    /// deliberately adds at most one update of observation latency while keeping the game thread
+    /// non-blocking. Query submission uses the same bounded command queue as playback controls.
+    pub fn poll_completed_voices(&self) -> VoiceCompletions {
+        let Ok(mut pending) = self.completion_reply.lock() else {
+            self.record_facade_failure("completion reply lock is poisoned");
+            return VoiceCompletions::default();
+        };
+
+        let mut result = VoiceCompletions::default();
+        if let Some(receiver) = pending.as_ref() {
+            match receiver.try_recv() {
+                Ok(completions) => {
+                    result = completions;
+                    *pending = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => return result,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    *pending = None;
+                    self.record_facade_failure("audio worker dropped completion response");
+                }
+            }
+        }
+
+        if pending.is_none() {
+            let (reply, response) = mpsc::sync_channel(1);
+            if self.enqueue(Command::CompletedVoices { reply }).is_ok() {
+                *pending = Some(response);
+            }
+        }
+        result
+    }
     /// Request owner-thread metrics without forcing Kira handles to cross threads.
     pub fn request_diagnostics(&self) -> Result<Receiver<AudioDiagnostics>, String> {
         let (reply, result) = mpsc::sync_channel(1);
@@ -395,6 +486,10 @@ impl ThreadedAudioSink {
         Ok(result)
     }
     pub fn set_bus_gain(&self, bus: AudioBus, gain: f32, fade_seconds: f32) -> Result<(), String> {
+        if !gain.is_finite() || !(0.0..=2.0).contains(&gain) {
+            return Err("bus gain must be finite and within [0, 2]".into());
+        }
+        validate_transition_seconds(fade_seconds)?;
         self.enqueue(Command::BusGain {
             bus,
             gain,
@@ -407,6 +502,7 @@ impl ThreadedAudioSink {
         muted: bool,
         fade_seconds: f32,
     ) -> Result<(), String> {
+        validate_transition_seconds(fade_seconds)?;
         self.enqueue(Command::BusMute {
             bus,
             muted,
@@ -420,6 +516,10 @@ impl ThreadedAudioSink {
         gain: f32,
         fade_seconds: f32,
     ) -> Result<(), String> {
+        if !gain.is_finite() || !(0.0..=2.0).contains(&gain) {
+            return Err("bus zone gain must be finite and within [0, 2]".into());
+        }
+        validate_transition_seconds(fade_seconds)?;
         self.enqueue(Command::BusZoneGain {
             bus,
             gain,
@@ -427,10 +527,36 @@ impl ThreadedAudioSink {
         })
     }
     pub fn set_bus_effects(&self, bus: AudioBus, effects: Vec<AudioEffect>) -> Result<(), String> {
+        validate_effect_chain(&effects)?;
         self.enqueue(Command::Effects {
             bus,
             effects,
             transition_seconds: 0.08,
+        })
+    }
+
+    /// Submit one bounded automation frame as a single queue message. This guarantees all
+    /// commands in the frame are either accepted together or rejected together when the queue is
+    /// saturated. The backend still reports individual stale-voice failures asynchronously.
+    pub fn apply_automation_frame(
+        &self,
+        commands: Vec<AutomationCommand>,
+        transition_seconds: f32,
+    ) -> Result<(), String> {
+        if commands.len() > MAX_AUTOMATION_COMMANDS {
+            return Err(format!(
+                "automation frames are limited to {MAX_AUTOMATION_COMMANDS} commands"
+            ));
+        }
+        if !transition_seconds.is_finite() || !(0.0..=60.0).contains(&transition_seconds) {
+            return Err("automation transition must be finite and within [0, 60] seconds".into());
+        }
+        for command in &commands {
+            command.validate()?;
+        }
+        self.enqueue(Command::AutomationFrame {
+            commands,
+            transition_seconds,
         })
     }
     /// Smoothly tween all gains/effects included in a snapshot. Omitted buses are left unchanged.
@@ -439,12 +565,26 @@ impl ThreadedAudioSink {
         snapshot: &MixerSnapshot,
         transition_seconds: f32,
     ) -> Result<(), String> {
+        validate_transition_seconds(transition_seconds)?;
+        snapshot.validate()?;
         let mut gains: Vec<_> = snapshot
             .gains
             .iter()
             .map(|(bus, gain)| (*bus, *gain))
             .collect();
         gains.sort_by_key(|(bus, _)| bus_order(*bus));
+        let mut mutes: Vec<_> = snapshot
+            .mutes
+            .iter()
+            .map(|(bus, muted)| (*bus, *muted))
+            .collect();
+        mutes.sort_by_key(|(bus, _)| bus_order(*bus));
+        let mut zone_gains: Vec<_> = snapshot
+            .zone_gains
+            .iter()
+            .map(|(bus, gain)| (*bus, *gain))
+            .collect();
+        zone_gains.sort_by_key(|(bus, _)| bus_order(*bus));
         let mut effects: Vec<_> = snapshot
             .effects
             .iter()
@@ -453,10 +593,26 @@ impl ThreadedAudioSink {
         effects.sort_by_key(|(bus, _)| bus_order(*bus));
         self.enqueue(Command::Snapshot {
             gains,
+            mutes,
+            zone_gains,
             effects,
             transition_seconds,
         })
     }
+
+    /// Activate a registered named mixer profile. The snapshot itself remains backend-independent.
+    pub fn transition_to_named_snapshot(
+        &self,
+        registry: &AudioSnapshotRegistry,
+        name: &str,
+        transition_seconds: f32,
+    ) -> Result<(), String> {
+        let snapshot = registry
+            .get(name)
+            .ok_or_else(|| format!("unknown audio snapshot `{name}`"))?;
+        self.transition_to_snapshot(snapshot, transition_seconds)
+    }
+
     /// Start/update an ambient layer independent of the legacy single-selected-ambience API.
     pub fn set_ambience_layer(
         &self,
@@ -468,6 +624,34 @@ impl ThreadedAudioSink {
             id,
             gain,
             fade_seconds,
+        })
+    }
+
+    /// Update a moving 3D voice with a material-aware transmission response.
+    pub fn update_voice_spatial_acoustics(
+        &self,
+        voice: VoiceId,
+        acoustics: ManagedEmitterAcoustics,
+    ) -> Result<(), String> {
+        if !acoustics.gain.is_finite()
+            || !acoustics.pan.is_finite()
+            || !acoustics.playback_rate.is_finite()
+            || !acoustics.occlusion.is_finite()
+            || !acoustics.transmission_gain.is_finite()
+            || !acoustics.low_pass_cutoff_hz.is_finite()
+        {
+            return Err("spatial acoustic parameters must be finite".into());
+        }
+        self.enqueue(Command::SpatialUpdate {
+            voice,
+            acoustics: ManagedEmitterAcoustics {
+                gain: acoustics.gain.clamp(0.0, 4.0),
+                pan: sanitize_pan(acoustics.pan),
+                playback_rate: sanitize_doppler(acoustics.playback_rate),
+                occlusion: acoustics.occlusion.clamp(0.0, 1.0),
+                transmission_gain: acoustics.transmission_gain.clamp(0.0, 1.0),
+                low_pass_cutoff_hz: acoustics.low_pass_cutoff_hz.clamp(20.0, 20_000.0),
+            },
         })
     }
     pub fn stop_ambience_layer(&self, id: AmbienceId, fade_seconds: f32) -> Result<(), String> {
@@ -496,6 +680,10 @@ impl ThreadedAudioSink {
 }
 
 impl AudioSink for ThreadedAudioSink {
+    fn supports_managed_voices(&self) -> bool {
+        true
+    }
+
     fn play(&mut self, id: SoundId, gain: f32, pan: f32) {
         let options = PlaybackOptions {
             gain,
@@ -510,7 +698,13 @@ impl AudioSink for ThreadedAudioSink {
         if !gain.is_finite() || gain <= 0.0 {
             return;
         }
-        let voice = self.allocate_voice();
+        let voice = match self.allocate_voice() {
+            Ok(voice) => voice,
+            Err(error) => {
+                self.record_facade_failure(&error);
+                return;
+            }
+        };
         let options = PlaybackOptions {
             gain,
             pan: sanitize_pan(pan),
@@ -537,6 +731,10 @@ impl AudioSink for ThreadedAudioSink {
         }) {
             self.record_facade_failure(&error);
         }
+    }
+
+    fn take_completed_voices(&mut self) -> VoiceCompletions {
+        self.poll_completed_voices()
     }
 
     fn play_managed_emitter(&mut self, playback: crate::ManagedEmitterPlayback) -> Option<VoiceId> {
@@ -570,22 +768,33 @@ impl AudioSink for ThreadedAudioSink {
         playback_rate: f32,
         occlusion: f32,
     ) {
-        let command = Command::SpatialUpdate {
-            voice,
-            gain: if gain.is_finite() {
-                gain.clamp(0.0, 4.0)
-            } else {
-                0.0
-            },
-            pan: sanitize_pan(pan),
-            rate: sanitize_doppler(playback_rate),
-            occlusion: if occlusion.is_finite() {
-                occlusion.clamp(0.0, 1.0)
-            } else {
-                0.0
-            },
+        let occlusion = if occlusion.is_finite() {
+            occlusion.clamp(0.0, 1.0)
+        } else {
+            0.0
         };
-        if let Err(error) = self.enqueue(command) {
+        let cutoff = 20_000.0 * (1.0 - occlusion) + 700.0 * occlusion;
+        if let Err(error) = self.update_voice_spatial_acoustics(
+            voice,
+            ManagedEmitterAcoustics {
+                gain: if gain.is_finite() { gain } else { 0.0 },
+                pan,
+                playback_rate,
+                occlusion,
+                transmission_gain: 1.0,
+                low_pass_cutoff_hz: cutoff,
+            },
+        ) {
+            self.record_facade_failure(&error);
+        }
+    }
+
+    fn update_managed_emitter_acoustics(
+        &mut self,
+        voice: VoiceId,
+        acoustics: ManagedEmitterAcoustics,
+    ) {
+        if let Err(error) = self.update_voice_spatial_acoustics(voice, acoustics) {
             self.record_facade_failure(&error);
         }
     }
@@ -596,24 +805,46 @@ impl AudioSink for ThreadedAudioSink {
         }
     }
 
-    fn set_bus_effects(&mut self, bus: AudioBus, effects: &[AudioEffect]) {
-        if let Err(error) = self.enqueue(Command::Effects {
-            bus,
-            effects: effects.to_vec(),
-            transition_seconds: 0.12,
-        }) {
-            self.record_facade_failure(&error);
-        }
+    fn set_bus_zone_gain(&mut self, bus: AudioBus, gain: f32, fade_seconds: f32) {
+        let _ = self.try_set_bus_zone_gain(bus, gain, fade_seconds);
     }
 
-    fn set_bus_zone_gain(&mut self, bus: AudioBus, gain: f32, fade_seconds: f32) {
-        if let Err(error) = self.enqueue(Command::BusZoneGain {
+    fn try_set_bus_zone_gain(
+        &mut self,
+        bus: AudioBus,
+        gain: f32,
+        fade_seconds: f32,
+    ) -> Result<(), String> {
+        let result = self.enqueue(Command::BusZoneGain {
             bus,
             gain,
             fade_seconds,
-        }) {
-            self.record_facade_failure(&error);
+        });
+        if let Err(error) = &result {
+            self.record_facade_failure(error);
         }
+        result
+    }
+
+    fn set_bus_effects(&mut self, bus: AudioBus, effects: &[AudioEffect]) {
+        let _ = self.try_set_bus_effects(bus, effects);
+    }
+
+    fn try_set_bus_effects(
+        &mut self,
+        bus: AudioBus,
+        effects: &[AudioEffect],
+    ) -> Result<(), String> {
+        validate_effect_chain(effects)?;
+        let result = self.enqueue(Command::Effects {
+            bus,
+            effects: effects.to_vec(),
+            transition_seconds: 0.12,
+        });
+        if let Err(error) = &result {
+            self.record_facade_failure(error);
+        }
+        result
     }
 }
 
@@ -654,19 +885,35 @@ fn worker_main(
                 sound,
                 options,
                 doppler,
-            } => backend.play_voice(voice, sound, options, doppler),
+            } => {
+                let result = backend.play_voice(voice, sound, options, doppler);
+                if result.is_err() {
+                    backend.report_voice_start_failed(voice);
+                }
+                result
+            }
             Command::StreamFile {
                 voice,
                 path,
                 options,
-            } => backend.play_streaming_file(voice, path, options),
+            } => {
+                let result = backend.play_streaming_file(voice, path, options);
+                if result.is_err() {
+                    backend.report_voice_start_failed(voice);
+                }
+                result
+            }
             Command::StreamBytes {
                 voice,
                 bytes,
                 options,
             } => {
                 pending_stream_bytes.fetch_sub(bytes.len() as u64, Ordering::AcqRel);
-                backend.play_streaming_bytes(voice, bytes, options)
+                let result = backend.play_streaming_bytes(voice, bytes, options);
+                if result.is_err() {
+                    backend.report_voice_start_failed(voice);
+                }
+                result
             }
             Command::Stop {
                 voice,
@@ -801,33 +1048,88 @@ fn worker_main(
             }
             Command::Snapshot {
                 gains,
+                mutes,
+                zone_gains,
                 effects,
                 transition_seconds,
             } => {
                 for (bus, gain) in gains {
                     backend.set_bus_gain(bus, gain, transition_seconds);
                 }
+                for (bus, muted) in mutes {
+                    backend.set_bus_muted(bus, muted, transition_seconds);
+                }
+                for (bus, gain) in zone_gains {
+                    backend.set_bus_zone_gain(bus, gain, transition_seconds);
+                }
                 for (bus, chain) in effects {
                     backend.set_bus_effects_faded(bus, &chain, transition_seconds);
                 }
                 Ok(())
             }
+            Command::AutomationFrame {
+                commands,
+                transition_seconds,
+            } => {
+                let mut first_error = None;
+                for command in commands {
+                    let result = match command {
+                        AutomationCommand::SetBusGain { bus, gain } => {
+                            backend.set_bus_gain(bus, gain, transition_seconds);
+                            Ok(())
+                        }
+                        AutomationCommand::SetVoiceGain { voice, gain } => {
+                            if backend.set_voice_gain(voice, gain, transition_seconds) {
+                                Ok(())
+                            } else {
+                                Err(format!("automation references stale voice {voice:?}"))
+                            }
+                        }
+                        AutomationCommand::SetVoicePlaybackRate { voice, rate } => {
+                            if backend.set_voice_rate(voice, rate, transition_seconds) {
+                                Ok(())
+                            } else {
+                                Err(format!("automation references stale voice {voice:?}"))
+                            }
+                        }
+                        AutomationCommand::SetVoicePan { voice, pan } => {
+                            if backend.set_voice_pan(voice, pan, transition_seconds) {
+                                Ok(())
+                            } else {
+                                Err(format!("automation references stale voice {voice:?}"))
+                            }
+                        }
+                        AutomationCommand::SetBusEffects { bus, effects } => {
+                            backend.set_bus_effects_faded(bus, &effects, transition_seconds);
+                            Ok(())
+                        }
+                    };
+                    if first_error.is_none() {
+                        first_error = result.err();
+                    }
+                }
+                first_error.map_or(Ok(()), Err)
+            }
             Command::VoiceState { voice, reply } => {
                 let _ = reply.send(backend.voice_state(voice));
+                Ok(())
+            }
+            Command::CompletedVoices { reply } => {
+                let (voices, dropped_notifications_total, active_voices) =
+                    backend.take_completed_voices();
+                let _ = reply.send(VoiceCompletions {
+                    voices,
+                    dropped_notifications_total,
+                    active_voices: Some(active_voices),
+                });
                 Ok(())
             }
             Command::Diagnostics { reply } => {
                 let _ = reply.send(backend.diagnostics());
                 Ok(())
             }
-            Command::SpatialUpdate {
-                voice,
-                gain,
-                pan,
-                rate,
-                occlusion,
-            } => {
-                if backend.update_voice_spatial(voice, gain, pan, rate, occlusion) {
+            Command::SpatialUpdate { voice, acoustics } => {
+                if backend.update_voice_spatial_acoustics(voice, acoustics) {
                     Ok(())
                 } else {
                     Err(format!(
@@ -859,6 +1161,29 @@ fn bus_order(bus: AudioBus) -> u8 {
         AudioBus::Voice => 5,
         AudioBus::Ui => 6,
     }
+}
+
+fn validate_transition_seconds(seconds: f32) -> Result<(), String> {
+    if seconds.is_finite() && (0.0..=60.0).contains(&seconds) {
+        Ok(())
+    } else {
+        Err("audio transition duration must be finite and within [0, 60] seconds".into())
+    }
+}
+
+fn allocate_voice_id(counter: &AtomicU64) -> Result<VoiceId, String> {
+    // `fetch_add` would wrap at u64::MAX and could eventually alias a still-live voice.
+    // `try_update` leaves the counter unchanged on exhaustion and never returns ID zero.
+    counter
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            if next == 0 {
+                None
+            } else {
+                next.checked_add(1)
+            }
+        })
+        .map(VoiceId)
+        .map_err(|_| "audio voice identifier space exhausted".to_owned())
 }
 
 fn sanitize_pan(pan: f32) -> f32 {
@@ -899,5 +1224,19 @@ mod tests {
         assert_eq!(sanitize_pan(5.0), 1.0);
         assert_eq!(sanitize_pan(f32::NAN), 0.0);
         assert_eq!(sanitize_doppler(9.0), 2.0);
+    }
+
+    #[test]
+    fn voice_id_allocator_never_wraps_or_reuses_zero() {
+        let counter = AtomicU64::new(1);
+        assert_eq!(allocate_voice_id(&counter).unwrap(), VoiceId(1));
+        assert_eq!(allocate_voice_id(&counter).unwrap(), VoiceId(2));
+
+        let exhausted = AtomicU64::new(u64::MAX);
+        assert!(allocate_voice_id(&exhausted).is_err());
+        assert_eq!(exhausted.load(Ordering::Relaxed), u64::MAX);
+        let invalid = AtomicU64::new(0);
+        assert!(allocate_voice_id(&invalid).is_err());
+        assert_eq!(invalid.load(Ordering::Relaxed), 0);
     }
 }

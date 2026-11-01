@@ -3,7 +3,7 @@
 //! The backend is deliberately owner-thread-only. `threaded::ThreadedAudioSink` runs it on
 //! a dedicated worker and exposes a bounded command channel to gameplay/ECS systems.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Cursor;
 use std::path::Path;
 use std::time::Duration;
@@ -23,14 +23,20 @@ use crate::debug::AudioDiagnostics;
 use crate::mixer::{AudioBackend, AudioEffect};
 use crate::registry::AudioBus;
 use crate::voices::{PlaybackStatus, VoiceId};
+use crate::ManagedEmitterAcoustics;
 
 const MAX_VOICES: usize = 128;
 const MAX_STATIC_SOUND_BYTES: usize = 16 * 1024 * 1024;
 const MAX_STATIC_BANK_BYTES: usize = 64 * 1024 * 1024;
+// Encoded size is not a useful proxy for decoded memory (highly compressed music can expand
+// dramatically). These limits bound the PCM retained by the static sound cache.
+const MAX_STATIC_SOUND_PCM_BYTES: usize = 64 * 1024 * 1024;
+const MAX_STATIC_BANK_PCM_BYTES: usize = 128 * 1024 * 1024;
 const DEFAULT_FADE_SECONDS: f32 = 0.12;
 const SILENCE_DB: f32 = -100.0;
 const MAX_ENCODED_STREAM_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TOTAL_SUB_TRACKS: usize = MAX_VOICES * 2 + 32;
+const MAX_COMPLETED_VOICE_NOTIFICATIONS: usize = 256;
 
 /// Settings for a single playback instance. Numeric values are sanitized at the boundary.
 #[derive(Clone, Copy, Debug)]
@@ -291,6 +297,9 @@ pub struct KiraAudioBackend {
     next_sequence: u64,
     next_internal_voice: u64,
     ambience_layers: HashMap<AmbienceId, VoiceId>,
+    completed_voices: VecDeque<VoiceId>,
+    dropped_completion_notifications: u64,
+    decoded_static_pcm_bytes: usize,
     decode_failures: usize,
     last_decode_error: Option<String>,
 }
@@ -326,6 +335,7 @@ impl KiraAudioBackend {
         // Content-keyed cache ensures different IDs referencing identical bytes share one decode.
         let mut unique: HashMap<&'static [u8], StaticSoundData> = HashMap::new();
         let mut encoded_bank_bytes = 0usize;
+        let mut decoded_static_pcm_bytes = 0usize;
         let mut decode_failures = 0usize;
         let mut last_decode_error = None;
         for asset in bank.sounds() {
@@ -359,7 +369,27 @@ impl KiraAudioBackend {
                 }
                 match StaticSoundData::from_cursor(Cursor::new(asset.data.to_vec())) {
                     Ok(data) => {
+                        let pcm_bytes = static_pcm_storage_bytes(&data);
+                        let next_pcm_total = decoded_static_pcm_bytes.saturating_add(pcm_bytes);
+                        if data.frames.is_empty()
+                            || pcm_bytes > MAX_STATIC_SOUND_PCM_BYTES
+                            || next_pcm_total > MAX_STATIC_BANK_PCM_BYTES
+                        {
+                            record_decode_failure(
+                                &mut decode_failures,
+                                &mut last_decode_error,
+                                format!(
+                                    "sound {:?} decoded to {} MiB PCM; static PCM limits are {} MiB per sound / {} MiB per bank; use streaming",
+                                    asset.id,
+                                    pcm_bytes / (1024 * 1024),
+                                    MAX_STATIC_SOUND_PCM_BYTES / (1024 * 1024),
+                                    MAX_STATIC_BANK_PCM_BYTES / (1024 * 1024),
+                                ),
+                            );
+                            continue;
+                        }
                         encoded_bank_bytes = next_total;
+                        decoded_static_pcm_bytes = next_pcm_total;
                         unique.insert(asset.data, data.clone());
                         data
                     }
@@ -386,6 +416,9 @@ impl KiraAudioBackend {
             next_sequence: 1,
             next_internal_voice: u64::MAX,
             ambience_layers: HashMap::new(),
+            decoded_static_pcm_bytes,
+            completed_voices: VecDeque::with_capacity(MAX_COMPLETED_VOICE_NOTIFICATIONS),
+            dropped_completion_notifications: 0,
             decode_failures,
             last_decode_error,
         })
@@ -414,7 +447,7 @@ impl KiraAudioBackend {
             .get(&sound)
             .cloned()
             .ok_or_else(|| format!("sound {:?} is registered but not decoded", sound))?;
-        self.admit_voice_id(id, options.priority)?;
+        let victim = self.select_voice_victim(id, options.priority)?;
         let base_gain = clamp_finite(options.gain * asset_gain, 0.0, 4.0, 0.0);
         let rate = clamp_finite(
             options.playback_rate * asset_speed * doppler,
@@ -462,6 +495,9 @@ impl KiraAudioBackend {
                 is_streaming: false,
             },
         );
+        if let Some(victim) = victim {
+            self.retire_voice(victim, DEFAULT_FADE_SECONDS);
+        }
         Ok(())
     }
 
@@ -479,7 +515,7 @@ impl KiraAudioBackend {
                 path.as_ref().display()
             )
         })?;
-        self.admit_voice_id(id, options.priority)?;
+        let victim = self.select_voice_victim(id, options.priority)?;
         let route_bus = if self.buses.contains_key(&options.bus) {
             options.bus
         } else {
@@ -528,6 +564,9 @@ impl KiraAudioBackend {
                 is_streaming: true,
             },
         );
+        if let Some(victim) = victim {
+            self.retire_voice(victim, DEFAULT_FADE_SECONDS);
+        }
         Ok(())
     }
 
@@ -558,7 +597,7 @@ impl KiraAudioBackend {
         }
         let data = StreamingSoundData::from_cursor(Cursor::new(bytes))
             .map_err(|error| format!("could not create streaming decoder: {error}"))?;
-        self.admit_voice_id(id, options.priority)?;
+        let victim = self.select_voice_victim(id, options.priority)?;
         let route_bus = if self.buses.contains_key(&options.bus) {
             options.bus
         } else {
@@ -607,6 +646,9 @@ impl KiraAudioBackend {
                 is_streaming: true,
             },
         );
+        if let Some(victim) = victim {
+            self.retire_voice(victim, DEFAULT_FADE_SECONDS);
+        }
         Ok(())
     }
 
@@ -686,18 +728,56 @@ impl KiraAudioBackend {
         rate: f32,
         occlusion: f32,
     ) -> bool {
-        if !gain.is_finite() || !pan.is_finite() || !rate.is_finite() || !occlusion.is_finite() {
+        if !occlusion.is_finite() {
+            return false;
+        }
+        let occlusion = occlusion.clamp(0.0, 1.0);
+        let cutoff = 20_000.0 * (1.0 - occlusion) + 700.0 * occlusion;
+        self.update_voice_spatial_acoustics(
+            id,
+            ManagedEmitterAcoustics {
+                gain,
+                pan,
+                playback_rate: rate,
+                occlusion,
+                transmission_gain: 1.0,
+                low_pass_cutoff_hz: cutoff,
+            },
+        )
+    }
+
+    /// Update listener-relative controls plus material transmission and explicit low-pass cutoff.
+    pub fn update_voice_spatial_acoustics(
+        &mut self,
+        id: VoiceId,
+        acoustics: ManagedEmitterAcoustics,
+    ) -> bool {
+        let ManagedEmitterAcoustics {
+            gain,
+            pan,
+            playback_rate,
+            occlusion,
+            transmission_gain,
+            low_pass_cutoff_hz,
+        } = acoustics;
+        if !gain.is_finite()
+            || !pan.is_finite()
+            || !playback_rate.is_finite()
+            || !occlusion.is_finite()
+            || !transmission_gain.is_finite()
+            || !low_pass_cutoff_hz.is_finite()
+        {
             return false;
         }
         let Some(voice) = self.voices.get_mut(&id) else {
             return false;
         };
-        let occlusion = occlusion.clamp(0.0, 1.0);
-        let cutoff = 20_000.0 * (1.0 - occlusion) + 700.0 * occlusion;
+        let effective_gain = gain.clamp(0.0, 4.0) * transmission_gain.clamp(0.0, 1.0);
+        let cutoff = low_pass_cutoff_hz.clamp(20.0, 20_000.0);
         let tween = tween(0.05);
-        voice.handle.set_gain(gain.clamp(0.0, 4.0), tween);
+        voice.handle.set_gain(effective_gain.clamp(0.0, 4.0), tween);
         voice.handle.set_pan(pan.clamp(-1.0, 1.0), tween);
-        voice.handle.set_rate(rate.clamp(0.25, 4.0), tween);
+        voice.handle.set_rate(playback_rate.clamp(0.25, 4.0), tween);
         voice.occlusion_filter.set_cutoff(cutoff as f64, tween);
         voice.occlusion_filter.set_mix(Mix(1.0), tween);
         true
@@ -791,6 +871,7 @@ impl KiraAudioBackend {
             registered_sounds: self.bank.sound_count(),
             registered_ambiences: self.bank.ambience_count(),
             embedded_encoded_bytes: self.bank.estimated_encoded_bytes(),
+            decoded_static_pcm_bytes: self.decoded_static_pcm_bytes,
             active_streaming_voices: self
                 .voices
                 .values()
@@ -808,6 +889,18 @@ impl KiraAudioBackend {
             last_decode_error: self.last_decode_error.clone(),
         }
     }
+
+    /// Drain handles whose playback reached its stopped state since the previous drain.
+    /// The queue is bounded; `dropped_completion_notifications` reports any overflow so the
+    /// application can reconcile its event bookkeeping rather than silently assuming completeness.
+    pub fn take_completed_voices(&mut self) -> (Vec<VoiceId>, u64, Vec<VoiceId>) {
+        self.cleanup_finished();
+        let voices = self.completed_voices.drain(..).collect();
+        let mut active: Vec<VoiceId> = self.voices.keys().copied().collect();
+        active.extend(self.retiring_voices.iter().map(|voice| voice.id));
+        active.sort_by_key(|voice| voice.0);
+        (voices, self.dropped_completion_notifications, active)
+    }
     pub fn set_bus_effects(&mut self, bus: AudioBus, effects: &[AudioEffect]) {
         self.set_bus_effects_faded(bus, effects, 0.08);
     }
@@ -823,14 +916,20 @@ impl KiraAudioBackend {
         }
     }
 
-    fn admit_voice_id(&mut self, id: VoiceId, priority: u8) -> Result<(), String> {
+    /// Select a victim without mutating the active set. The caller starts the new Kira sound first
+    /// and retires this candidate only after Kira has accepted and registered that sound.
+    fn select_voice_victim(
+        &mut self,
+        id: VoiceId,
+        priority: u8,
+    ) -> Result<Option<VoiceId>, String> {
         self.cleanup_finished();
         if self.voices.contains_key(&id) || self.retiring_voices.iter().any(|voice| voice.id == id)
         {
             return Err(format!("voice ID {:?} is already in use", id));
         }
         if self.voices.len() < MAX_VOICES {
-            return Ok(());
+            return Ok(None);
         }
         let victim = self
             .voices
@@ -843,8 +942,7 @@ impl KiraAudioBackend {
         if priority <= victim_priority {
             return Err("audio voice limit reached; incoming priority is not high enough".into());
         }
-        self.retire_voice(victim_id, DEFAULT_FADE_SECONDS);
-        Ok(())
+        Ok(Some(victim_id))
     }
 
     fn retire_voice(&mut self, id: VoiceId, fade_seconds: f32) {
@@ -854,24 +952,45 @@ impl KiraAudioBackend {
             if self.retiring_voices.len() >= MAX_VOICES {
                 let mut oldest = self.retiring_voices.remove(0);
                 oldest.handle.stop(Tween::default());
+                self.record_completed_voice(oldest.id);
             }
             self.retiring_voices.push(voice);
         }
     }
 
-    fn allocate_internal_voice(&mut self) -> VoiceId {
-        loop {
+    fn record_completed_voice(&mut self, voice: VoiceId) {
+        if self.completed_voices.len() >= MAX_COMPLETED_VOICE_NOTIFICATIONS {
+            self.completed_voices.pop_front();
+            self.dropped_completion_notifications =
+                self.dropped_completion_notifications.saturating_add(1);
+        }
+        self.completed_voices.push_back(voice);
+    }
+
+    /// Report a failed asynchronous start as a completion so clients can release reservations
+    /// made when the command was accepted by the facade queue.
+    pub fn report_voice_start_failed(&mut self, voice: VoiceId) {
+        if !self.voices.contains_key(&voice)
+            && !self.retiring_voices.iter().any(|active| active.id == voice)
+        {
+            self.record_completed_voice(voice);
+        }
+    }
+
+    fn allocate_internal_voice(&mut self) -> Result<VoiceId, String> {
+        while self.next_internal_voice != 0 {
             let candidate = VoiceId(self.next_internal_voice);
-            self.next_internal_voice = self.next_internal_voice.wrapping_sub(1);
+            self.next_internal_voice = self.next_internal_voice.saturating_sub(1);
             if !self.voices.contains_key(&candidate)
                 && !self
                     .retiring_voices
                     .iter()
                     .any(|voice| voice.id == candidate)
             {
-                return candidate;
+                return Ok(candidate);
             }
         }
+        Err("internal audio voice identifier space exhausted".into())
     }
 
     /// Start or update one independently controlled looping ambience layer. Passing zero gain
@@ -908,7 +1027,7 @@ impl KiraAudioBackend {
             }
             self.ambience_layers.remove(&id);
         }
-        let voice = self.allocate_internal_voice();
+        let voice = self.allocate_internal_voice()?;
         let options = PlaybackOptions {
             gain: gain * asset_gain,
             looping: true,
@@ -961,10 +1080,31 @@ impl KiraAudioBackend {
     }
 
     fn cleanup_finished(&mut self) {
-        self.voices
-            .retain(|_, voice| voice.handle.state(&voice._track) != PlaybackState::Stopped);
-        self.retiring_voices
-            .retain(|voice| voice.handle.state(&voice._track) != PlaybackState::Stopped);
+        let finished_active: Vec<VoiceId> = self
+            .voices
+            .iter()
+            .filter_map(|(id, voice)| {
+                (voice.handle.state(&voice._track) == PlaybackState::Stopped).then_some(*id)
+            })
+            .collect();
+        for id in finished_active {
+            self.voices.remove(&id);
+            self.record_completed_voice(id);
+        }
+
+        let mut index = 0;
+        while index < self.retiring_voices.len() {
+            if self.retiring_voices[index]
+                .handle
+                .state(&self.retiring_voices[index]._track)
+                == PlaybackState::Stopped
+            {
+                let voice = self.retiring_voices.remove(index);
+                self.record_completed_voice(voice.id);
+            } else {
+                index += 1;
+            }
+        }
         let active_ids: HashSet<VoiceId> = self.voices.keys().copied().collect();
         self.ambience_layers
             .retain(|_, voice_id| active_ids.contains(voice_id));
@@ -1021,6 +1161,9 @@ impl AudioBackend for KiraAudioBackend {
     }
     fn set_effects(&mut self, bus: AudioBus, effects: &[AudioEffect]) {
         self.set_bus_effects(bus, effects);
+    }
+    fn set_effects_faded(&mut self, bus: AudioBus, effects: &[AudioEffect], fade_seconds: f32) {
+        self.set_bus_effects_faded(bus, effects, fade_seconds);
     }
 }
 
@@ -1141,6 +1284,10 @@ fn playback_status(state: PlaybackState) -> PlaybackStatus {
     }
 }
 
+fn static_pcm_storage_bytes(data: &StaticSoundData) -> usize {
+    std::mem::size_of_val(data.frames.as_ref())
+}
+
 fn record_decode_failure(count: &mut usize, last: &mut Option<String>, message: String) {
     *count = (*count).saturating_add(1);
     // Keep diagnostics bounded even if an upstream decoder includes a long malformed-input dump.
@@ -1239,10 +1386,25 @@ mod tests {
     }
 
     #[test]
+    fn static_pcm_accounting_measures_decoded_frames_not_encoded_source_bytes() {
+        let encoded = include_bytes!("../examples/assets/tone.wav");
+        let decoded = StaticSoundData::from_cursor(Cursor::new(encoded.to_vec()))
+            .expect("bundled test WAV must decode");
+        assert!(!decoded.frames.is_empty());
+        assert_eq!(
+            static_pcm_storage_bytes(&decoded),
+            decoded.frames.len() * std::mem::size_of_val(&decoded.frames[0])
+        );
+        assert!(static_pcm_storage_bytes(&decoded) > 0);
+    }
+
+    #[test]
     fn stream_byte_limits_are_explicit_and_finite() {
         assert_eq!(MAX_ENCODED_STREAM_BYTES, 64 * 1024 * 1024);
         assert_eq!(MAX_STATIC_SOUND_BYTES, 16 * 1024 * 1024);
         assert_eq!(MAX_STATIC_BANK_BYTES, 64 * 1024 * 1024);
+        assert_eq!(MAX_STATIC_SOUND_PCM_BYTES, 64 * 1024 * 1024);
+        assert_eq!(MAX_STATIC_BANK_PCM_BYTES, 128 * 1024 * 1024);
         const { assert!(MAX_TOTAL_SUB_TRACKS >= MAX_VOICES * 2) };
     }
 }
