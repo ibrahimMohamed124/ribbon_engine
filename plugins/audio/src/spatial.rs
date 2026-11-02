@@ -76,9 +76,9 @@ impl Default for Listener3d {
     fn default() -> Self {
         Self {
             position: Vec3::ZERO,
-            // Matches ribbon_math::forward_vec(Angles::default()).
-            forward: Vec3::new(1.0, 0.0, 0.0),
-            up: Vec3::new(0.0, 0.0, 1.0),
+            // Matches Ribbon's modern 3D scene convention: Y-up, local -Z forward.
+            forward: Vec3::new(0.0, 0.0, -1.0),
+            up: Vec3::new(0.0, 1.0, 0.0),
             velocity: Vec3::ZERO,
         }
     }
@@ -142,8 +142,9 @@ pub fn calculate(listener: Listener3d, emitter: Emitter3d, speed_of_sound: f32) 
 }
 
 /// Calculate listener-local 3D direction, a stereo-compatible pan approximation, attenuation,
-/// and Doppler. Ribbon scenes use +Z up and `forward_vec(Angles::default())` = +X; listener
-/// `forward` and `up` define orientation. Positive pan is listener-right.
+/// and Doppler. Modern Ribbon 3D scenes use +Y up and local -Z forward; listener `forward` and
+/// `up` define orientation. Positive pan is listener-right. The legacy `AudioListener` adapter
+/// remains a separate +Z-up compatibility path.
 pub fn calculate_with_model(
     listener: Listener3d,
     emitter: Emitter3d,
@@ -379,6 +380,28 @@ mod tests {
             343.0,
         );
         assert!(above.elevation_radians > 1.5);
+    }
+
+    #[test]
+    fn large_finite_world_coordinates_keep_direction_and_doppler_finite() {
+        let listener = Listener3d {
+            position: Vec3::new(-f32::MAX, 0.0, 0.0),
+            velocity: Vec3::new(0.0, 0.0, 0.0),
+            ..Listener3d::default()
+        };
+        let emitter = Emitter3d {
+            position: Vec3::new(f32::MAX, 0.0, 0.0),
+            velocity: Vec3::new(-12.0, 0.0, 0.0),
+            ..Emitter3d::default()
+        };
+        let result = calculate(listener, emitter, 343.0);
+        assert!(result.distance.is_finite());
+        assert!(result.local_direction.x.is_finite());
+        assert!(result.pan.is_finite());
+        assert!(result.doppler_ratio.is_finite());
+        assert!(result.pan > 0.999);
+        assert!(result.doppler_ratio > 1.0);
+        assert_eq!(result.attenuation, 0.0);
     }
 
     #[test]

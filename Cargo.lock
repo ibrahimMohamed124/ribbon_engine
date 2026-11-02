@@ -153,6 +153,7 @@ dependencies = [
  "ribbon_ecs",
  "ribbon_events",
  "ribbon_platform",
+ "ribbon_plugin_audio",
  "ribbon_plugin_gltf",
  "ribbon_plugin_physics",
  "ribbon_plugin_render3d",
@@ -2608,6 +2609,7 @@ name = "ribbon_plugin_audio"
 version = "0.1.0"
 dependencies = [
  "audionimbus",
+ "glam 0.30.10",
  "kira",
  "ribbon_app",
  "ribbon_assets",

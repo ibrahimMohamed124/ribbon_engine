@@ -21,6 +21,10 @@ ribbon_events = { path = "../../crates/events" }
 ribbon_assets = { path = "../../crates/assets" }
 ribbon_math = { path = "../../crates/math" }
 ribbon_scene = { path = "../../crates/scene" }
+# The audio ECS adapter reads the quaternion and world-space translation from the
+# scene's modern GlobalTransform3D. Keep this dependency local to the integration
+# boundary; ribbon_math and the legacy scene transform API remain unchanged.
+glam = "0.30"
 kira = { version = "=0.12.5", optional = true, default-features = false, features = ["cpal", "symphonia", "aiff", "flac", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"], optional = true }
 audionimbus = { version = "=0.16.0", default-features = false, features = ["auto-install"], optional = true }

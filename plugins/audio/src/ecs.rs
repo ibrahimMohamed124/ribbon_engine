@@ -1,15 +1,16 @@
 //! ECS adapters for moving emitters, transform-backed listeners, lightweight occlusion,
 //! and trigger-volume environmental acoustics.
 //!
-//! `AudioZoneVolume` is an oriented box centered on `GlobalTransform.translation`.
+//! `AudioZoneVolume` is an oriented box centered on `GlobalTransform3D.translation`.
 //! Physics engines can provide occlusion through `AudioOcclusionQuery`; the audio plugin does
 //! not depend on a particular collision system. Queries are staggered across frames.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use glam::{Quat, Vec3};
 use ribbon_ecs::{Entity, World};
-use ribbon_scene::GlobalTransform;
+use ribbon_scene::GlobalTransform3D;
 
 use crate::spatial::{self, AcousticZone, Emitter3d};
 use crate::{
@@ -23,9 +24,9 @@ const EFFECT_TWEEN_SECONDS: f32 = 0.12;
 
 /// A looping or one-shot sound attached to an entity's world transform.
 ///
-/// Requires `ribbon_scene::ScenePlugin` (or another system) to keep `GlobalTransform` current.
-/// Audio coordinates follow Ribbon's right-handed world convention: +Z is up and listener
-/// forward follows `Angles { psi, phi }` through `ribbon_math::forward_vec`.
+/// Requires `ribbon_scene::ScenePlugin` (or another system) to keep `GlobalTransform3D` current.
+/// Audio positions and velocities are world-space values. Modern 3D orientation follows Ribbon's
+/// Y-up, local -Z-forward convention. The legacy `AudioListener` component remains separate.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AudioEmitter {
     pub sound: SoundId,
@@ -143,11 +144,12 @@ pub trait AudioOcclusionQuery: Send + Sync + 'static {
 #[derive(Default, Clone)]
 pub struct AudioOcclusionProvider(pub Option<Arc<dyn AudioOcclusionQuery>>);
 
-/// Environmental acoustic region centered on its entity's `GlobalTransform`.
+/// Environmental acoustic region centered on its entity's `GlobalTransform3D`.
 ///
-/// The region is an oriented box. Its local +X axis follows entity-right, local +Y follows entity
-/// forward, and +Z follows entity-up. Overlapping zones at the highest active priority are blended
-/// by their influence weights; lower-priority zones are ignored while a higher tier is active.
+/// The region is an oriented box. `half_extents.x` is local right (+X), `.y` is local forward
+/// (-Z), and `.z` is local up (+Y). Extents are multiplied by the corresponding absolute world
+/// scale components. Overlapping zones at the highest active priority are blended by their
+/// influence weights; lower-priority zones are ignored while a higher tier is active.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AudioZoneVolume {
     pub id: u32,
@@ -176,35 +178,42 @@ impl AudioZoneVolume {
     fn weight_oriented(
         self,
         center: AudioVec3,
-        rotation: ribbon_math::Angles,
+        rotation: Quat,
+        world_scale: Vec3,
         point: AudioVec3,
     ) -> f32 {
         let zone = self.sanitized();
         let delta = point - center;
-        // Ribbon's `Angles` convention is psi=pitch, phi=yaw; `forward_vec` is the
-        // authoritative scene-space definition (default forward is +X, +Z is up).
-        let rotation = ribbon_math::Angles {
-            psi: if rotation.psi.is_finite() {
-                rotation.psi
-            } else {
-                0.0
-            },
-            phi: if rotation.phi.is_finite() {
-                rotation.phi
-            } else {
-                0.0
-            },
+        let rotation_length_squared = rotation.length_squared();
+        let rotation = if rotation.is_finite()
+            && rotation_length_squared.is_finite()
+            && rotation_length_squared > 1.0e-12
+        {
+            rotation.normalize()
+        } else {
+            Quat::IDENTITY
         };
-        let forward_value = ribbon_math::forward_vec(rotation);
-        let forward =
-            AudioVec3::new(forward_value.x, forward_value.y, forward_value.z).normalized();
-        let (sin_yaw, cos_yaw) = rotation.phi.sin_cos();
-        let right = AudioVec3::new(sin_yaw, -cos_yaw, 0.0).normalized();
-        let up = right.cross(forward).normalized();
+        let right = audio_vec3(rotation * Vec3::X).normalized();
+        let forward = audio_vec3(rotation * Vec3::NEG_Z).normalized();
+        let up = audio_vec3(rotation * Vec3::Y).normalized();
         let local = AudioVec3::new(delta.dot(right), delta.dot(forward), delta.dot(up));
-        let outside_x = local.x.abs() - zone.half_extents.x;
-        let outside_y = local.y.abs() - zone.half_extents.y;
-        let outside_z = local.z.abs() - zone.half_extents.z;
+        let world_scale = if world_scale.is_finite() {
+            world_scale.abs()
+        } else {
+            Vec3::ONE
+        };
+        // Public extents are stored as right/forward/up, while Transform3D scale is x/y/z.
+        let scaled_extent = |extent: f32, scale: f32| {
+            ((extent as f64) * (scale.abs() as f64)).clamp(0.01, 1_000_000.0) as f32
+        };
+        let half_extents = AudioVec3::new(
+            scaled_extent(zone.half_extents.x, world_scale.x),
+            scaled_extent(zone.half_extents.y, world_scale.z),
+            scaled_extent(zone.half_extents.z, world_scale.y),
+        );
+        let outside_x = local.x.abs() - half_extents.x;
+        let outside_y = local.y.abs() - half_extents.y;
+        let outside_z = local.z.abs() - half_extents.z;
         let outside = outside_x
             .max(0.0)
             .max(outside_y.max(0.0))
@@ -223,7 +232,7 @@ impl AudioZoneVolume {
 struct EmitterSnapshot {
     entity: Entity,
     emitter: AudioEmitter,
-    transform: GlobalTransform,
+    transform: GlobalTransform3D,
 }
 
 #[derive(Clone, Copy)]
@@ -231,7 +240,8 @@ struct ZoneSnapshot {
     entity: Entity,
     zone: AudioZoneVolume,
     center: AudioVec3,
-    rotation: ribbon_math::Angles,
+    rotation: Quat,
+    scale: Vec3,
 }
 
 #[derive(Clone, Copy)]
@@ -252,6 +262,61 @@ struct CachedOcclusion {
     target_low_pass_cutoff_hz: f32,
     smoothed_low_pass_cutoff_hz: f32,
     last_refresh: u64,
+}
+
+fn audio_vec3(value: Vec3) -> AudioVec3 {
+    AudioVec3::new(value.x, value.y, value.z)
+}
+
+fn finite_audio_vec3(value: AudioVec3) -> AudioVec3 {
+    if value.x.is_finite() && value.y.is_finite() && value.z.is_finite() {
+        value
+    } else {
+        AudioVec3::ZERO
+    }
+}
+
+/// Convert a modern world transform into the audio listener basis. The transform's local -Z
+/// axis is forward, +X is right, and +Y is up. Invalid positions/quaternions are rejected rather
+/// than silently reusing an earlier listener pose.
+pub(crate) fn listener_from_transform(
+    transform: &GlobalTransform3D,
+    velocity: AudioVec3,
+) -> Option<crate::Listener3d> {
+    let rotation_length_squared = transform.rotation.length_squared();
+    if !transform.translation.is_finite()
+        || !transform.rotation.is_finite()
+        || !rotation_length_squared.is_finite()
+        || rotation_length_squared <= 1.0e-12
+    {
+        return None;
+    }
+    let rotation = transform.rotation.normalize();
+    let forward = audio_vec3(rotation * Vec3::NEG_Z).normalized();
+    let up = audio_vec3(rotation * Vec3::Y).normalized();
+    if forward == AudioVec3::ZERO || up == AudioVec3::ZERO {
+        return None;
+    }
+    Some(crate::Listener3d {
+        position: audio_vec3(transform.translation),
+        forward,
+        up,
+        velocity: finite_audio_vec3(velocity),
+    })
+}
+
+fn listener_pose_is_valid(listener: crate::Listener3d) -> bool {
+    listener.position.x.is_finite()
+        && listener.position.y.is_finite()
+        && listener.position.z.is_finite()
+        && listener.forward.x.is_finite()
+        && listener.forward.y.is_finite()
+        && listener.forward.z.is_finite()
+        && listener.up.x.is_finite()
+        && listener.up.y.is_finite()
+        && listener.up.z.is_finite()
+        && listener.forward.length() > 1.0e-6
+        && listener.up.length() > 1.0e-6
 }
 
 #[derive(Default)]
@@ -306,57 +371,64 @@ pub(super) fn reconcile_emitter_completions(
 
 /// Synchronize transform-attached emitters and blend the active listener's acoustic zone.
 /// A stable voice handle is created once per emitter; transform changes update that voice instead
-/// of repeatedly starting new players. Components without `GlobalTransform` are ignored.
+/// of repeatedly starting new players. Components without `GlobalTransform3D` are ignored.
 pub fn audio_emitter_system(world: &mut World) {
     if world.try_resource::<AudioEmitterRuntime>().is_none() {
         return;
     }
     let emitters: Vec<EmitterSnapshot> = world
-        .query::<(&AudioEmitter, &GlobalTransform)>()
+        .query::<(&AudioEmitter, &GlobalTransform3D)>()
         .iter()
-        .map(|(entity, (emitter, transform))| EmitterSnapshot {
-            entity,
-            emitter: *emitter,
-            transform: *transform,
+        .filter_map(|(entity, (emitter, transform))| {
+            transform.translation.is_finite().then_some(EmitterSnapshot {
+                entity,
+                emitter: *emitter,
+                transform: *transform,
+            })
         })
         .collect();
-    let zones: Vec<ZoneSnapshot> = world
-        .query::<(&AudioZoneVolume, &GlobalTransform)>()
+    let transformed_listener_entities: HashSet<Entity> = world
+        .query::<(&SpatialAudioListener, &GlobalTransform3D)>()
         .iter()
-        .map(|(entity, (zone, transform))| ZoneSnapshot {
-            entity,
-            zone: *zone,
-            center: AudioVec3::new(
-                transform.translation.x,
-                transform.translation.y,
-                transform.translation.z,
-            ),
-            rotation: transform.rotation,
+        .map(|(entity, _)| entity)
+        .collect();
+    let zones: Vec<ZoneSnapshot> = world
+        .query::<(&AudioZoneVolume, &GlobalTransform3D)>()
+        .iter()
+        .filter_map(|(entity, (zone, transform))| {
+            (transform.translation.is_finite()
+                && transform.rotation.is_finite()
+                && transform.rotation.length_squared() > 1.0e-12
+                && transform.scale.is_finite())
+            .then_some(ZoneSnapshot {
+                entity,
+                zone: *zone,
+                center: audio_vec3(transform.translation),
+                rotation: transform.rotation.normalize(),
+                scale: transform.scale,
+            })
         })
         .collect();
     let listener = world
-        .query::<(&SpatialAudioListener, &GlobalTransform)>()
+        .query::<(&SpatialAudioListener, &GlobalTransform3D)>()
         .iter()
-        .min_by_key(|(entity, _)| entity.to_bits())
-        .map(|(_, (listener, transform))| {
-            let forward = ribbon_math::forward_vec(transform.rotation);
-            crate::Listener3d {
-                position: AudioVec3::new(
-                    transform.translation.x,
-                    transform.translation.y,
-                    transform.translation.z,
-                ),
-                forward: AudioVec3::new(forward.x, forward.y, forward.z),
-                up: AudioVec3::new(0.0, 0.0, 1.0),
-                velocity: listener.0.velocity,
-            }
+        .filter_map(|(entity, (listener, transform))| {
+            listener_from_transform(transform, listener.0.velocity)
+                .map(|pose| (entity, pose))
         })
+        .min_by_key(|(entity, _)| entity.to_bits())
+        .map(|(_, listener)| listener)
         .or_else(|| {
             world
                 .query::<&SpatialAudioListener>()
                 .iter()
+                .filter(|(entity, _)| !transformed_listener_entities.contains(entity))
+                .filter(|(_, listener)| listener_pose_is_valid(listener.0))
                 .min_by_key(|(entity, _)| entity.to_bits())
-                .map(|(_, listener)| listener.0)
+                .map(|(_, listener)| crate::Listener3d {
+                    velocity: finite_audio_vec3(listener.0.velocity),
+                    ..listener.0
+                })
         })
         .or_else(|| {
             world
@@ -411,6 +483,7 @@ pub fn audio_emitter_system(world: &mut World) {
                     let weight = candidate.zone.weight_oriented(
                         candidate.center,
                         candidate.rotation,
+                        candidate.scale,
                         listener.position,
                     );
                     if weight <= 0.0 {
@@ -508,6 +581,17 @@ pub fn audio_emitter_system(world: &mut World) {
             }
 
             let Some(listener) = listener else {
+                // A removed/invalid listener must not leave looping managed voices spatialized
+                // against its last frame's pose. Fade them out and let a future valid listener
+                // recreate the voices through the normal bounded retry path.
+                let retry_after = runtime.frame.saturating_add(OCCLUSION_REFRESH_STRIDE);
+                for active in runtime.emitters.values_mut() {
+                    if let Some(voice) = active.voice.take() {
+                        sink.stop_managed_emitter(voice, 0.12);
+                    }
+                    active.consecutive_missing_snapshots = 0;
+                    active.retry_after_frame = retry_after;
+                }
                 runtime.frame = runtime.frame.saturating_add(1);
                 return;
             };
@@ -565,7 +649,7 @@ pub fn audio_emitter_system(world: &mut World) {
                 }
                 let emitter = Emitter3d {
                     position: source,
-                    velocity: snapshot.emitter.velocity,
+                    velocity: finite_audio_vec3(snapshot.emitter.velocity),
                     min_distance: snapshot.emitter.min_distance,
                     max_distance: snapshot.emitter.max_distance,
                     rolloff: snapshot.emitter.rolloff,
@@ -790,7 +874,8 @@ mod tests {
         assert!(
             (zone.weight_oriented(
                 AudioVec3::ZERO,
-                ribbon_math::Angles::default(),
+                Quat::IDENTITY,
+                Vec3::ONE,
                 AudioVec3::new(1.0, 0.0, 0.0),
             ) - 1.0)
                 .abs()
@@ -799,7 +884,8 @@ mod tests {
         assert!(
             (zone.weight_oriented(
                 AudioVec3::ZERO,
-                ribbon_math::Angles::default(),
+                Quat::IDENTITY,
+                Vec3::ONE,
                 AudioVec3::new(4.0, 0.0, 0.0),
             ) - 0.5)
                 .abs()
@@ -808,7 +894,8 @@ mod tests {
         assert_eq!(
             zone.weight_oriented(
                 AudioVec3::ZERO,
-                ribbon_math::Angles::default(),
+                Quat::IDENTITY,
+                Vec3::ONE,
                 AudioVec3::new(7.0, 0.0, 0.0),
             ),
             0.0
@@ -862,14 +949,14 @@ mod tests {
         world.insert_resource(AudioOcclusionProvider::default());
         world.spawn((
             SpatialAudioListener(crate::Listener3d::default()),
-            GlobalTransform::default(),
+            GlobalTransform3D::default(),
         ));
         let emitter = world.spawn((
             AudioEmitter {
                 sound: SoundId(8),
                 ..AudioEmitter::default()
             },
-            GlobalTransform::default(),
+            GlobalTransform3D::default(),
         ));
 
         audio_emitter_system(&mut world);
@@ -885,9 +972,9 @@ mod tests {
             );
         }
 
-        let mut transform = *world.get::<GlobalTransform>(emitter).unwrap();
-        transform.translation = ribbon_math::Vect::new(5.0, 0.0, 0.0);
-        *world.get_mut::<GlobalTransform>(emitter).unwrap() = transform;
+        let mut transform = *world.get::<GlobalTransform3D>(emitter).unwrap();
+        transform.translation = Vec3::new(5.0, 0.0, 0.0);
+        *world.get_mut::<GlobalTransform3D>(emitter).unwrap() = transform;
         audio_emitter_system(&mut world);
         {
             let state = state.lock().unwrap();
@@ -981,11 +1068,10 @@ mod tests {
 
     #[test]
     fn zone_basis_has_positive_world_up_at_default_orientation() {
-        let forward = ribbon_math::forward_vec(ribbon_math::Angles::default());
-        let forward = AudioVec3::new(forward.x, forward.y, forward.z).normalized();
-        let right = AudioVec3::new(0.0, -1.0, 0.0);
+        let forward = audio_vec3(Vec3::NEG_Z);
+        let right = audio_vec3(Vec3::X);
         let up = right.cross(forward).normalized();
-        assert!(up.z > 0.999);
+        assert!(up.y > 0.999);
     }
 
     #[test]
@@ -1003,24 +1089,258 @@ mod tests {
                 ambience_gain: 1.0,
             },
         };
-        let along_world_x = AudioVec3::new(2.0, 0.0, 0.0);
+        let along_world_forward = AudioVec3::new(0.0, 0.0, -2.0);
         assert_eq!(
             zone.weight_oriented(
                 AudioVec3::ZERO,
-                ribbon_math::Angles::default(),
-                along_world_x,
+                Quat::IDENTITY,
+                Vec3::ONE,
+                along_world_forward,
             ),
             1.0
         );
-        // Rotate yaw by 90 degrees: local forward moves from +X to +Y, so +X
-        // is now the narrow right axis and lies outside the half extent.
-        let rotated = ribbon_math::Angles {
-            psi: 0.0,
-            phi: std::f32::consts::FRAC_PI_2,
-        };
+        // Rotate around +Y by 90 degrees: forward moves from -Z to -X, making
+        // world -Z the narrow right axis, outside the box's narrow right extent.
+        let rotated = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
         assert_eq!(
-            zone.weight_oriented(AudioVec3::ZERO, rotated, along_world_x),
+            zone.weight_oriented(AudioVec3::ZERO, rotated, Vec3::ONE, along_world_forward),
             0.0
         );
+    }
+
+    #[test]
+    fn parented_listener_and_emitter_use_propagated_world_transforms() {
+        use ribbon_scene::{propagate_transforms_3d, HierarchyExt, Transform3D};
+
+        let mut world = World::new();
+        let parent_rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let parent = world.spawn((Transform3D {
+            translation: Vec3::new(10.0, 2.0, 5.0),
+            rotation: parent_rotation,
+            scale: Vec3::new(2.0, 1.5, 2.0),
+        },));
+        let listener_entity = world.spawn((
+            Transform3D::default(),
+            SpatialAudioListener::default(),
+        ));
+        let emitter_entity = world.spawn((
+            Transform3D::from_translation(Vec3::new(0.0, 0.0, -3.0)),
+            AudioEmitter::default(),
+        ));
+        world.set_parent(listener_entity, parent).unwrap();
+        world.set_parent(emitter_entity, parent).unwrap();
+        propagate_transforms_3d(&mut world);
+
+        let listener_global = *world
+            .get::<GlobalTransform3D>(listener_entity)
+            .expect("listener receives a propagated 3D global transform");
+        let emitter_global = *world
+            .get::<GlobalTransform3D>(emitter_entity)
+            .expect("emitter receives a propagated 3D global transform");
+        assert!((listener_global.translation - Vec3::new(10.0, 2.0, 5.0)).length() < 1.0e-5);
+        assert!((emitter_global.translation - Vec3::new(4.0, 2.0, 5.0)).length() < 1.0e-5);
+
+        let listener = listener_from_transform(
+            &listener_global,
+            AudioVec3::ZERO,
+        )
+        .expect("parented listener pose is valid");
+        assert!((listener.forward - audio_vec3(Vec3::NEG_X)).length() < 1.0e-5);
+        let spatial = spatial::calculate(
+            listener,
+            Emitter3d {
+                position: audio_vec3(emitter_global.translation),
+                ..Emitter3d::default()
+            },
+            343.0,
+        );
+        assert!(spatial.local_direction.y > 0.999);
+        assert!(spatial.pan.abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn oriented_zone_uses_world_rotation_and_axis_mapped_scale() {
+        let zone = AudioZoneVolume {
+            id: 10,
+            priority: 1,
+            half_extents: AudioVec3::new(1.0, 2.0, 3.0),
+            blend_distance: 0.0,
+            acoustics: AcousticZone {
+                id: 10,
+                wet_mix: 0.5,
+                low_pass_hz: 2_000.0,
+                reverb_seconds: 1.0,
+                ambience_gain: 1.0,
+            },
+        };
+        // x scale applies to right, z scale to forward, y scale to up.
+        assert_eq!(
+            zone.weight_oriented(
+                AudioVec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::new(2.0, 4.0, 3.0),
+                AudioVec3::new(1.9, 0.0, 0.0),
+            ),
+            1.0
+        );
+        assert_eq!(
+            zone.weight_oriented(
+                AudioVec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::new(2.0, 4.0, 3.0),
+                AudioVec3::new(2.1, 0.0, 0.0),
+            ),
+            0.0
+        );
+        assert_eq!(
+            zone.weight_oriented(
+                AudioVec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::splat(f32::MAX),
+                AudioVec3::new(100.0, 0.0, 0.0),
+            ),
+            1.0,
+            "very large but finite scale must saturate the zone bounds safely"
+        );
+    }
+
+    #[test]
+    fn modern_listener_basis_uses_minus_z_forward_and_positive_y_up() {
+        let transform = GlobalTransform3D::default();
+        let listener = listener_from_transform(&transform, AudioVec3::ZERO).unwrap();
+        let front = spatial::calculate(
+            listener,
+            Emitter3d {
+                position: AudioVec3::new(0.0, 0.0, -10.0),
+                ..Emitter3d::default()
+            },
+            343.0,
+        );
+        let back = spatial::calculate(
+            listener,
+            Emitter3d {
+                position: AudioVec3::new(0.0, 0.0, 10.0),
+                ..Emitter3d::default()
+            },
+            343.0,
+        );
+        let left = spatial::calculate(
+            listener,
+            Emitter3d {
+                position: AudioVec3::new(-10.0, 0.0, 0.0),
+                ..Emitter3d::default()
+            },
+            343.0,
+        );
+        let right = spatial::calculate(
+            listener,
+            Emitter3d {
+                position: AudioVec3::new(10.0, 0.0, 0.0),
+                ..Emitter3d::default()
+            },
+            343.0,
+        );
+        let above = spatial::calculate(
+            listener,
+            Emitter3d {
+                position: AudioVec3::new(0.0, 10.0, 0.0),
+                ..Emitter3d::default()
+            },
+            343.0,
+        );
+        let below = spatial::calculate(
+            listener,
+            Emitter3d {
+                position: AudioVec3::new(0.0, -10.0, 0.0),
+                ..Emitter3d::default()
+            },
+            343.0,
+        );
+        assert!(front.local_direction.y > 0.999 && front.pan.abs() < 1.0e-5);
+        assert!(back.local_direction.y < -0.999 && back.pan.abs() < 1.0e-5);
+        assert!(left.pan < -0.999, "left pan must be negative: {left:?}");
+        assert!(right.pan > 0.999, "right pan must be positive: {right:?}");
+        assert!(above.elevation_radians > 1.5);
+        assert!(below.elevation_radians < -1.5);
+    }
+
+    #[test]
+    fn listener_quaternion_rotation_changes_world_forward_and_right() {
+        let transform = GlobalTransform3D {
+            rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            ..GlobalTransform3D::default()
+        };
+        let listener = listener_from_transform(&transform, AudioVec3::ZERO).unwrap();
+        assert!((listener.forward.x + 1.0).abs() < 1.0e-5);
+        assert!(listener.forward.z.abs() < 1.0e-5);
+        let source_on_right = Emitter3d {
+            position: AudioVec3::new(0.0, 0.0, -10.0),
+            ..Emitter3d::default()
+        };
+        assert!(spatial::calculate(listener, source_on_right, 343.0).pan > 0.999);
+    }
+
+    #[test]
+    fn invalid_or_non_finite_global_listener_transform_is_rejected() {
+        let bad_position = GlobalTransform3D {
+            translation: Vec3::new(f32::NAN, 0.0, 0.0),
+            ..GlobalTransform3D::default()
+        };
+        let bad_rotation = GlobalTransform3D {
+            rotation: Quat::from_xyzw(f32::NAN, 0.0, 0.0, 1.0),
+            ..GlobalTransform3D::default()
+        };
+        assert!(listener_from_transform(&bad_position, AudioVec3::ZERO).is_none());
+        assert!(listener_from_transform(&bad_rotation, AudioVec3::ZERO).is_none());
+    }
+
+    #[test]
+    fn removed_listener_fades_and_clears_managed_emitter_voice() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Default)]
+        struct State {
+            starts: usize,
+            stops: usize,
+        }
+        struct FakeSink(Arc<Mutex<State>>);
+        impl AudioSink for FakeSink {
+            fn play(&mut self, _: SoundId, _: f32, _: f32) {}
+            fn set_ambience(&mut self, _: Option<crate::AmbienceId>, _: f32) {}
+            fn supports_managed_voices(&self) -> bool {
+                true
+            }
+            fn play_managed_emitter(
+                &mut self,
+                _: crate::ManagedEmitterPlayback,
+            ) -> Option<VoiceId> {
+                self.0.lock().unwrap().starts += 1;
+                Some(VoiceId(19))
+            }
+            fn stop_managed_emitter(&mut self, _: VoiceId, _: f32) {
+                self.0.lock().unwrap().stops += 1;
+            }
+        }
+
+        let state = Arc::new(Mutex::new(State::default()));
+        let mut world = World::new();
+        world.insert_resource(AudioEmitterRuntime::default());
+        world.insert_resource(AudioOutput(Some(Box::new(FakeSink(Arc::clone(&state))))));
+        world.spawn((
+            SpatialAudioListener(crate::Listener3d::default()),
+            GlobalTransform3D::default(),
+        ));
+        world.spawn((AudioEmitter::default(), GlobalTransform3D::default()));
+        audio_emitter_system(&mut world);
+        assert_eq!(state.lock().unwrap().starts, 1);
+        let listener_entity = world
+            .query::<(&SpatialAudioListener, &GlobalTransform3D)>()
+            .iter()
+            .next()
+            .map(|(entity, _)| entity)
+            .unwrap();
+        world.despawn(listener_entity).unwrap();
+        audio_emitter_system(&mut world);
+        assert_eq!(state.lock().unwrap().stops, 1);
     }
 }

@@ -75,7 +75,7 @@ external = ["serde", "ron", "glam"]
 
 [allowed."ribbon_plugin_audio"]
 workspace = ["ribbon_app", "ribbon_plugins", "ribbon_ecs", "ribbon_events", "ribbon_math", "ribbon_assets", "ribbon_scene"]
-external = ["kira", "rodio", "audionimbus"]
+external = ["glam", "kira", "rodio", "audionimbus"]
 
 [allowed."ribbon_plugin_editor_tools"]
 workspace = ["ribbon_editor", "ribbon_commands", "ribbon_reflect", "ribbon_scene", "ribbon_ecs", "ribbon_app", "ribbon_plugins", "ribbon_render", "ribbon_math", "ribbon_plugin_streaming", "ribbon_assets", "ribbon_plugin_render3d"]
@@ -102,7 +102,7 @@ workspace = ["ribbon_assets"]
 external = ["glam", "gltf"]
 
 [allowed."athar"]
-workspace = ["ribbon_app", "ribbon_assets", "ribbon_ecs", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_gltf", "ribbon_plugin_physics", "ribbon_plugin_render3d", "ribbon_plugin_streaming", "ribbon_plugin_weather"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_ecs", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_gltf", "ribbon_plugin_physics", "ribbon_plugin_render3d", "ribbon_plugin_streaming", "ribbon_plugin_weather", "ribbon_plugin_audio"]
 external = ["ron", "serde"]
 
 [allowed."model_viewer"]

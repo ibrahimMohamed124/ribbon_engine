@@ -6,9 +6,9 @@ use ribbon_app::{App, LogBuffer, LogLevel, Stage};
 use ribbon_assets::AssetServer;
 use ribbon_ecs::World;
 use ribbon_events::{EventCursor, WorldEventsExt};
-use ribbon_math::{forward_vec, Vect};
+use ribbon_math::Vect;
 use ribbon_plugins::Plugin;
-use ribbon_scene::GlobalTransform;
+use ribbon_scene::GlobalTransform3D;
 
 pub mod assets;
 pub mod automation;
@@ -329,30 +329,48 @@ pub fn audio_event_system(world: &mut World) {
         .iter()
         .min_by_key(|(entity, _)| entity.to_bits())
         .map(|(_, listener)| *listener);
-    let spatial_listener = world
-        .query::<(&SpatialAudioListener, &GlobalTransform)>()
+    let transformed_listener_entities: std::collections::HashSet<_> = world
+        .query::<(&SpatialAudioListener, &GlobalTransform3D)>()
         .iter()
-        .min_by_key(|(entity, _)| entity.to_bits())
-        .map(|(_, (listener, transform))| Listener3d {
-            position: AudioVec3::new(
-                transform.translation.x,
-                transform.translation.y,
-                transform.translation.z,
-            ),
-            forward: AudioVec3::new(
-                forward_vec(transform.rotation).x,
-                forward_vec(transform.rotation).y,
-                forward_vec(transform.rotation).z,
-            ),
-            up: AudioVec3::new(0.0, 0.0, 1.0),
-            velocity: listener.0.velocity,
+        .map(|(entity, _)| entity)
+        .collect();
+    let spatial_listener = world
+        .query::<(&SpatialAudioListener, &GlobalTransform3D)>()
+        .iter()
+        .filter_map(|(entity, (listener, transform))| {
+            ecs::listener_from_transform(transform, listener.0.velocity)
+                .map(|pose| (entity, pose))
         })
+        .min_by_key(|(entity, _)| entity.to_bits())
+        .map(|(_, listener)| listener)
         .or_else(|| {
             world
                 .query::<&SpatialAudioListener>()
                 .iter()
+                .filter(|(entity, listener)| {
+                    !transformed_listener_entities.contains(entity)
+                        && listener.0.position.x.is_finite()
+                        && listener.0.position.y.is_finite()
+                        && listener.0.position.z.is_finite()
+                        && listener.0.forward.x.is_finite()
+                        && listener.0.forward.y.is_finite()
+                        && listener.0.forward.z.is_finite()
+                        && listener.0.up.x.is_finite()
+                        && listener.0.up.y.is_finite()
+                        && listener.0.up.z.is_finite()
+                })
                 .min_by_key(|(entity, _)| entity.to_bits())
-                .map(|(_, listener)| listener.0)
+                .map(|(_, listener)| Listener3d {
+                    velocity: if listener.0.velocity.x.is_finite()
+                        && listener.0.velocity.y.is_finite()
+                        && listener.0.velocity.z.is_finite()
+                    {
+                        listener.0.velocity
+                    } else {
+                        AudioVec3::ZERO
+                    },
+                    ..listener.0
+                })
         })
         .or_else(|| {
             listener.map(|listener| Listener3d {
@@ -464,9 +482,10 @@ impl Plugin for AudioPlugin {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
-    #[derive(Default)]
+    #[derive(Debug, Default)]
     struct Calls {
         sounds: Vec<(SoundId, f32, f32)>,
+        spatial_sounds: Vec<(SoundId, f32, f32, f32)>,
         ambiences: Vec<(Option<AmbienceId>, f32)>,
     }
     struct MockSink(Arc<Mutex<Calls>>);
@@ -476,6 +495,13 @@ mod tests {
         }
         fn set_ambience(&mut self, id: Option<AmbienceId>, gain: f32) {
             self.0.lock().unwrap().ambiences.push((id, gain));
+        }
+        fn play_spatial_advanced(&mut self, id: SoundId, gain: f32, pan: f32, doppler: f32) {
+            self.0
+                .lock()
+                .unwrap()
+                .spatial_sounds
+                .push((id, gain, pan, doppler));
         }
     }
 
@@ -570,6 +596,33 @@ mod tests {
             Some(&(Some(AmbienceId(9)), 0.6))
         );
         assert!(world.resource::<AudioCursors>().pending_ambience.is_none());
+    }
+
+    #[test]
+    fn spatial_event_consumer_uses_global_transform3d_listener_orientation() {
+        let calls = Arc::new(Mutex::new(Calls::default()));
+        let mut world = World::new();
+        world.add_event::<PlaySound>();
+        world.add_event::<SetAmbience>();
+        world.add_event::<PlaySpatialSound>();
+        world.insert_resource(AudioCursors::default());
+        world.insert_resource(AudioOutput(Some(Box::new(MockSink(Arc::clone(&calls))))));
+        world.spawn((SpatialAudioListener::default(), GlobalTransform3D::default()));
+        world.send_event(PlaySpatialSound {
+            id: SoundId(15),
+            emitter: Emitter3d {
+                position: AudioVec3::new(8.0, 0.0, 0.0),
+                ..Emitter3d::default()
+            },
+            gain: 1.0,
+        });
+        audio_event_system(&mut world);
+
+        let output = calls.lock().unwrap();
+        assert_eq!(output.spatial_sounds.len(), 1);
+        assert_eq!(output.spatial_sounds[0].0, SoundId(15));
+        assert!(output.spatial_sounds[0].2 > 0.999, "world +X is listener-right: {output:?}");
+        assert!(output.spatial_sounds[0].3.is_finite());
     }
 
     #[test]

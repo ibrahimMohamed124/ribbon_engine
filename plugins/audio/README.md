@@ -11,6 +11,12 @@
 
 The embedded decoder integration test uses real fixture files for WAV/PCM, AIFF/PCM, FLAC, MP3 and Ogg Vorbis. These are the codec/container families enabled by this crate. Opus is not enabled by Kira 0.12.5 here and is intentionally not advertised as supported.
 
+## 3D scene transform integration
+
+The ECS-managed modern spatial path reads `ribbon_scene::GlobalTransform3D` after scene transform propagation. Listener orientation is derived from its normalized world quaternion using Ribbon's established Y-up, local -Z-forward, local +X-right convention; emitters and acoustic zones use world-space positions. Parent transforms are therefore honored when `ScenePlugin` (or an equivalent propagation system) is installed. Scale is ignored for point emitters/listener poses and applied to oriented audio-zone half-extents by local axis. Non-finite listener positions/quaternions and invalid zone poses are rejected; non-finite velocity is treated as zero. If the transformed listener disappears or becomes invalid, managed emitter voices fade out instead of retaining the last pose.
+
+The older component-only `SpatialAudioListener` fallback remains available for explicitly authored pose data, and `AudioListener` remains a separate legacy +Z-up compatibility adapter. New 3D entities should use `SpatialAudioListener` together with `Transform3D`/`GlobalTransform3D`; do not use the legacy `GlobalTransform` for modern 3D audio. Stereo pan is an azimuth approximation, not HRTF; true binaural rendering remains opt-in through `steam-audio`.
+
 ## Hierarchical mixer, custom buses and sends
 
 The mixer is a real Kira hierarchy: `main output -> Master -> Music/Ambience/Sfx/Ui/Dialogue/Voice -> per-voice track`. Runtime custom buses are real child tracks and may be nested beneath a built-in or custom bus. The graph validates names, IDs, cycles, parent existence, route IDs, duplicate routes, gains and resource limits before mirroring the graph into Kira.
