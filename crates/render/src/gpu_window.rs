@@ -27,6 +27,8 @@ impl Default for ClearColor {
 
 /// Everything a [`FramePass`] needs to draw into the current window frame.
 pub struct FrameTarget<'a> {
+    /// Adapter used to negotiate optional format capabilities such as MSAA sample counts.
+    pub adapter: &'a wgpu::Adapter,
     /// Device that owns the frame's resources.
     pub device: &'a wgpu::Device,
     /// Queue used to submit work.
@@ -420,6 +422,7 @@ pub fn gpu_window_system(world: &mut World) {
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
                 let target = FrameTarget {
+                    adapter: context.adapter(),
                     device: context.device(),
                     queue: context.queue(),
                     view: &view,

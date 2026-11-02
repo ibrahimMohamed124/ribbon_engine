@@ -1,9 +1,10 @@
 use super::{
     build_mips, pack_point_lights, select_point_lights, select_spot_lights, Draw, MeshRenderer,
-    Scene, SkinnedDraw, TextureData,
+    PbrMaterialDesc, PbrMaterialRenderOptions, RenderTarget, Scene, SkinnedDraw, TextureData,
 };
 use crate::components::{Camera3D, FogSettings, PointLight, SpotLight, SunLight, Transform3D};
 use glam::{Mat4, Vec3};
+use ribbon_plugin_gltf::AlphaMode;
 use ribbon_render::gpu::GpuContext;
 use ribbon_render::gpu_window::clear_view;
 use std::fs::File;
@@ -108,13 +109,26 @@ fn vertex_attributes_match_the_interleaved_joint_and_weight_storage_layout() {
 }
 
 #[test]
+fn renderer_creates_alpha_and_double_sided_pipeline_variants_when_gpu_is_available() {
+    // Pipeline creation performs wgpu's bind-group/layout validation. The separate ignored
+    // readback test below validates the visible MASK/BLEND/double-sided results.
+    let Some(_harness) = harness() else {
+        eprintln!("skipping alpha pipeline creation test: no wgpu adapter available");
+        return;
+    };
+}
+
+#[test]
 fn lighting_post_and_shadow_wgsl_shaders_validate_without_a_gpu_adapter() {
     let shaders = [
         include_str!("../../shaders/mesh.wgsl"),
         include_str!("../../shaders/shadow.wgsl"),
         include_str!("../../shaders/bloom.wgsl"),
         include_str!("../../shaders/tonemap.wgsl"),
+        include_str!("../../shaders/tonemap_fxaa.wgsl"),
         include_str!("../../shaders/tonemap_unorm.wgsl"),
+        include_str!("../../shaders/tonemap_post.wgsl"),
+        include_str!("../../shaders/auto_exposure.wgsl"),
     ];
     for (index, source) in shaders.iter().enumerate() {
         let module = naga::front::wgsl::parse_str(source)
@@ -259,7 +273,6 @@ fn spotlight_selection_prefers_the_shadow_casting_light() {
     assert_eq!(active, Some(non_shadow));
     assert_eq!(caster, None);
 }
-
 
 #[test]
 fn point_light_selection_ranks_by_distance_range_intensity_and_color_contribution() {
@@ -649,4 +662,339 @@ fn mip_chain_halves_down_to_one_pixel_and_averages_in_linear_light() {
     let odd = build_mips(5, 3, &[255; 5 * 3 * 4]);
     let sizes: Vec<_> = odd.iter().map(|(w, h, _)| (*w, *h)).collect();
     assert_eq!(sizes, vec![(5, 3), (2, 1), (1, 1)]);
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter; validates real alpha discard and blending"]
+fn gltf_mask_discards_texture_alpha_and_blend_composites_back_to_front() {
+    let mut harness = harness().expect(
+        "glTF alpha GPU regression requires a working wgpu adapter; do not treat adapter absence as a pass",
+    );
+    // Texture alpha alone is just above the threshold; multiplying by the factor alpha
+    // drops coverage below the MASK cutoff and must reveal the opaque object behind it.
+    let transparent_texel = [255_u8, 255, 255, 128];
+    let mask_material = harness.renderer.upload_pbr_material_with_options(
+        harness.context.device(),
+        harness.context.queue(),
+        PbrMaterialDesc {
+            base_color: [1.0, 1.0, 1.0, 0.5],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: Some(TextureData {
+                width: 1,
+                height: 1,
+                rgba8: &transparent_texel,
+            }),
+            metallic_roughness_texture: None,
+            normal_texture: None,
+            occlusion_texture: None,
+            occlusion_strength: 1.0,
+            emissive_texture: None,
+            emissive_factor: [0.0; 3],
+        },
+        PbrMaterialRenderOptions {
+            alpha_mode: AlphaMode::Mask,
+            alpha_cutoff: 0.5,
+            double_sided: false,
+        },
+    );
+    clear_view(
+        harness.context.device(),
+        harness.context.queue(),
+        harness.context.target().view(),
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    let mask_pixels = harness.draw(&[
+        cube(
+            Mat4::from_translation(Vec3::new(0.0, 0.0, -0.55)),
+            [0.0, 0.0, 1.0],
+        ),
+        Draw {
+            mesh: MeshRenderer::CUBE,
+            material: mask_material,
+            model: Mat4::from_translation(Vec3::new(0.0, 0.0, 0.45)),
+            tint: [1.0; 3],
+        },
+    ]);
+    let (mask_r, _, mask_b) = pixel(&mask_pixels, SIZE / 2, SIZE / 2);
+    assert!(
+        mask_b > mask_r.saturating_mul(2),
+        "MASK must discard the transparent texel and reveal the blue surface behind it; got R={mask_r}, B={mask_b}"
+    );
+
+    // OPAQUE must ignore even a deliberately tiny base-color factor alpha and fully cover
+    // the opaque blue object behind it.
+    let opaque_material = harness.renderer.upload_pbr_material_with_options(
+        harness.context.device(),
+        harness.context.queue(),
+        PbrMaterialDesc {
+            base_color: [1.0, 0.0, 0.0, 0.01],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: None,
+            metallic_roughness_texture: None,
+            normal_texture: None,
+            occlusion_texture: None,
+            occlusion_strength: 1.0,
+            emissive_texture: None,
+            emissive_factor: [0.0; 3],
+        },
+        PbrMaterialRenderOptions {
+            alpha_mode: AlphaMode::Opaque,
+            alpha_cutoff: 0.5,
+            double_sided: false,
+        },
+    );
+    clear_view(
+        harness.context.device(),
+        harness.context.queue(),
+        harness.context.target().view(),
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    let opaque_pixels = harness.draw(&[
+        cube(
+            Mat4::from_translation(Vec3::new(0.0, 0.0, -0.55)),
+            [0.0, 0.0, 1.0],
+        ),
+        Draw {
+            mesh: MeshRenderer::CUBE,
+            material: opaque_material,
+            model: Mat4::from_translation(Vec3::new(0.0, 0.0, 0.45)),
+            tint: [1.0; 3],
+        },
+    ]);
+    let (opaque_r, _, opaque_b) = pixel(&opaque_pixels, SIZE / 2, SIZE / 2);
+    assert!(
+        opaque_r > opaque_b.saturating_mul(2),
+        "OPAQUE must ignore base-color alpha and cover the blue surface behind it; got R={opaque_r}, B={opaque_b}"
+    );
+
+    let blend_material = harness.renderer.upload_pbr_material_with_options(
+        harness.context.device(),
+        harness.context.queue(),
+        PbrMaterialDesc {
+            base_color: [1.0, 1.0, 1.0, 0.5],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: Some(TextureData {
+                width: 1,
+                height: 1,
+                rgba8: &transparent_texel,
+            }),
+            metallic_roughness_texture: None,
+            normal_texture: None,
+            occlusion_texture: None,
+            occlusion_strength: 1.0,
+            emissive_texture: None,
+            emissive_factor: [0.0; 3],
+        },
+        PbrMaterialRenderOptions {
+            alpha_mode: AlphaMode::Blend,
+            alpha_cutoff: 0.5,
+            double_sided: false,
+        },
+    );
+    clear_view(
+        harness.context.device(),
+        harness.context.queue(),
+        harness.context.target().view(),
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    // Deliberately submit near-to-far transparent objects before the opaque background.
+    // Correct sorting must draw blue opaque, then green transparent, then red transparent.
+    let blend_pixels = harness.draw(&[
+        Draw {
+            mesh: MeshRenderer::CUBE,
+            material: blend_material,
+            model: Mat4::from_translation(Vec3::new(0.0, 0.0, 0.45)),
+            tint: [1.0, 0.0, 0.0],
+        },
+        Draw {
+            mesh: MeshRenderer::CUBE,
+            material: blend_material,
+            model: Mat4::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+            tint: [0.0, 1.0, 0.0],
+        },
+        cube(
+            Mat4::from_translation(Vec3::new(0.0, 0.0, -0.55)),
+            [0.0, 0.0, 1.0],
+        ),
+    ]);
+    let (blend_r, blend_g, blend_b) = pixel(&blend_pixels, SIZE / 2, SIZE / 2);
+    assert!(
+        blend_r > blend_g && blend_g > 8 && blend_b > 8,
+        "BLEND must render opaque blue, then transparent green, then transparent red; got R={blend_r}, G={blend_g}, B={blend_b}"
+    );
+
+    // Reverse every triangle winding: the camera sees the cube's back faces. A
+    // double-sided material must render those faces without disabling culling for
+    // the renderer's ordinary material pipelines.
+    let mut reversed = crate::mesh::cube();
+    let (triangles, trailing_indices) = reversed.indices.as_chunks_mut::<3>();
+    assert!(
+        trailing_indices.is_empty(),
+        "cube mesh indices must contain complete triangles"
+    );
+    for triangle in triangles {
+        triangle.swap(1, 2);
+    }
+    let reversed_mesh = harness.renderer.upload_mesh(
+        harness.context.device(),
+        &reversed.vertices,
+        &reversed.indices,
+    );
+    let double_sided_material = harness.renderer.upload_pbr_material_with_options(
+        harness.context.device(),
+        harness.context.queue(),
+        PbrMaterialDesc {
+            base_color: [0.0, 1.0, 0.0, 1.0],
+            metallic: 0.0,
+            roughness: 1.0,
+            base_color_texture: None,
+            metallic_roughness_texture: None,
+            normal_texture: None,
+            occlusion_texture: None,
+            occlusion_strength: 1.0,
+            emissive_texture: None,
+            emissive_factor: [0.0; 3],
+        },
+        PbrMaterialRenderOptions {
+            alpha_mode: AlphaMode::Opaque,
+            alpha_cutoff: 0.5,
+            double_sided: true,
+        },
+    );
+    clear_view(
+        harness.context.device(),
+        harness.context.queue(),
+        harness.context.target().view(),
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    let double_sided_pixels = harness.draw(&[Draw {
+        mesh: reversed_mesh,
+        material: double_sided_material,
+        model: Mat4::IDENTITY,
+        tint: [1.0; 3],
+    }]);
+    let (double_r, double_g, double_b) = pixel(&double_sided_pixels, SIZE / 2, SIZE / 2);
+    assert!(
+        double_g > double_r && double_g > double_b,
+        "double-sided material must render reversed winding; got R={double_r}, G={double_g}, B={double_b}"
+    );
+}
+
+#[test]
+#[ignore = "requires a real GPU adapter with an MSAA resolve-capable HDR/depth format pair"]
+fn multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu() {
+    use crate::post::{negotiate_msaa_sample_count, HdrTarget, ToneMapper, HDR_FORMAT};
+
+    let context = pollster::block_on(GpuContext::new_offscreen(SIZE, SIZE))
+        .expect("MSAA/FXAA GPU test requires a working wgpu adapter");
+    let color_features = context.adapter().get_texture_format_features(HDR_FORMAT);
+    let depth_features = context
+        .adapter()
+        .get_texture_format_features(crate::renderer::DEPTH_FORMAT);
+    let supported: Vec<u32> = [1, 2, 4, 8]
+        .into_iter()
+        .filter(|count| {
+            *count == 1
+                || (color_features.allowed_usages.contains(
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                ) && color_features
+                    .flags
+                    .contains(wgpu::TextureFormatFeatureFlags::FILTERABLE)
+                    && color_features
+                        .flags
+                        .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE)
+                    && color_features.flags.sample_count_supported(*count)
+                    && depth_features
+                        .allowed_usages
+                        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+                    && depth_features.flags.sample_count_supported(*count))
+        })
+        .collect();
+    let sample_count = negotiate_msaa_sample_count(4, &supported);
+    assert!(
+        sample_count > 1,
+        "test adapter does not expose a usable HDR/depth MSAA pair: {supported:?}"
+    );
+
+    let msaa_texture = context.device().create_texture(&wgpu::TextureDescriptor {
+        label: Some("MSAA regression HDR color target"),
+        size: wgpu::Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count,
+        dimension: wgpu::TextureDimension::D2,
+        format: HDR_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    clear_view(
+        context.device(),
+        context.queue(),
+        &msaa_view,
+        [0.0, 0.0, 0.0, 1.0],
+    );
+
+    let hdr_target = HdrTarget::new(context.device(), (SIZE, SIZE));
+    let mut renderer = MeshRenderer::new_with_sample_count(
+        context.device(),
+        context.queue(),
+        HDR_FORMAT,
+        sample_count,
+    );
+    assert_eq!(renderer.sample_count(), sample_count);
+    let eye = Transform3D::looking_at(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, Vec3::Y);
+    let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
+    let sun = SunLight::default();
+    let scene = Scene {
+        view_proj: Camera3D::default().projection(1.0) * view,
+        camera_position: eye.translation,
+        sun: &sun,
+        spot_lights: &[],
+        point_lights: &[],
+        fog: FogSettings::default(),
+        draws: &[cube(Mat4::IDENTITY, [1.0, 0.35, 0.2])],
+    };
+    renderer.render_with_skinning_resolve(
+        RenderTarget {
+            device: context.device(),
+            queue: context.queue(),
+            view: &msaa_view,
+            resolve_view: Some(&hdr_target.view),
+            size: (SIZE, SIZE),
+            scene: &scene,
+        },
+        &[],
+    );
+
+    let mut tonemapper = ToneMapper::new_with_fxaa(
+        context.device(),
+        &hdr_target.view,
+        wgpu::TextureFormat::Rgba8Unorm,
+        (SIZE, SIZE),
+        true,
+    );
+    tonemapper.render_with_settings(
+        context.device(),
+        context.queue(),
+        context.target().view(),
+        &crate::post::PostProcessingSettings::cinematic(),
+        true,
+    );
+    let pixels = context
+        .readback()
+        .expect("resolved MSAA/FXAA/post-process readback")
+        .pixels;
+    assert!(
+        pixels.iter().any(|pixel| {
+            ((pixel >> 16) & 0xff) > 1 || ((pixel >> 8) & 0xff) > 1 || (pixel & 0xff) > 1
+        }),
+        "MSAA resolve followed by adaptive exposure, FXAA and display effects produced an all-black RGB image"
+    );
 }

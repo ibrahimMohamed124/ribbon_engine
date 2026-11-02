@@ -105,7 +105,7 @@ pub struct RenderResourceStats {
     pub active_transient_bytes_estimate: u64,
     /// Bytes retained in transient pools but not currently leased.
     pub cached_transient_bytes_estimate: u64,
-    /// Estimated bytes held by post-processing resources not allocated by the pool.
+    /// Estimated bytes held by post-processing and auxiliary anti-aliasing targets not allocated by the pool.
     pub post_process_bytes_estimate: u64,
     /// Estimated bytes for the context-owned RGBA8 target.
     pub context_target_bytes_estimate: u64,

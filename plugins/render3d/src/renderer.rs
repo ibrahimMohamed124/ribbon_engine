@@ -5,6 +5,7 @@ use crate::mesh::{self, Vertex};
 use crate::profiling::{GpuCompletedSample, GpuTimestampProfiler, GpuTimingSnapshot};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
+use ribbon_plugin_gltf::AlphaMode;
 use ribbon_render::profiling::RenderPassTiming;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -145,6 +146,28 @@ pub struct PbrMaterialDesc<'a> {
     pub emissive_factor: [f32; 3],
 }
 
+/// Additive render-state options for PBR materials. The original `PbrMaterialDesc`
+/// remains source-compatible; callers opt into glTF alpha and sidedness behavior here.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PbrMaterialRenderOptions {
+    /// Opaque, alpha-mask, or alpha-blend interpretation.
+    pub alpha_mode: AlphaMode,
+    /// Alpha-test threshold used by `AlphaMode::Mask`, clamped to 0..=1 on upload.
+    pub alpha_cutoff: f32,
+    /// Render both triangle orientations and flip back-face normals.
+    pub double_sided: bool,
+}
+
+impl Default for PbrMaterialRenderOptions {
+    fn default() -> Self {
+        Self {
+            alpha_mode: AlphaMode::Opaque,
+            alpha_cutoff: 0.5,
+            double_sided: false,
+        }
+    }
+}
+
 /// One object to draw.
 #[derive(Clone, Copy, Debug)]
 pub struct Draw {
@@ -170,6 +193,7 @@ pub struct SkinnedDraw {
 struct PreparedDraw {
     draw: Draw,
     palette: Option<Arc<[Mat4]>>,
+    palette_order_hash: u64,
     bone_offset: u32,
 }
 
@@ -179,7 +203,10 @@ struct PreparedDraw {
 pub(crate) struct RenderTarget<'a, 'scene> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
+    /// Color attachment; multisampled when `MeshRenderer::sample_count() > 1`.
     pub view: &'a wgpu::TextureView,
+    /// Single-sample resolve destination for MSAA. Must be `None` for sample count one.
+    pub resolve_view: Option<&'a wgpu::TextureView>,
     pub size: (u32, u32),
     pub scene: &'a Scene<'scene>,
 }
@@ -245,11 +272,14 @@ struct MaterialUniform {
     /// x: metallic, y: perceptual roughness, z: AO strength.
     surface: [f32; 4],
     emissive: [f32; 4],
+    /// x: alpha mode (0 opaque, 1 mask, 2 blend), y: alpha cutoff.
+    render: [f32; 4],
 }
 
 struct DepthTarget {
     view: wgpu::TextureView,
     size: (u32, u32),
+    sample_count: u32,
 }
 
 struct ShadowTarget {
@@ -289,6 +319,8 @@ struct TextureCacheKey {
 
 struct GpuMaterial {
     bind_group: wgpu::BindGroup,
+    alpha_mode: AlphaMode,
+    double_sided: bool,
     _uniform: wgpu::Buffer,
     _base_texture: Arc<GpuTexture>,
     _metallic_roughness_texture: Arc<GpuTexture>,
@@ -380,8 +412,19 @@ impl MeshRendererResourceStats {
 
 /// Owns the pipeline, uploaded meshes and materials, and the depth target.
 pub struct MeshRenderer {
+    /// Negotiated sample count shared by the main color pipelines and depth attachment.
+    sample_count: u32,
+    /// Opaque and masked, back-face culled pipeline.
     pipeline: wgpu::RenderPipeline,
+    /// Opaque and masked pipeline for glTF double-sided materials.
+    double_sided_pipeline: wgpu::RenderPipeline,
+    /// Alpha-blended pipeline; depth test remains enabled and depth writes are disabled.
+    blend_pipeline: wgpu::RenderPipeline,
+    /// Alpha-blended double-sided pipeline.
+    blend_double_sided_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
+    /// Directional shadow variant for glTF double-sided materials.
+    shadow_double_sided_pipeline: wgpu::RenderPipeline,
     spot_shadow_pipeline: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
     globals_group: wgpu::BindGroup,
@@ -431,6 +474,11 @@ pub struct MeshRenderer {
 }
 
 impl MeshRenderer {
+    /// Actual sample count used by the color pipelines and matching depth target.
+    pub fn sample_count(&self) -> u32 {
+        self.sample_count
+    }
+
     /// Generation-checked handle for the permanent built-in cube mesh (slot zero).
     pub const CUBE: MeshId = MeshId {
         slot: 0,
@@ -772,10 +820,7 @@ fn sphere_visible(planes: &[Vec4; 6], center: Vec3, radius: f32) -> bool {
 
 fn pack_point_lights(
     lights: &[PointLight],
-) -> (
-    [[f32; 4]; MAX_POINT_LIGHTS],
-    [[f32; 4]; MAX_POINT_LIGHTS],
-) {
+) -> ([[f32; 4]; MAX_POINT_LIGHTS], [[f32; 4]; MAX_POINT_LIGHTS]) {
     let mut positions_range = [[0.0; 4]; MAX_POINT_LIGHTS];
     let mut colors_intensity = [[0.0; 4]; MAX_POINT_LIGHTS];
     for (index, light) in lights.iter().take(MAX_POINT_LIGHTS).enumerate() {
@@ -819,7 +864,11 @@ fn point_light_importance(light: PointLight, camera_position: Vec3) -> f32 {
     let range_squared = light.range * light.range;
     let denominator = distance_squared + (range_squared * 0.04).max(1.0e-4);
     let score = light.intensity * luminance * range_squared / denominator;
-    if score.is_finite() { score } else { f32::MAX }
+    if score.is_finite() {
+        score
+    } else {
+        f32::MAX
+    }
 }
 
 /// Compare light values lexicographically so equal-importance lights are independent of ECS

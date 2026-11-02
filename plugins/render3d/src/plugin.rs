@@ -23,6 +23,12 @@ impl Plugin for Render3dPlugin {
         if app.world.try_resource::<FogSettings>().is_none() {
             app.insert_resource(FogSettings::default());
         }
+        if app.world.try_resource::<AntiAliasingSettings>().is_none() {
+            app.insert_resource(AntiAliasingSettings::default());
+        }
+        if app.world.try_resource::<PostProcessingSettings>().is_none() {
+            app.insert_resource(PostProcessingSettings::default());
+        }
         if app.world.try_resource::<ModelWarmup>().is_none() {
             app.insert_resource(ModelWarmup::default());
         }

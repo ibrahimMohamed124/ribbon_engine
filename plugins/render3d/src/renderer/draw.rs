@@ -1,5 +1,131 @@
 use super::*;
 
+type StableDrawKey = (MeshId, MaterialId, [u32; 16], [u32; 3], u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ColorPipelineKey {
+    OpaqueCull,
+    OpaqueDoubleSided,
+    BlendCull,
+    BlendDoubleSided,
+}
+
+fn color_pipeline_key(alpha_mode: AlphaMode, double_sided: bool) -> ColorPipelineKey {
+    match (alpha_mode == AlphaMode::Blend, double_sided) {
+        (false, false) => ColorPipelineKey::OpaqueCull,
+        (false, true) => ColorPipelineKey::OpaqueDoubleSided,
+        (true, false) => ColorPipelineKey::BlendCull,
+        (true, true) => ColorPipelineKey::BlendDoubleSided,
+    }
+}
+
+fn compare_visible_order(
+    left_blended: bool,
+    right_blended: bool,
+    left_depth: f32,
+    right_depth: f32,
+    left_key: StableDrawKey,
+    right_key: StableDrawKey,
+) -> std::cmp::Ordering {
+    match (left_blended, right_blended) {
+        (false, false) => left_key.cmp(&right_key),
+        (false, true) => std::cmp::Ordering::Less,
+        (true, false) => std::cmp::Ordering::Greater,
+        (true, true) => right_depth
+            .total_cmp(&left_depth)
+            .then_with(|| left_key.cmp(&right_key)),
+    }
+}
+
+fn is_blended(renderer: &MeshRenderer, prepared: &PreparedDraw) -> bool {
+    renderer
+        .materials
+        .get(prepared.draw.material.slot)
+        .and_then(|slot| slot.material.as_ref())
+        .is_some_and(|material| material.alpha_mode == AlphaMode::Blend)
+}
+
+fn camera_forward(view_proj: Mat4, camera_position: Vec3) -> Vec3 {
+    let inverse = view_proj.inverse();
+    if !inverse
+        .to_cols_array()
+        .iter()
+        .all(|value| value.is_finite())
+    {
+        return Vec3::NEG_Z;
+    }
+    let far_h = inverse * Vec4::new(0.0, 0.0, 0.999, 1.0);
+    if !far_h.is_finite() || far_h.w.abs() <= 1.0e-6 {
+        return Vec3::NEG_Z;
+    }
+    (far_h.truncate() / far_h.w - camera_position)
+        .try_normalize()
+        .unwrap_or(Vec3::NEG_Z)
+}
+
+fn transparent_camera_depth(
+    renderer: &MeshRenderer,
+    prepared: &PreparedDraw,
+    camera_position: Vec3,
+    forward: Vec3,
+) -> f32 {
+    let center = renderer
+        .meshes
+        .get(prepared.draw.mesh.slot)
+        .and_then(|slot| slot.mesh.as_ref())
+        .map(|mesh| prepared.draw.model.transform_point3(mesh.bounds_center))
+        .unwrap_or(prepared.draw.model.w_axis.truncate());
+    let depth = (center - camera_position).dot(forward);
+    if depth.is_finite() {
+        depth
+    } else {
+        (center - camera_position).length()
+    }
+}
+
+fn palette_order_hash(palette: &[Mat4]) -> u64 {
+    // Explicit FNV-1a avoids relying on DefaultHasher's unspecified implementation/seed.
+    // The byte order is fixed so equal palettes receive the same stable tie-breaker on hosts.
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for matrix in palette {
+        for value in matrix.to_cols_array() {
+            for byte in value.to_bits().to_le_bytes() {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+    }
+    hash
+}
+
+fn stable_draw_key(prepared: &PreparedDraw) -> StableDrawKey {
+    (
+        prepared.draw.mesh,
+        prepared.draw.material,
+        prepared.draw.model.to_cols_array().map(f32::to_bits),
+        prepared.draw.tint.map(f32::to_bits),
+        prepared.palette_order_hash,
+    )
+}
+
+fn sort_visible_draws(renderer: &MeshRenderer, draws: &mut [PreparedDraw], scene: &Scene<'_>) {
+    let forward = camera_forward(scene.view_proj, scene.camera_position);
+    draws.sort_by(|left, right| {
+        let left_blended = is_blended(renderer, left);
+        let right_blended = is_blended(renderer, right);
+        let left_depth = transparent_camera_depth(renderer, left, scene.camera_position, forward);
+        let right_depth = transparent_camera_depth(renderer, right, scene.camera_position, forward);
+        compare_visible_order(
+            left_blended,
+            right_blended,
+            left_depth,
+            right_depth,
+            stable_draw_key(left),
+            stable_draw_key(right),
+        )
+    });
+}
+
 /// Append one immutable skin palette to the bounded frame-local upload list.
 /// Returns the matrix offset for the instance, or `None` without mutating the destination when
 /// the palette is empty or would exceed the renderer's per-frame storage-buffer capacity.
@@ -31,6 +157,7 @@ impl MeshRenderer {
                 device,
                 queue,
                 view,
+                resolve_view: None,
                 size,
                 scene,
             },
@@ -55,12 +182,21 @@ impl MeshRenderer {
                 device,
                 queue,
                 view,
+                resolve_view: None,
                 size,
                 scene,
             },
             skinned_draws,
             None,
         );
+    }
+
+    pub(crate) fn render_with_skinning_resolve(
+        &mut self,
+        target: RenderTarget<'_, '_>,
+        skinned_draws: &[SkinnedDraw],
+    ) {
+        let _ = self.render_internal(target, skinned_draws, None);
     }
 
     pub(crate) fn render_profiled_with_skinning(
@@ -82,6 +218,7 @@ impl MeshRenderer {
             device,
             queue,
             view,
+            resolve_view,
             size,
             scene,
         } = target;
@@ -102,7 +239,8 @@ impl MeshRenderer {
             self.maintain_instance_buffers(device, 0);
             return cpu_phases;
         }
-        self.ensure_depth(device, size);
+        self.ensure_depth(device, size, self.sample_count);
+        debug_assert_eq!(self.sample_count > 1, resolve_view.is_some());
         // Static and skinned draws share the same generation-checked mesh/material path. The
         // skinned palette is retained by Arc through extraction and copied to the GPU once here.
         let mut draws: Vec<PreparedDraw> = scene
@@ -112,11 +250,13 @@ impl MeshRenderer {
             .map(|draw| PreparedDraw {
                 draw,
                 palette: None,
+                palette_order_hash: 0,
                 bone_offset: 0,
             })
             .chain(skinned_draws.iter().map(|skinned| PreparedDraw {
                 draw: skinned.draw,
                 palette: Some(Arc::clone(&skinned.joint_matrices)),
+                palette_order_hash: palette_order_hash(&skinned.joint_matrices),
                 bone_offset: 0,
             }))
             .filter(|prepared| {
@@ -145,6 +285,11 @@ impl MeshRenderer {
             prepared.bone_offset = offset;
             true
         });
+        let shadow_draws: Vec<PreparedDraw> = draws
+            .iter()
+            .filter(|prepared| !is_blended(self, prepared))
+            .cloned()
+            .collect();
         self.last_skinned_draws_after_palette_budget =
             draws.iter().filter(|draw| draw.palette.is_some()).count();
         self.last_skinned_draws_rejected_palette_capacity = rejected_skin_palettes;
@@ -181,6 +326,8 @@ impl MeshRenderer {
             })
             .cloned()
             .collect();
+        let mut visible_draws = visible_draws;
+        sort_visible_draws(self, &mut visible_draws, scene);
         if visible_draws.is_empty() {
             return cpu_phases;
         }
@@ -190,8 +337,10 @@ impl MeshRenderer {
                 (left.draw.mesh, left.draw.material) == (right.draw.mesh, right.draw.material)
             })
             .count();
-        self.last_shadow_draw_calls = draws
-            .chunk_by(|left, right| left.draw.mesh == right.draw.mesh)
+        self.last_shadow_draw_calls = shadow_draws
+            .chunk_by(|left, right| {
+                (left.draw.mesh, left.draw.material) == (right.draw.mesh, right.draw.material)
+            })
             .count();
         record_cpu_phase(
             &mut cpu_phases,
@@ -213,7 +362,7 @@ impl MeshRenderer {
                 })
                 .collect::<Vec<_>>()
         };
-        let shadow_raw = to_raw(&draws);
+        let shadow_raw = to_raw(&shadow_draws);
         let visible_raw = to_raw(&visible_draws);
         record_cpu_phase(
             &mut cpu_phases,
@@ -221,7 +370,9 @@ impl MeshRenderer {
             phase_started.take(),
         );
         phase_started = profile_cpu.then(Instant::now);
-        queue.write_buffer(&self.shadow_instances, 0, bytemuck::cast_slice(&shadow_raw));
+        if !shadow_raw.is_empty() {
+            queue.write_buffer(&self.shadow_instances, 0, bytemuck::cast_slice(&shadow_raw));
+        }
         queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&visible_raw));
         record_cpu_phase(
             &mut cpu_phases,
@@ -356,17 +507,30 @@ impl MeshRenderer {
             pass.set_bind_group(0, &self.shadow_globals_group, &[]);
             pass.set_vertex_buffer(1, self.shadow_instances.slice(..));
             let mut start = 0;
-            while start < draws.len() {
-                let mesh_id = draws[start].draw.mesh;
+            while start < shadow_draws.len() {
+                let key = (
+                    shadow_draws[start].draw.mesh,
+                    shadow_draws[start].draw.material,
+                );
                 let end = start
-                    + draws[start..]
+                    + shadow_draws[start..]
                         .iter()
-                        .take_while(|draw| draw.draw.mesh == mesh_id)
+                        .take_while(|draw| (draw.draw.mesh, draw.draw.material) == key)
                         .count();
-                let mesh = self.meshes[mesh_id.slot]
+                let mesh = self.meshes[key.0.slot]
                     .mesh
                     .as_ref()
                     .expect("draw list was validated before recording the shadow pass");
+                let material = self.materials[key.1.slot]
+                    .material
+                    .as_ref()
+                    .expect("shadow draw material was validated before recording the pass");
+                pass.set_pipeline(if material.double_sided {
+                    &self.shadow_double_sided_pipeline
+                } else {
+                    &self.shadow_pipeline
+                });
+                pass.set_bind_group(1, &material.bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
@@ -398,17 +562,25 @@ impl MeshRenderer {
             pass.set_bind_group(0, &self.spot_shadow_globals_group, &[]);
             pass.set_vertex_buffer(1, self.shadow_instances.slice(..));
             let mut start = 0;
-            while start < draws.len() {
-                let mesh_id = draws[start].draw.mesh;
+            while start < shadow_draws.len() {
+                let key = (
+                    shadow_draws[start].draw.mesh,
+                    shadow_draws[start].draw.material,
+                );
                 let end = start
-                    + draws[start..]
+                    + shadow_draws[start..]
                         .iter()
-                        .take_while(|draw| draw.draw.mesh == mesh_id)
+                        .take_while(|draw| (draw.draw.mesh, draw.draw.material) == key)
                         .count();
-                let mesh = self.meshes[mesh_id.slot]
+                let mesh = self.meshes[key.0.slot]
                     .mesh
                     .as_ref()
                     .expect("draw list was validated before recording spotlight shadows");
+                let material = self.materials[key.1.slot]
+                    .material
+                    .as_ref()
+                    .expect("spotlight shadow material was validated before recording the pass");
+                pass.set_bind_group(1, &material.bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
@@ -426,7 +598,7 @@ impl MeshRenderer {
                 label: Some("meshes"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
-                    resolve_target: None,
+                    resolve_target: resolve_view,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -471,6 +643,14 @@ impl MeshRenderer {
                     .material
                     .as_ref()
                     .expect("draw list was validated before recording the material pass");
+                let pipeline = match color_pipeline_key(material.alpha_mode, material.double_sided)
+                {
+                    ColorPipelineKey::OpaqueCull => &self.pipeline,
+                    ColorPipelineKey::OpaqueDoubleSided => &self.double_sided_pipeline,
+                    ColorPipelineKey::BlendCull => &self.blend_pipeline,
+                    ColorPipelineKey::BlendDoubleSided => &self.blend_double_sided_pipeline,
+                };
+                pass.set_pipeline(pipeline);
                 pass.set_bind_group(1, &material.bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -561,4 +741,146 @@ pub(super) fn texture_mip_bytes(width: u32, height: u32) -> u64 {
         height = (height / 2).max(1);
     }
     bytes
+}
+
+#[cfg(test)]
+mod alpha_pipeline_tests {
+    use super::{color_pipeline_key, compare_visible_order, palette_order_hash, ColorPipelineKey};
+    use crate::renderer::{MaterialId, MeshId};
+    use glam::{Mat4, Vec3};
+    use ribbon_plugin_gltf::AlphaMode;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn alpha_mode_and_double_sided_select_the_expected_pipeline_variant() {
+        assert_eq!(
+            color_pipeline_key(AlphaMode::Opaque, false),
+            ColorPipelineKey::OpaqueCull
+        );
+        assert_eq!(
+            color_pipeline_key(AlphaMode::Mask, false),
+            ColorPipelineKey::OpaqueCull
+        );
+        assert_eq!(
+            color_pipeline_key(AlphaMode::Opaque, true),
+            ColorPipelineKey::OpaqueDoubleSided
+        );
+        assert_eq!(
+            color_pipeline_key(AlphaMode::Mask, true),
+            ColorPipelineKey::OpaqueDoubleSided
+        );
+        assert_eq!(
+            color_pipeline_key(AlphaMode::Blend, false),
+            ColorPipelineKey::BlendCull
+        );
+        assert_eq!(
+            color_pipeline_key(AlphaMode::Blend, true),
+            ColorPipelineKey::BlendDoubleSided
+        );
+    }
+
+    #[test]
+    fn skinned_palette_tie_breaker_is_repeatable_and_content_sensitive() {
+        let first = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0)),
+        ];
+        let second = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(1.0, 2.0, 4.0)),
+        ];
+        assert_eq!(palette_order_hash(&first), palette_order_hash(&first));
+        assert_ne!(palette_order_hash(&first), palette_order_hash(&second));
+    }
+
+    #[test]
+    fn transparent_draws_are_sorted_back_to_front_after_opaque_and_masked() {
+        let key_a = (
+            MeshId {
+                slot: 1,
+                generation: 0,
+            },
+            MaterialId {
+                slot: 1,
+                generation: 0,
+            },
+            [0; 16],
+            [0; 3],
+            0,
+        );
+        let key_b = (
+            MeshId {
+                slot: 2,
+                generation: 0,
+            },
+            MaterialId {
+                slot: 2,
+                generation: 0,
+            },
+            [1; 16],
+            [1; 3],
+            0,
+        );
+        assert_eq!(
+            compare_visible_order(false, true, 2.0, 100.0, key_a, key_b),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_visible_order(true, false, 100.0, 2.0, key_b, key_a),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare_visible_order(true, true, 2.0, 10.0, key_a, key_b),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare_visible_order(true, true, 10.0, 2.0, key_a, key_b),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_visible_order(true, true, 5.0, 5.0, key_a, key_b),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_visible_order(true, true, 5.0, 5.0, key_b, key_a),
+            Ordering::Greater
+        );
+        let same_mesh_material_a = (
+            MeshId {
+                slot: 1,
+                generation: 0,
+            },
+            MaterialId {
+                slot: 1,
+                generation: 0,
+            },
+            [0; 16],
+            [0; 3],
+            0,
+        );
+        let same_mesh_material_b = (
+            MeshId {
+                slot: 1,
+                generation: 0,
+            },
+            MaterialId {
+                slot: 1,
+                generation: 0,
+            },
+            [1; 16],
+            [0; 3],
+            0,
+        );
+        assert_eq!(
+            compare_visible_order(
+                true,
+                true,
+                5.0,
+                5.0,
+                same_mesh_material_a,
+                same_mesh_material_b,
+            ),
+            Ordering::Less
+        );
+    }
 }

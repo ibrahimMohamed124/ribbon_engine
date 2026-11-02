@@ -331,7 +331,8 @@ impl MeshRenderer {
             stats.depth_target_bytes_estimate = stats.depth_target_bytes_estimate.saturating_add(
                 u64::from(depth.size.0)
                     .saturating_mul(u64::from(depth.size.1))
-                    .saturating_mul(4),
+                    .saturating_mul(4)
+                    .saturating_mul(u64::from(depth.sample_count)),
             );
         }
         stats.peak_bytes_estimate = self
@@ -465,6 +466,41 @@ impl MeshRenderer {
         material: PbrMaterialDesc<'_>,
         mipmaps: PbrMaterialMipmaps<'_>,
     ) -> MaterialId {
+        self.upload_pbr_material_with_precomputed_mips_and_options(
+            device,
+            queue,
+            material,
+            mipmaps,
+            PbrMaterialRenderOptions::default(),
+        )
+    }
+
+    /// Upload a material with explicit alpha/sidedness state. This is additive to the original
+    /// PBR upload API and is used by glTF model uploads.
+    pub fn upload_pbr_material_with_options(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        material: PbrMaterialDesc<'_>,
+        options: PbrMaterialRenderOptions,
+    ) -> MaterialId {
+        self.upload_pbr_material_with_precomputed_mips_and_options(
+            device,
+            queue,
+            material,
+            PbrMaterialMipmaps::default(),
+            options,
+        )
+    }
+
+    pub(crate) fn upload_pbr_material_with_precomputed_mips_and_options(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        material: PbrMaterialDesc<'_>,
+        mipmaps: PbrMaterialMipmaps<'_>,
+        options: PbrMaterialRenderOptions,
+    ) -> MaterialId {
         let PbrMaterialDesc {
             base_color,
             metallic,
@@ -477,6 +513,11 @@ impl MeshRenderer {
             emissive_texture,
             emissive_factor,
         } = material;
+        let PbrMaterialRenderOptions {
+            alpha_mode,
+            alpha_cutoff,
+            double_sided,
+        } = options;
         let white = [255_u8; 4];
         let base_source = valid_texture(base_color_texture, &white);
         let surface_source = valid_texture(metallic_roughness_texture, &white);
@@ -542,6 +583,20 @@ impl MeshRenderer {
                 emissive_factor[2].max(0.0),
                 1.0,
             ],
+            render: [
+                match alpha_mode {
+                    AlphaMode::Opaque => 0.0,
+                    AlphaMode::Mask => 1.0,
+                    AlphaMode::Blend => 2.0,
+                },
+                if alpha_cutoff.is_finite() {
+                    alpha_cutoff.clamp(0.0, 1.0)
+                } else {
+                    0.5
+                },
+                0.0,
+                0.0,
+            ],
         };
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("PBR material factors"),
@@ -584,6 +639,8 @@ impl MeshRenderer {
         });
         let material = GpuMaterial {
             bind_group,
+            alpha_mode,
+            double_sided,
             _uniform: uniform,
             _base_texture: base_texture,
             _metallic_roughness_texture: surface_texture,

@@ -10,6 +10,11 @@ pub mod gpu_streaming;
 pub mod mesh;
 pub mod model;
 pub mod post;
+pub use post::{
+    negotiate_msaa_sample_count, AntiAliasingMode, AntiAliasingSettings, AutoExposureSettings,
+    ChromaticAberrationSettings, ColorGradingSettings, FilmGrainSettings, PostProcessingSettings,
+    VignetteSettings,
+};
 pub mod prefab;
 pub mod preload;
 pub mod profiling;
@@ -39,9 +44,10 @@ pub use preload::{
 };
 pub use renderer::{
     Draw, GpuSamplerAddressMode, GpuSamplerDesc, GpuSamplerFilter, MaterialId, MeshId,
-    MeshRenderer, PbrMaterialDesc, SamplerId, Scene, SkinnedDraw, TextureData, TextureId,
-    MAX_POINT_LIGHTS,
+    MeshRenderer, PbrMaterialDesc, PbrMaterialRenderOptions, SamplerId, Scene, SkinnedDraw,
+    TextureData, TextureId, MAX_POINT_LIGHTS,
 };
+pub use ribbon_plugin_gltf::AlphaMode;
 pub use ribbon_render::gpu::{
     GpuContext, TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool,
 };
@@ -132,14 +138,51 @@ fn collect_live_model_keys(
         .collect()
 }
 
+struct MsaaColorTarget {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    size: (u32, u32),
+    sample_count: u32,
+}
+
+impl MsaaColorTarget {
+    fn new(device: &wgpu::Device, size: (u32, u32), sample_count: u32) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("render3d multisampled HDR color"),
+            size: wgpu::Extent3d {
+                width: size.0.max(1),
+                height: size.1.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self {
+            _texture: texture,
+            view,
+            size,
+            sample_count,
+        }
+    }
+}
+
 #[derive(Default)]
 struct MeshPass {
     renderer: Option<MeshRenderer>,
     /// Active HDR target leased from the transient texture pool.
     hdr: Option<TransientTextureHandle>,
     hdr_size: Option<(u32, u32)>,
+    msaa_target: Option<MsaaColorTarget>,
+    latched_requested_sample_count: Option<u32>,
+    aa_reconfiguration_warning: Option<(u32, u32)>,
+    last_reported_fxaa: Option<bool>,
     transient_targets: TransientTexturePool,
-    tonemapper: Option<(wgpu::TextureFormat, ToneMapper)>,
+    tonemapper: Option<(wgpu::TextureFormat, (u32, u32), ToneMapper)>,
     /// Uploaded models keyed by asset handle id and generation.
     models: HashMap<ModelAssetKey, Vec<GpuModelPart>>,
     /// Upload-size estimate for each live glTF model cache entry; subset of renderer mesh/material totals.
@@ -176,6 +219,10 @@ impl FramePass for MeshPass {
         self.renderer = None;
         self.hdr = None;
         self.hdr_size = None;
+        self.msaa_target = None;
+        self.latched_requested_sample_count = None;
+        self.aa_reconfiguration_warning = None;
+        self.last_reported_fxaa = None;
         self.tonemapper = None;
         self.transient_targets = TransientTexturePool::default();
         self.models.clear();
@@ -225,7 +272,7 @@ impl FramePass for MeshPass {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.poll_gpu_timing(target.device, target.queue);
         }
-        if let Some((_, tonemapper)) = self.tonemapper.as_mut() {
+        if let Some((_, _, tonemapper)) = self.tonemapper.as_mut() {
             tonemapper.poll_gpu_timing(target.device, target.queue);
         }
         record_cpu_phase(&mut self.cpu_phases, "GPU timestamp polling", poll_started);
@@ -236,7 +283,98 @@ impl FramePass for MeshPass {
     }
 }
 
+fn compatible_msaa_sample_counts(
+    color: wgpu::TextureFormatFeatures,
+    depth: wgpu::TextureFormatFeatures,
+) -> Vec<u32> {
+    let resolve_usages =
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+    let depth_usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+    let color_resolve_supported = color.allowed_usages.contains(resolve_usages)
+        && color
+            .flags
+            .contains(wgpu::TextureFormatFeatureFlags::FILTERABLE)
+        && color
+            .flags
+            .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE);
+    let depth_attachment_supported = depth.allowed_usages.contains(depth_usage);
+
+    if !color_resolve_supported || !depth_attachment_supported {
+        return vec![1];
+    }
+
+    [1, 2, 4, 8]
+        .into_iter()
+        .filter(|count| {
+            *count == 1
+                || (color.flags.sample_count_supported(*count)
+                    && depth.flags.sample_count_supported(*count))
+        })
+        .collect()
+}
+
 impl MeshPass {
+    fn requested_sample_count(world: &World) -> u32 {
+        world
+            .try_resource::<AntiAliasingSettings>()
+            .copied()
+            .unwrap_or_default()
+            .mode
+            .requested_samples()
+    }
+
+    fn negotiated_sample_count(target: &FrameTarget<'_>, requested: u32) -> u32 {
+        if requested <= 1 {
+            return 1;
+        }
+        let color = target.adapter.get_texture_format_features(HDR_FORMAT);
+        let depth = target
+            .adapter
+            .get_texture_format_features(crate::renderer::DEPTH_FORMAT);
+        let supported = compatible_msaa_sample_counts(color, depth);
+        negotiate_msaa_sample_count(requested, &supported)
+    }
+
+    fn create_renderer(target: &FrameTarget<'_>, requested: u32) -> MeshRenderer {
+        let sample_count = Self::negotiated_sample_count(target, requested);
+        if requested > 1 && sample_count != requested {
+            eprintln!(
+                "[RENDER3D AA] requested {requested}x MSAA is unsupported for the HDR/depth format pair; using {sample_count}x",
+            );
+        } else if requested > 1 {
+            eprintln!(
+                "[RENDER3D AA] using {sample_count}x MSAA (HDR resolve and depth attachment capabilities verified)",
+            );
+        }
+        MeshRenderer::new_with_sample_count(target.device, target.queue, HDR_FORMAT, sample_count)
+    }
+
+    fn ensure_renderer(&mut self, world: &World, target: &FrameTarget<'_>) {
+        if self.renderer.is_none() {
+            let requested = Self::requested_sample_count(world);
+            self.renderer = Some(Self::create_renderer(target, requested));
+            self.latched_requested_sample_count = Some(requested);
+        }
+    }
+
+    fn ensure_msaa_target(
+        msaa_target: &mut Option<MsaaColorTarget>,
+        device: &wgpu::Device,
+        size: (u32, u32),
+        sample_count: u32,
+    ) {
+        if sample_count <= 1 {
+            *msaa_target = None;
+            return;
+        }
+        let matches = msaa_target
+            .as_ref()
+            .is_some_and(|target| target.size == size && target.sample_count == sample_count);
+        if !matches {
+            *msaa_target = Some(MsaaColorTarget::new(device, size, sample_count));
+        }
+    }
+
     fn publish_diagnostics(&mut self, world: &mut World, device: &wgpu::Device) {
         let renderer_stats = self
             .renderer
@@ -253,7 +391,7 @@ impl MeshPass {
         let post_gpu_timing = self
             .tonemapper
             .as_ref()
-            .map(|(_, tonemapper)| tonemapper.gpu_timing_snapshot())
+            .map(|(_, _, tonemapper)| tonemapper.gpu_timing_snapshot())
             .unwrap_or_default();
         let frame = world
             .try_resource::<RenderDiagnostics>()
@@ -279,7 +417,7 @@ impl MeshPass {
                 renderer.clear_gpu_timing_samples();
             }
         }
-        if let Some((_, tonemapper)) = self.tonemapper.as_mut() {
+        if let Some((_, _, tonemapper)) = self.tonemapper.as_mut() {
             if capture_gpu_samples {
                 completed_gpu_samples.extend(
                     tonemapper
@@ -317,8 +455,14 @@ impl MeshPass {
         let post_process_bytes = self
             .tonemapper
             .as_ref()
-            .map(|(_, tonemapper)| tonemapper.estimated_bytes())
-            .unwrap_or(0);
+            .map(|(_, _, tonemapper)| tonemapper.estimated_bytes())
+            .unwrap_or(0)
+            .saturating_add(self.msaa_target.as_ref().map_or(0, |target| {
+                u64::from(target.size.0)
+                    .saturating_mul(u64::from(target.size.1))
+                    .saturating_mul(8)
+                    .saturating_mul(u64::from(target.sample_count))
+            }));
         let mut resources = RenderResourceStats {
             active_transient_textures: pool_stats.active_textures,
             cached_transient_textures: pool_stats.cached_textures,
@@ -542,6 +686,7 @@ impl MeshPass {
         // Drop bind groups that reference the HDR view before making its texture reusable.
         self.tonemapper = None;
         self.hdr_size = None;
+        self.msaa_target = None;
         if let Some(handle) = self.hdr.take() {
             self.transient_targets.release(handle);
         }
@@ -711,8 +856,14 @@ impl MeshPass {
         let post_process_bytes = self
             .tonemapper
             .as_ref()
-            .map(|(_, tonemapper)| tonemapper.estimated_bytes())
-            .unwrap_or(0);
+            .map(|(_, _, tonemapper)| tonemapper.estimated_bytes())
+            .unwrap_or(0)
+            .saturating_add(self.msaa_target.as_ref().map_or(0, |target| {
+                u64::from(target.size.0)
+                    .saturating_mul(u64::from(target.size.1))
+                    .saturating_mul(8)
+                    .saturating_mul(u64::from(target.sample_count))
+            }));
         let pass_bytes = renderer_bytes
             .saturating_add(transient_bytes)
             .saturating_add(post_process_bytes);
@@ -766,9 +917,7 @@ impl MeshPass {
             ) {
                 break;
             }
-            if self.renderer.is_none() {
-                self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
-            }
+            self.ensure_renderer(world, target);
             if !frame_budget.limits.allows_upload(
                 frame_budget.uploads,
                 frame_budget.uploaded_bytes,
@@ -923,9 +1072,7 @@ impl MeshPass {
         // Include the renderer's baseline allocations in the global residency estimate before
         // deciding whether another model may be admitted. These baseline resources are mandatory
         // for rendering, but their cost must not be invisible to the managed upload gate.
-        if self.renderer.is_none() {
-            self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
-        }
+        self.ensure_renderer(world, target);
         if !self.admit_global_gpu_upload(world, estimated_upload_bytes) {
             Self::set_warmup_status(world, handle, ModelWarmupStatus::WaitingForGpu);
             return Some(revision_key);
@@ -936,9 +1083,7 @@ impl MeshPass {
             .try_resource::<RenderProfileRecorder>()
             .is_some()
             .then(Instant::now);
-        if self.renderer.is_none() {
-            self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
-        }
+        self.ensure_renderer(world, target);
         let renderer = self.renderer.as_mut()?;
         target
             .device
@@ -1247,8 +1392,8 @@ impl MeshPass {
                         .all(|&index| (index as usize) < placement.mesh.vertices.len())
             })
             .count();
-        if valid_dynamic_mesh_count > 0 && self.renderer.is_none() {
-            self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
+        if valid_dynamic_mesh_count > 0 {
+            self.ensure_renderer(world, target);
         }
         let mut dynamic_draws = Vec::with_capacity(valid_dynamic_mesh_count);
         for placement in &extracted.dynamic_meshes {
@@ -1340,9 +1485,8 @@ impl MeshPass {
                 !matches!(&request.status, ModelWarmupStatus::Failed(_))
                     && server.get(request.handle).is_some()
             });
-            if self.renderer.is_none() && (!extracted.models.is_empty() || cpu_ready_warmup_exists)
-            {
-                self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
+            if !extracted.models.is_empty() || cpu_ready_warmup_exists {
+                self.ensure_renderer(world, target);
             }
 
             // Existing visible scene placements have priority over background warmups. Both paths
@@ -1531,8 +1675,8 @@ impl MeshPass {
             self.models.clear();
             self.model_cache_bytes.clear();
             self.model_cache_pressure_level = 0;
-            self.renderer = Some(MeshRenderer::new(target.device, target.queue, HDR_FORMAT));
         }
+        self.ensure_renderer(world, target);
         if self.hdr_size != Some(target.size) {
             self.release_hdr_target();
             self.hdr = Some(self.transient_targets.acquire(
@@ -1551,13 +1695,28 @@ impl MeshPass {
         let Some(hdr_view) = self.transient_targets.view(hdr_handle) else {
             return;
         };
+        let aa_mode = world
+            .try_resource::<AntiAliasingSettings>()
+            .copied()
+            .unwrap_or_default()
+            .mode;
+        let fxaa_enabled = aa_mode.uses_fxaa();
+        if self.last_reported_fxaa != Some(fxaa_enabled) {
+            if fxaa_enabled {
+                eprintln!("[RENDER3D AA] FXAA enabled (post-tone-map spatial filter)");
+            } else {
+                eprintln!("[RENDER3D AA] FXAA disabled");
+            }
+            self.last_reported_fxaa = Some(fxaa_enabled);
+        }
         if self
             .tonemapper
             .as_ref()
-            .is_none_or(|(format, _)| *format != target.format)
+            .is_none_or(|(format, size, _)| *format != target.format || *size != target.size)
         {
             self.tonemapper = Some((
                 target.format,
+                target.size,
                 ToneMapper::new(target.device, hdr_view, target.format, target.size),
             ));
         }
@@ -1568,6 +1727,35 @@ impl MeshPass {
             .unwrap_or_default()
             .0;
         clear_view(target.device, target.queue, hdr_view, clear_color);
+        let actual_sample_count = self.renderer.as_ref().map_or(1, MeshRenderer::sample_count);
+        let requested_sample_count = Self::requested_sample_count(world);
+        let latched_request = self
+            .latched_requested_sample_count
+            .unwrap_or(actual_sample_count);
+        if requested_sample_count != latched_request {
+            let warning = (latched_request, requested_sample_count);
+            if self.aa_reconfiguration_warning != Some(warning) {
+                eprintln!(
+                    "[RENDER3D AA] MSAA request changed from {latched_request}x to {requested_sample_count}x after renderer creation; keeping the originally negotiated {}x pipelines to preserve live GPU handles. FXAA selection still follows the current setting.",
+                    actual_sample_count,
+                );
+                self.aa_reconfiguration_warning = Some(warning);
+            }
+        } else {
+            self.aa_reconfiguration_warning = None;
+        }
+        Self::ensure_msaa_target(
+            &mut self.msaa_target,
+            target.device,
+            target.size,
+            actual_sample_count,
+        );
+        let (mesh_color_view, resolve_view) = if let Some(msaa) = self.msaa_target.as_ref() {
+            clear_view(target.device, target.queue, &msaa.view, clear_color);
+            (&msaa.view, Some(hdr_view))
+        } else {
+            (hdr_view, None)
+        };
         let view = Mat4::from_rotation_translation(
             camera.transform.rotation,
             camera.transform.translation,
@@ -1590,7 +1778,8 @@ impl MeshPass {
                         crate::renderer::RenderTarget {
                             device: target.device,
                             queue: target.queue,
-                            view: hdr_view,
+                            view: mesh_color_view,
+                            resolve_view,
                             size: target.size,
                             scene: &scene,
                         },
@@ -1598,26 +1787,53 @@ impl MeshPass {
                         frame,
                     ));
             } else {
-                renderer.render_with_skinning(
-                    target.device,
-                    target.queue,
-                    hdr_view,
-                    target.size,
-                    &scene,
-                    &skinned_draws,
-                );
+                if let Some(resolve_view) = resolve_view {
+                    renderer.render_with_skinning_resolve(
+                        crate::renderer::RenderTarget {
+                            device: target.device,
+                            queue: target.queue,
+                            view: mesh_color_view,
+                            resolve_view: Some(resolve_view),
+                            size: target.size,
+                            scene: &scene,
+                        },
+                        &skinned_draws,
+                    );
+                } else {
+                    renderer.render_with_skinning(
+                        target.device,
+                        target.queue,
+                        mesh_color_view,
+                        target.size,
+                        &scene,
+                        &skinned_draws,
+                    );
+                }
             }
         }
-        if let Some((_, tonemapper)) = self.tonemapper.as_mut() {
+        let post_settings = world
+            .try_resource::<PostProcessingSettings>()
+            .copied()
+            .unwrap_or_default();
+        if let Some((_, _, tonemapper)) = self.tonemapper.as_mut() {
             if profile_cpu {
-                self.cpu_phases.extend(tonemapper.render_profiled(
+                self.cpu_phases
+                    .extend(tonemapper.render_profiled_with_settings(
+                        target.device,
+                        target.queue,
+                        target.view,
+                        &post_settings,
+                        fxaa_enabled,
+                        frame,
+                    ));
+            } else {
+                tonemapper.render_with_settings(
                     target.device,
                     target.queue,
                     target.view,
-                    frame,
-                ));
-            } else {
-                tonemapper.render(target.device, target.queue, target.view);
+                    &post_settings,
+                    fxaa_enabled,
+                );
             }
         }
     }
@@ -1650,8 +1866,67 @@ mod model_warmup_integration_tests {
     use ribbon_scene::GlobalTransform3D;
     use std::path::Path;
 
+    #[test]
+    fn msaa_capabilities_intersect_hdr_resolve_and_depth_attachment_support() {
+        let color = wgpu::TextureFormatFeatures {
+            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            flags: wgpu::TextureFormatFeatureFlags::FILTERABLE
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X8,
+        };
+        let depth = wgpu::TextureFormatFeatures {
+            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            flags: wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
+        };
+        let supported = super::compatible_msaa_sample_counts(color, depth);
+        assert_eq!(supported, vec![1, 2, 4]);
+        assert_eq!(super::negotiate_msaa_sample_count(8, &supported), 4);
+    }
+
+    #[test]
+    fn msaa_falls_back_to_single_sample_without_a_valid_hdr_resolve_path() {
+        let depth = wgpu::TextureFormatFeatures {
+            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            flags: wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
+        };
+        let no_resolve = wgpu::TextureFormatFeatures {
+            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            flags: wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
+        };
+        let no_sampled_hdr = wgpu::TextureFormatFeatures {
+            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            flags: wgpu::TextureFormatFeatureFlags::FILTERABLE
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
+        };
+        let not_filterable = wgpu::TextureFormatFeatures {
+            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            flags: wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
+        };
+        assert_eq!(
+            super::compatible_msaa_sample_counts(no_resolve, depth),
+            vec![1]
+        );
+        assert_eq!(
+            super::compatible_msaa_sample_counts(no_sampled_hdr, depth),
+            vec![1]
+        );
+        assert_eq!(
+            super::compatible_msaa_sample_counts(not_filterable, depth),
+            vec![1]
+        );
+    }
+
     fn render(pass: &mut MeshPass, world: &mut World, context: &GpuContext) {
         let target = FrameTarget {
+            adapter: context.adapter(),
             device: context.device(),
             queue: context.queue(),
             view: context.target().view(),

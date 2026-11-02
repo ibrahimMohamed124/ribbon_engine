@@ -24,6 +24,8 @@ struct Material {
     // x = metallic, y = perceptual roughness.
     surface: vec4<f32>,
     emissive: vec4<f32>,
+    // x = alpha mode (0 opaque, 1 mask, 2 blend), y = alpha cutoff.
+    render: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -211,8 +213,11 @@ fn spotlight_pcf_shadow(shadow_position: vec4<f32>, n_dot_l: f32) -> f32 {
 }
 
 @fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let base_n = normalize(in.normal);
+fn fs_main(in: VertexOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    var base_n = normalize(in.normal);
+    if !front_facing {
+        base_n = -base_n;
+    }
     let normal_sample = textureSample(normal_texture, base_sampler, in.uv).xyz * 2.0 - vec3<f32>(1.0);
     let dp1 = dpdx(in.world_position);
     let dp2 = dpdy(in.world_position);
@@ -246,8 +251,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     let n = normalize(mat3x3<f32>(tangent, bitangent, base_n) * normal_sample);
     let v = normalize(globals.camera_pos.xyz - in.world_position);
+    let base_sample = textureSample(base_texture, base_sampler, in.uv);
+    let coverage_alpha = clamp(material.base_color.a * base_sample.a, 0.0, 1.0);
+    if material.render.x > 0.5 && material.render.x < 1.5 && coverage_alpha < material.render.y {
+        discard;
+    }
     let albedo = max(
-        in.tint * material.base_color.rgb * textureSample(base_texture, base_sampler, in.uv).rgb,
+        in.tint * material.base_color.rgb * base_sample.rgb,
         vec3<f32>(0.0)
     );
     let surface_sample = textureSample(metallic_roughness_texture, base_sampler, in.uv);
@@ -318,5 +328,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         1.0
     );
     color = mix(color, globals.fog_color_density.rgb, fog_amount);
-    return vec4<f32>(color, material.base_color.a);
+    let output_alpha = select(1.0, coverage_alpha, material.render.x > 1.5);
+    return vec4<f32>(color, output_alpha);
 }

@@ -29,7 +29,19 @@ pub struct PrimitiveData {
     pub weights: Vec<[f32; 8]>,
 }
 
-/// Metallic-roughness material reduced to what the renderer currently uses.
+/// glTF material alpha interpretation used by the renderer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AlphaMode {
+    /// Fully opaque; base-color alpha is ignored.
+    #[default]
+    Opaque,
+    /// Alpha-tested coverage; fragments below `alpha_cutoff` are discarded.
+    Mask,
+    /// Alpha blended in back-to-front order.
+    Blend,
+}
+
+/// Metallic-roughness material data retained from glTF.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialData {
     /// Linear base color multiplier (RGBA).
@@ -52,6 +64,12 @@ pub struct MaterialData {
     pub emissive_texture: Option<usize>,
     /// Linear emissive multiplier.
     pub emissive_factor: [f32; 3],
+    /// glTF alpha compositing mode. Missing values default to OPAQUE.
+    pub alpha_mode: AlphaMode,
+    /// Alpha-test threshold used only by MASK materials (glTF default 0.5).
+    pub alpha_cutoff: f32,
+    /// Render both triangle orientations and flip back-face normals for lighting.
+    pub double_sided: bool,
 }
 
 /// Decoded 8-bit RGBA image.
@@ -640,6 +658,13 @@ pub fn parse(bytes: &[u8]) -> Result<ModelAsset, String> {
                 .emissive_texture()
                 .map(|info| info.texture().source().index()),
             emissive_factor: material.emissive_factor(),
+            alpha_mode: match material.alpha_mode() {
+                gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+                gltf::material::AlphaMode::Mask => AlphaMode::Mask,
+                gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+            },
+            alpha_cutoff: material.alpha_cutoff().unwrap_or(0.5),
+            double_sided: material.double_sided(),
         });
     }
     let scene = document
@@ -1211,7 +1236,33 @@ fn to_rgba8(image: &gltf::image::Data) -> Result<ImageData, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, GltfLoader, ModelAsset};
+    #[test]
+    fn gltf_alpha_modes_cutoff_and_double_sided_defaults_are_imported() {
+        let source = br#"{
+            "asset": { "version": "2.0" },
+            "scene": 0,
+            "scenes": [{ "nodes": [0] }],
+            "nodes": [{}],
+            "materials": [
+                {},
+                { "alphaMode": "MASK", "alphaCutoff": 0.37, "doubleSided": true },
+                { "alphaMode": "BLEND", "doubleSided": true }
+            ]
+        }"#;
+        let model = super::parse(source).expect("minimal material document should import");
+        assert_eq!(model.materials.len(), 3);
+        assert_eq!(model.materials[0].alpha_mode, super::AlphaMode::Opaque);
+        assert_eq!(model.materials[0].alpha_cutoff, 0.5);
+        assert!(!model.materials[0].double_sided);
+        assert_eq!(model.materials[1].alpha_mode, super::AlphaMode::Mask);
+        assert!((model.materials[1].alpha_cutoff - 0.37).abs() < 1.0e-6);
+        assert!(model.materials[1].double_sided);
+        assert_eq!(model.materials[2].alpha_mode, super::AlphaMode::Blend);
+        assert_eq!(model.materials[2].alpha_cutoff, 0.5);
+        assert!(model.materials[2].double_sided);
+    }
+
+    use super::{parse, AlphaMode, GltfLoader, ModelAsset};
     use glam::{Mat4, Vec3};
     use ribbon_assets::{AssetServer, LoadErrorKind, MemorySource};
 
@@ -1348,6 +1399,9 @@ mod tests {
                     occlusion_strength: 1.0,
                     emissive_texture: Some(2),
                     emissive_factor: [0.0; 3],
+                    alpha_mode: AlphaMode::Opaque,
+                    alpha_cutoff: 0.5,
+                    double_sided: false,
                 },
                 MaterialData {
                     base_color: [1.0; 4],
@@ -1360,6 +1414,9 @@ mod tests {
                     occlusion_strength: 1.0,
                     emissive_texture: None,
                     emissive_factor: [0.0; 3],
+                    alpha_mode: AlphaMode::Opaque,
+                    alpha_cutoff: 0.5,
+                    double_sided: false,
                 },
                 MaterialData {
                     base_color: [1.0; 4],
@@ -1372,6 +1429,9 @@ mod tests {
                     occlusion_strength: 1.0,
                     emissive_texture: None,
                     emissive_factor: [0.0; 3],
+                    alpha_mode: AlphaMode::Opaque,
+                    alpha_cutoff: 0.5,
+                    double_sided: false,
                 },
             ],
             primitives: vec![
@@ -1451,6 +1511,9 @@ mod tests {
                 occlusion_strength: 1.0,
                 emissive_texture: None,
                 emissive_factor: [0.0; 3],
+                alpha_mode: AlphaMode::Opaque,
+                alpha_cutoff: 0.5,
+                double_sided: false,
             }],
             images: vec![ImageData {
                 width: 2,

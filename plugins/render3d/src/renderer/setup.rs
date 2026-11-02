@@ -2,6 +2,19 @@ use super::*;
 
 impl MeshRenderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+        Self::new_with_sample_count(device, queue, format, 1)
+    }
+
+    pub(crate) fn new_with_sample_count(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
+    ) -> Self {
+        let sample_count = match sample_count {
+            2 | 4 | 8 => sample_count,
+            _ => 1,
+        };
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/mesh.wgsl").into()),
@@ -229,7 +242,7 @@ impl MeshRenderer {
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("directional shadow pipeline layout"),
-                bind_group_layouts: &[&shadow_globals_layout],
+                bind_group_layouts: &[&shadow_globals_layout, &material_layout],
                 push_constant_ranges: &[],
             });
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -270,14 +283,68 @@ impl MeshRenderer {
                 },
             }),
             multisample: wgpu::MultisampleState::default(),
-            fragment: None,
+            fragment: Some(wgpu::FragmentState {
+                module: &shadow_shader,
+                entry_point: Some("fs_shadow"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[],
+            }),
             multiview: None,
             cache: None,
         });
+        // Double-sided materials get a no-cull directional shadow variant without
+        // disabling back-face culling for ordinary materials.
+        let shadow_double_sided_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("directional double-sided shadow pipeline"),
+                layout: Some(&shadow_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shadow_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[
+                        wgpu::VertexBufferLayout {
+                            array_stride: std::mem::size_of::<Vertex>() as u64,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &VERTEX_ATTRIBUTES,
+                        },
+                        wgpu::VertexBufferLayout {
+                            array_stride: std::mem::size_of::<RawInstance>() as u64,
+                            step_mode: wgpu::VertexStepMode::Instance,
+                            attributes: &INSTANCE_ATTRIBUTES,
+                        },
+                    ],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..wgpu::PrimitiveState::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState {
+                        constant: 2,
+                        slope_scale: 2.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shadow_shader,
+                    entry_point: Some("fs_shadow"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[],
+                }),
+                multiview: None,
+                cache: None,
+            });
         // A spotlight commonly sits inside closed room geometry. Render both
         // sides into its depth map so inward-facing corridor surfaces still write
-        // depth when viewed from inside the room. Keep the directional pipeline's
-        // back-face culling and its tuned bias independent.
+        // depth when viewed from inside the room. Keep its projection and bias independent.
         let spot_shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("spotlight shadow pipeline"),
             layout: Some(&shadow_pipeline_layout),
@@ -312,57 +379,63 @@ impl MeshRenderer {
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            fragment: None,
-            multiview: None,
-            cache: None,
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[
-                    wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &VERTEX_ATTRIBUTES,
-                    },
-                    wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<RawInstance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &INSTANCE_ATTRIBUTES,
-                    },
-                ],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                ..wgpu::PrimitiveState::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
+                module: &shadow_shader,
+                entry_point: Some("fs_shadow"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+                targets: &[],
             }),
             multiview: None,
             cache: None,
         });
+        let pipeline = create_color_pipeline(
+            device,
+            &shader,
+            &pipeline_layout,
+            ColorPipelineOptions {
+                format,
+                label: "opaque mesh pipeline",
+                blended: false,
+                double_sided: false,
+                sample_count,
+            },
+        );
+        let double_sided_pipeline = create_color_pipeline(
+            device,
+            &shader,
+            &pipeline_layout,
+            ColorPipelineOptions {
+                format,
+                label: "opaque double-sided mesh pipeline",
+                blended: false,
+                double_sided: true,
+                sample_count,
+            },
+        );
+        let blend_pipeline = create_color_pipeline(
+            device,
+            &shader,
+            &pipeline_layout,
+            ColorPipelineOptions {
+                format,
+                label: "transparent mesh pipeline",
+                blended: true,
+                double_sided: false,
+                sample_count,
+            },
+        );
+        let blend_double_sided_pipeline = create_color_pipeline(
+            device,
+            &shader,
+            &pipeline_layout,
+            ColorPipelineOptions {
+                format,
+                label: "transparent double-sided mesh pipeline",
+                blended: true,
+                double_sided: true,
+                sample_count,
+            },
+        );
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("mesh globals"),
             size: std::mem::size_of::<Globals>() as u64,
@@ -451,8 +524,13 @@ impl MeshRenderer {
             ..wgpu::SamplerDescriptor::default()
         });
         let mut renderer = Self {
+            sample_count,
             pipeline,
+            double_sided_pipeline,
+            blend_pipeline,
+            blend_double_sided_pipeline,
             shadow_pipeline,
+            shadow_double_sided_pipeline,
             spot_shadow_pipeline,
             globals,
             globals_group,
@@ -500,4 +578,87 @@ impl MeshRenderer {
         debug_assert_eq!(white, Self::WHITE);
         renderer
     }
+}
+
+#[derive(Clone, Copy)]
+struct ColorPipelineOptions {
+    format: wgpu::TextureFormat,
+    label: &'static str,
+    blended: bool,
+    double_sided: bool,
+    sample_count: u32,
+}
+
+fn create_color_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    options: ColorPipelineOptions,
+) -> wgpu::RenderPipeline {
+    let ColorPipelineOptions {
+        format,
+        label,
+        blended,
+        double_sided,
+        sample_count,
+    } = options;
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &VERTEX_ATTRIBUTES,
+                },
+                wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<RawInstance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &INSTANCE_ATTRIBUTES,
+                },
+            ],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: if double_sided {
+                None
+            } else {
+                Some(wgpu::Face::Back)
+            },
+            ..wgpu::PrimitiveState::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: !blended,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: if blended {
+                    Some(wgpu::BlendState::ALPHA_BLENDING)
+                } else {
+                    None
+                },
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview: None,
+        cache: None,
+    })
 }

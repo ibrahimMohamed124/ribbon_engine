@@ -2,7 +2,8 @@
 
 use crate::mesh::Vertex;
 use crate::renderer::{
-    MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, PbrMaterialMipmaps, TextureData,
+    MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, PbrMaterialMipmaps,
+    PbrMaterialRenderOptions, TextureData,
 };
 use glam::Mat4;
 use ribbon_plugin_gltf::ModelAsset;
@@ -134,30 +135,37 @@ pub(crate) fn upload_validated_model(
                 height: image.height,
                 rgba8: &image.rgba8,
             });
-            Some(renderer.upload_pbr_material_with_precomputed_mips(
-                device,
-                queue,
-                PbrMaterialDesc {
-                    base_color: material.base_color,
-                    metallic: material.metallic_factor,
-                    roughness: material.roughness_factor,
-                    base_color_texture: texture,
-                    metallic_roughness_texture,
-                    normal_texture,
-                    occlusion_texture,
-                    occlusion_strength: material.occlusion_strength,
-                    emissive_texture,
-                    emissive_factor: material.emissive_factor,
-                },
-                PbrMaterialMipmaps {
-                    base_color: base_image.and_then(|image| image.srgb_mips.as_deref()),
-                    metallic_roughness:
-                        surface_image.and_then(|image| image.linear_mips.as_deref()),
-                    normal: normal_image.and_then(|image| image.linear_mips.as_deref()),
-                    occlusion: occlusion_image.and_then(|image| image.linear_mips.as_deref()),
-                    emissive: emissive_image.and_then(|image| image.srgb_mips.as_deref()),
-                },
-            ))
+            Some(
+                renderer.upload_pbr_material_with_precomputed_mips_and_options(
+                    device,
+                    queue,
+                    PbrMaterialDesc {
+                        base_color: material.base_color,
+                        metallic: material.metallic_factor,
+                        roughness: material.roughness_factor,
+                        base_color_texture: texture,
+                        metallic_roughness_texture,
+                        normal_texture,
+                        occlusion_texture,
+                        occlusion_strength: material.occlusion_strength,
+                        emissive_texture,
+                        emissive_factor: material.emissive_factor,
+                    },
+                    PbrMaterialMipmaps {
+                        base_color: base_image.and_then(|image| image.srgb_mips.as_deref()),
+                        metallic_roughness: surface_image
+                            .and_then(|image| image.linear_mips.as_deref()),
+                        normal: normal_image.and_then(|image| image.linear_mips.as_deref()),
+                        occlusion: occlusion_image.and_then(|image| image.linear_mips.as_deref()),
+                        emissive: emissive_image.and_then(|image| image.srgb_mips.as_deref()),
+                    },
+                    PbrMaterialRenderOptions {
+                        alpha_mode: material.alpha_mode,
+                        alpha_cutoff: material.alpha_cutoff,
+                        double_sided: material.double_sided,
+                    },
+                ),
+            )
         })
         .collect();
     // Only upload primitive geometry referenced by a placed node. Keeping unused primitive
@@ -389,6 +397,12 @@ pub fn validate_model_for_upload(model: &ModelAsset) -> Result<(), String> {
         {
             return Err(format!("material {index} contains non-finite factors"));
         }
+        if !material.alpha_cutoff.is_finite() {
+            return Err(format!("material {index} has a non-finite alpha cutoff"));
+        }
+        if !(0.0..=1.0).contains(&material.alpha_cutoff) {
+            return Err(format!("material {index} alpha cutoff is outside 0..=1"));
+        }
         for texture in [
             material.base_color_texture,
             material.metallic_roughness_texture,
@@ -514,6 +528,26 @@ mod tests {
             }],
             ..ModelAsset::default()
         }
+    }
+
+    #[test]
+    fn model_upload_validation_rejects_invalid_alpha_cutoff() {
+        let mut model = ribbon_plugin_gltf::parse(CUBE).expect("packaged model parses");
+        model.materials[0].alpha_cutoff = f32::NAN;
+        let error = validate_model_for_upload(&model)
+            .expect_err("non-finite alpha cutoff must be rejected before GPU upload");
+        assert!(
+            error.contains("material 0 has a non-finite alpha cutoff"),
+            "{error}"
+        );
+
+        model.materials[0].alpha_cutoff = 1.25;
+        let error = validate_model_for_upload(&model)
+            .expect_err("alpha cutoff outside glTF range must be rejected");
+        assert!(
+            error.contains("material 0 alpha cutoff is outside 0..=1"),
+            "{error}"
+        );
     }
 
     #[test]

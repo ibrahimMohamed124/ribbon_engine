@@ -5,7 +5,11 @@ use super::*;
 pub(super) const DIRECTIONAL_SHADOW_RESOLUTION: u32 = 1024;
 
 fn frustum_corners(view_proj: Mat4) -> Option<[Vec3; 8]> {
-    if !view_proj.to_cols_array().iter().all(|value| value.is_finite()) {
+    if !view_proj
+        .to_cols_array()
+        .iter()
+        .all(|value| value.is_finite())
+    {
         return None;
     }
     let determinant = view_proj.determinant();
@@ -13,7 +17,11 @@ fn frustum_corners(view_proj: Mat4) -> Option<[Vec3; 8]> {
         return None;
     }
     let inverse = view_proj.inverse();
-    if !inverse.to_cols_array().iter().all(|value| value.is_finite()) {
+    if !inverse
+        .to_cols_array()
+        .iter()
+        .all(|value| value.is_finite())
+    {
         return None;
     }
 
@@ -49,6 +57,44 @@ fn finite_direction(direction: Vec3) -> Vec3 {
 }
 
 impl MeshRenderer {
+    /// Ensure the main color pass has a depth target matching the current drawable size.
+    /// Recreate it only when the surface resolution changes; the TextureView keeps the
+    /// underlying wgpu texture alive for the lifetime of the depth target.
+    pub(super) fn ensure_depth(
+        &mut self,
+        device: &wgpu::Device,
+        size: (u32, u32),
+        sample_count: u32,
+    ) {
+        if self
+            .depth
+            .as_ref()
+            .is_some_and(|depth| depth.size == size && depth.sample_count == sample_count)
+        {
+            return;
+        }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mesh depth"),
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        self.depth = Some(DepthTarget {
+            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            size,
+            sample_count,
+        });
+        self.update_peak_resource_estimate();
+    }
+
     /// Fit a stable orthographic directional-shadow projection around the active camera frustum.
     ///
     /// The fit uses a rotation-invariant bounding sphere in light space for its XY extent. Its
@@ -108,9 +154,7 @@ impl MeshRenderer {
         }
 
         let depth_padding = (radius * 0.08).max(1.0);
-        let eye = right * snapped_x
-            + up * snapped_y
-            + direction * (min_depth - depth_padding);
+        let eye = right * snapped_x + up * snapped_y + direction * (min_depth - depth_padding);
         let view = Mat4::look_to_rh(eye, direction, up);
         let near = 0.05;
         let far = (max_depth - min_depth + depth_padding * 2.0).max(near + 0.1);
@@ -227,8 +271,7 @@ mod tests {
             .iter()
             .map(|p| p.distance(center))
             .fold(0.0_f32, f32::max);
-        let nominal_texel =
-            (2.0 * radius.max(0.5)) / DIRECTIONAL_SHADOW_RESOLUTION as f32;
+        let nominal_texel = (2.0 * radius.max(0.5)) / DIRECTIONAL_SHADOW_RESOLUTION as f32;
         let direction = SunLight::default().direction.normalize();
         let reference_up = if direction.dot(Vec3::Y).abs() > 0.95 {
             Vec3::Z
