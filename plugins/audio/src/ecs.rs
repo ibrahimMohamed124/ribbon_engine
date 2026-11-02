@@ -380,11 +380,14 @@ pub fn audio_emitter_system(world: &mut World) {
         .query::<(&AudioEmitter, &GlobalTransform3D)>()
         .iter()
         .filter_map(|(entity, (emitter, transform))| {
-            transform.translation.is_finite().then_some(EmitterSnapshot {
-                entity,
-                emitter: *emitter,
-                transform: *transform,
-            })
+            transform
+                .translation
+                .is_finite()
+                .then_some(EmitterSnapshot {
+                    entity,
+                    emitter: *emitter,
+                    transform: *transform,
+                })
         })
         .collect();
     let transformed_listener_entities: HashSet<Entity> = world
@@ -413,8 +416,7 @@ pub fn audio_emitter_system(world: &mut World) {
         .query::<(&SpatialAudioListener, &GlobalTransform3D)>()
         .iter()
         .filter_map(|(entity, (listener, transform))| {
-            listener_from_transform(transform, listener.0.velocity)
-                .map(|pose| (entity, pose))
+            listener_from_transform(transform, listener.0.velocity).map(|pose| (entity, pose))
         })
         .min_by_key(|(entity, _)| entity.to_bits())
         .map(|(_, listener)| listener)
@@ -1119,10 +1121,8 @@ mod tests {
             rotation: parent_rotation,
             scale: Vec3::new(2.0, 1.5, 2.0),
         },));
-        let listener_entity = world.spawn((
-            Transform3D::default(),
-            SpatialAudioListener::default(),
-        ));
+        let listener_entity =
+            world.spawn((Transform3D::default(), SpatialAudioListener::default()));
         let emitter_entity = world.spawn((
             Transform3D::from_translation(Vec3::new(0.0, 0.0, -3.0)),
             AudioEmitter::default(),
@@ -1140,11 +1140,8 @@ mod tests {
         assert!((listener_global.translation - Vec3::new(10.0, 2.0, 5.0)).length() < 1.0e-5);
         assert!((emitter_global.translation - Vec3::new(4.0, 2.0, 5.0)).length() < 1.0e-5);
 
-        let listener = listener_from_transform(
-            &listener_global,
-            AudioVec3::ZERO,
-        )
-        .expect("parented listener pose is valid");
+        let listener = listener_from_transform(&listener_global, AudioVec3::ZERO)
+            .expect("parented listener pose is valid");
         assert!((listener.forward - audio_vec3(Vec3::NEG_X)).length() < 1.0e-5);
         let spatial = spatial::calculate(
             listener,

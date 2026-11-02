@@ -338,8 +338,7 @@ pub fn audio_event_system(world: &mut World) {
         .query::<(&SpatialAudioListener, &GlobalTransform3D)>()
         .iter()
         .filter_map(|(entity, (listener, transform))| {
-            ecs::listener_from_transform(transform, listener.0.velocity)
-                .map(|pose| (entity, pose))
+            ecs::listener_from_transform(transform, listener.0.velocity).map(|pose| (entity, pose))
         })
         .min_by_key(|(entity, _)| entity.to_bits())
         .map(|(_, listener)| listener)
@@ -607,7 +606,10 @@ mod tests {
         world.add_event::<PlaySpatialSound>();
         world.insert_resource(AudioCursors::default());
         world.insert_resource(AudioOutput(Some(Box::new(MockSink(Arc::clone(&calls))))));
-        world.spawn((SpatialAudioListener::default(), GlobalTransform3D::default()));
+        world.spawn((
+            SpatialAudioListener::default(),
+            GlobalTransform3D::default(),
+        ));
         world.send_event(PlaySpatialSound {
             id: SoundId(15),
             emitter: Emitter3d {
@@ -621,7 +623,10 @@ mod tests {
         let output = calls.lock().unwrap();
         assert_eq!(output.spatial_sounds.len(), 1);
         assert_eq!(output.spatial_sounds[0].0, SoundId(15));
-        assert!(output.spatial_sounds[0].2 > 0.999, "world +X is listener-right: {output:?}");
+        assert!(
+            output.spatial_sounds[0].2 > 0.999,
+            "world +X is listener-right: {output:?}"
+        );
         assert!(output.spatial_sounds[0].3.is_finite());
     }
 

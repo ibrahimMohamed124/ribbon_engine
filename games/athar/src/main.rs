@@ -11,11 +11,11 @@ use ribbon_app::{App, AppExit, Stage, Time, World};
 use ribbon_assets::{AssetEvent, AssetPlugin, AssetRef, AssetServer, FsSource};
 use ribbon_events::{EventCursor, WorldEventsExt};
 use ribbon_platform::{PlatformConfig, PlatformPlugin};
+use ribbon_plugin_audio::{AcousticZone, AudioPlugin, AudioVec3, AudioZoneVolume};
 use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
 use ribbon_plugin_physics::{
     CharacterController, CharacterMovementIntent, Collider, PhysicsPlugin, RigidBody,
 };
-use ribbon_plugin_audio::{AcousticZone, AudioPlugin, AudioVec3, AudioZoneVolume};
 use ribbon_plugin_render3d::glam::{Quat, Vec3};
 use ribbon_plugin_render3d::{
     Camera3D, FogSettings, ModelInstance, PointLight, Render3dPlugin, SpotLight, SunLight,
@@ -340,7 +340,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_plugin(PhysicsPlugin)?;
     app.add_plugin(AssetPlugin)?;
     app.add_plugin(AudioPlugin)?;
-    app.world.insert_resource(audio::GameplayAudioState::default());
+    app.world
+        .insert_resource(audio::GameplayAudioState::default());
     audio::initialize_output(&mut app.world);
     app.add_plugin(GpuWindowPlugin)?;
     app.add_plugin(Render3dPlugin)?;

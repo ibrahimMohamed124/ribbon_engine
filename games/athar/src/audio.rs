@@ -133,9 +133,7 @@ pub fn initialize_output(world: &mut World) {
             println!("[ATHAR audio] Kira output initialized");
         }
         Err(error) => {
-            let message = format!(
-                "ATHAR audio output unavailable; continuing silently: {error}"
-            );
+            let message = format!("ATHAR audio output unavailable; continuing silently: {error}");
             eprintln!("[ATHAR audio] {message}");
             world
                 .resource_mut::<LogBuffer>()
@@ -257,7 +255,8 @@ mod tests {
     #[test]
     fn athar_sound_bank_contains_decodable_non_empty_original_assets() {
         let bank = sound_bank();
-        bank.validate().expect("ATHAR's packaged audio bank is valid");
+        bank.validate()
+            .expect("ATHAR's packaged audio bank is valid");
         assert_eq!(bank.sound_count(), 8);
         assert_eq!(bank.ambience_count(), 2);
         assert!(bank.estimated_encoded_bytes() > 100_000);
@@ -266,7 +265,8 @@ mod tests {
     #[test]
     fn gameplay_event_helper_emits_spatial_sound_without_hardware() {
         let mut app = ribbon_app::App::new();
-        app.add_plugin(AudioPlugin).expect("audio plugin is headless-safe");
+        app.add_plugin(AudioPlugin)
+            .expect("audio plugin is headless-safe");
         emit_spatial(
             &mut app.world,
             SOUND_KEY_PICKUP,
@@ -286,7 +286,8 @@ mod tests {
     #[test]
     fn walking_footsteps_are_distance_cadenced_not_frame_triggered() {
         let mut app = ribbon_app::App::new();
-        app.add_plugin(AudioPlugin).expect("audio plugin is headless-safe");
+        app.add_plugin(AudioPlugin)
+            .expect("audio plugin is headless-safe");
         app.world.insert_resource(GameplayAudioState::default());
         let mut cursor = EventCursor::<PlaySpatialSound>::default();
 
@@ -322,7 +323,11 @@ mod tests {
             .read(app.world.events::<PlaySpatialSound>())
             .copied()
             .collect::<Vec<_>>();
-        assert_eq!(sounds.len(), 3, "a long frame must not flood the audio queue");
+        assert_eq!(
+            sounds.len(),
+            3,
+            "a long frame must not flood the audio queue"
+        );
         assert_eq!(sounds[0].id, SOUND_FOOTSTEP_WALK);
         assert_eq!(sounds[1].id, SOUND_FOOTSTEP_SPRINT);
         assert_eq!(sounds[2].id, SOUND_FOOTSTEP_SPRINT);
@@ -331,7 +336,8 @@ mod tests {
     #[test]
     fn ambience_is_started_once_and_only_crossfades_on_phase_change() {
         let mut app = ribbon_app::App::new();
-        app.add_plugin(AudioPlugin).expect("audio plugin is headless-safe");
+        app.add_plugin(AudioPlugin)
+            .expect("audio plugin is headless-safe");
         app.world.insert_resource(GameplayAudioState::default());
         update_gameplay_audio(
             &mut app.world,

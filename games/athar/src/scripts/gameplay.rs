@@ -873,47 +873,19 @@ mod tests {
         let key = Vec3::new(0.85, 0.025, 1.55);
         let door = Vec3::new(5.84, 0.0, -2.0);
         assert_eq!(
-            choose_room_interaction(
-                key,
-                false,
-                false,
-                key,
-                door,
-                Vec3::new(-0.6, 0.0, 2.35),
-            ),
+            choose_room_interaction(key, false, false, key, door, Vec3::new(-0.6, 0.0, 2.35),),
             RoomInteraction::PickUpKey
         );
         assert_eq!(
-            choose_room_interaction(
-                door,
-                false,
-                false,
-                key,
-                door,
-                Vec3::new(-0.6, 0.0, 2.35),
-            ),
+            choose_room_interaction(door, false, false, key, door, Vec3::new(-0.6, 0.0, 2.35),),
             RoomInteraction::LockedDoor
         );
         assert_eq!(
-            choose_room_interaction(
-                door,
-                true,
-                false,
-                key,
-                door,
-                Vec3::new(-0.6, 0.0, 2.35),
-            ),
+            choose_room_interaction(door, true, false, key, door, Vec3::new(-0.6, 0.0, 2.35),),
             RoomInteraction::UnlockDoor
         );
         assert_eq!(
-            choose_room_interaction(
-                door,
-                true,
-                true,
-                key,
-                door,
-                Vec3::new(-0.6, 0.0, 2.35),
-            ),
+            choose_room_interaction(door, true, true, key, door, Vec3::new(-0.6, 0.0, 2.35),),
             RoomInteraction::DoorAlreadyUnlocked
         );
         assert_eq!(
@@ -935,14 +907,7 @@ mod tests {
         let door = Vec3::new(5.84, 0.0, -2.0);
         let save_point = Vec3::new(-0.6, 0.0, 2.35);
         assert_eq!(
-            choose_room_interaction(
-                save_point,
-                true,
-                false,
-                key,
-                door,
-                save_point,
-            ),
+            choose_room_interaction(save_point, true, false, key, door, save_point,),
             RoomInteraction::SavePoint
         );
     }
