@@ -18,11 +18,13 @@ confusing integrated capabilities with features that remain in the roadmap.
    `PbrMaterialDesc` groups factors and optional texture maps into one descriptor,
    keeping the material upload API explicit without an oversized argument list.
 3. **HDR and tone mapping.** Mesh color renders to `Rgba16Float`, then a fullscreen
-   Reinhard tone mapper writes the acquired surface image.
-4. **Directional shadows.** A depth-only directional-light pass creates a single
-   shadow map; the material pass samples it with a depth-comparison sampler and
-   depth bias. Cascades, PCF kernels, point/spot shadows and production-grade
-   stability work remain incomplete.
+   Reinhard tone mapper writes the acquired surface image. The post pass includes basic bloom,
+   optional GPU-adapted exposure, display color grading, FXAA, vignette, animated film grain
+   and chromatic aberration.
+4. **Directional and spotlight shadows.** Depth-only passes create one camera-frustum-fitted,
+   texel-snapped directional shadow map and one selected perspective spotlight shadow map.
+   Both are sampled with depth-comparison PCF. Cascades, multiple spotlight casters, point-light
+   shadows, runtime quality settings and cascade blending remain incomplete.
 5. **Main-pass visibility.** Conservative bounding-sphere/frustum tests reduce
    the color-pass instance list. The shadow list retains valid off-screen draws
    so objects outside the camera view can still cast shadows.
@@ -44,16 +46,26 @@ confusing integrated capabilities with features that remain in the roadmap.
   shared by chunks to exercise incremental remeshing and GPU-resource eviction; it is a STUDS
   showcase, not an engine example. Tests in the STUDS-owned crates cover owner-chunk updates,
   boundary neighbors, no-op edits, out-of-bounds edits and empty-chunk eviction updates.
-- The PBR shader does not yet implement normal/occlusion/emissive textures,
-  alpha modes, vertex colors, image-based lighting, or multiple point/spot lights.
-- The current shadow map is a single fixed-resolution directional map without
-  cascades or a multi-tap PCF kernel.
+- The PBR shader supports normal, material AO and emissive textures, plus up to eight
+  deterministically selected unshadowed point lights. Vertex colors, image-based lighting,
+  multiple spotlight shadow casters and point-light shadow visibility remain unimplemented.
+- Directional shadows use one fixed-resolution, frustum-fitted and texel-snapped map with 3x3 PCF;
+  cascades and configurable shadow distance/resolution remain unimplemented.
 - The render graph is a scheduling/dependency graph, not a transient GPU resource
   allocator or complete graph of every internal render subpass.
-- Normal/AO/emissive texture sampling, height/distance fog, and a compact bright-pass
-  bloom contribution are implemented in `ribbon_plugin_render3d`. GPU culling, LOD, skeletal
+- Normal/AO/emissive texture sampling, height/distance fog, alpha material modes, per-material
+  double-sided pipelines, and a compact bright-pass bloom contribution are implemented in
+  `ribbon_plugin_render3d`. GPU culling, LOD, skeletal
   animation, GPU-driven culling and world streaming remain planned work. The legacy GPU voxel raycaster
   deletion is complete; the CPU raycaster remains supported.
+
+## Anti-aliasing paths
+
+`ribbon_plugin_render3d::AntiAliasingSettings` selects `None`, `Msaa2x`, `Msaa4x`, `Msaa8x`, or `Fxaa`. MSAA capability negotiation intersects the active adapter's `Rgba16Float` color-format sample counts and resolve support with the `Depth32Float` attachment sample counts and required render/texture usages. The mesh pass renders into a multisampled HDR color target with a depth target using the same sample count, then resolves into the single-sample HDR target consumed by bloom and tone mapping. Unsupported requests fall back to the highest lower common sample count, or one sample when no valid HDR resolve path exists. Target resizing recreates the multisampled color target and matching depth attachment at the renderer's latched sample count.
+
+Set `AntiAliasingSettings` before the first renderer-owned GPU upload (including generic GPU warmups). Sample-dependent pipelines and generation-checked GPU resource handles are owned by the renderer; changing the MSAA count later is intentionally not applied and produces a diagnostic rather than invalidating live handles. FXAA can be toggled at runtime: it runs as a fullscreen spatial filter after HDR+bloom tone mapping. If FXAA is selected after an MSAA renderer has already initialized, it is layered over the latched MSAA sample count instead of replacing it. It is not TAA; there are no projection jitters, motion vectors, history buffers, reprojection, or disocclusion handling.
+
+The FXAA shader and sample-count negotiation have CPU/WGSL regression tests. An ignored GPU integration test exercises the MSAA HDR resolve followed by the FXAA tone-mapping pass on an adapter that supports the required formats. Passing headless tests alone does not establish visual edge quality; compare the graphics showcase on the target GPU.
 
 ## PBR renderer test expectations
 
@@ -77,3 +89,16 @@ no-default-features matrix is also defined in `.github/workflows/ci.yml`. The ST
 smoke checks on the target Windows machine have been reported passing. This retirement overlay must
 still be revalidated with the full build/test matrix on the target Windows toolchain, because the current
 editing environment does not provide `cargo` or `rustc`.
+
+
+## glTF alpha material paths
+
+The current material path preserves glTF `alphaMode`, `alphaCutoff`, and `doubleSided`; the default `graphics_showcase` scene includes a generated five-primitive material wall for visual inspection of all three alpha modes and reversed-winding double-sided geometry. `OPAQUE` ignores alpha and writes depth; `MASK` discards by base-color factor alpha multiplied by base-color texture alpha in both color and shadow passes; `BLEND` uses conventional alpha blending, depth testing without depth writes, and object-center camera-space back-to-front sorting. Blend materials do not cast the current shadow maps, and intersecting transparent surfaces are not order independent. Double-sided materials select per-material no-cull variants and flip back-face normals; ordinary materials retain back-face culling.
+
+## HDR post-processing controls
+
+`PostProcessingSettings` is a public ECS world resource installed with neutral defaults by `Render3dPlugin`. Runtime changes are uploaded through fixed-size uniform buffers; the tone-mapping, bloom and exposure pipelines are retained across settings changes. `AutoExposureSettings` controls key luminance, exposure bounds and asymmetric adaptation rates. When enabled, a compute pass samples a 16x16 grid from the linear HDR texture, computes average log luminance, and exponentially adapts a persistent GPU scalar before the bloom and display passes. No HDR pixels are read back to CPU memory.
+
+`ColorGradingSettings` offers exposure compensation in EV, contrast, saturation, temperature and tint. `VignetteSettings`, `FilmGrainSettings` and `ChromaticAberrationSettings` independently configure radial darkening, animated monochrome noise and radial RGB channel offsets. Inputs are sanitized and clamped before uniform upload to avoid NaN/Inf shader values or unbounded effect strength. Defaults are neutral apart from the pre-existing 1.15 manual exposure and tone-map/bloom behavior. `PostProcessingSettings::cinematic()` provides a restrained example preset.
+
+The exposure reduction currently uses deterministic 16x16 spatial sampling rather than a luminance histogram. It is a low-cost adaptive baseline, not a physically calibrated camera model; histogram percentiles, local exposure, HDR output/display metadata, SSAO/GTAO and temporal AA remain future work.

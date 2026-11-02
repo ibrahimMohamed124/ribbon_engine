@@ -1,6 +1,7 @@
 /target/
 /profiles/
 /dist/
+/.ribbon-overlay-backups/
 /.github-actions-runner/
 /settings.cfg
 /games/studs/settings.cfg

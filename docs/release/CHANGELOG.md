@@ -18,6 +18,19 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 - Point-light uniform selection now ranks valid lights by estimated camera-space contribution (distance, range, intensity, and color luminance) and uses a stable value tie-breaker instead of ECS extraction order. The shader capacity remains eight and point lights remain unshadowed.
 - Added CPU regression coverage for frustum coverage, sub-texel camera translation stability, invalid camera matrices, importance ranking, camera movement, deterministic tie-breaking, invalid lights, and shader-capacity truncation. GPU-backed visual validation and Cargo execution remain required on a supported host.
 
+### HDR post-processing controls
+
+- Added a public `PostProcessingSettings` resource with bounded runtime controls for GPU auto exposure, exposure compensation, contrast, saturation, temperature/tint, vignette, animated film grain and chromatic aberration. Defaults retain the existing fixed-exposure image; a restrained cinematic preset exercises the complete feature set in `graphics_showcase`.
+- Auto exposure uses a GPU compute pass to sample a deterministic 16x16 HDR luminance grid, calculate average log luminance and adapt a persistent GPU exposure value with separate brighten/darken rates. The path performs no pixel readback to the CPU and is ordered before tone mapping in the same command buffer.
+- Unified FXAA and post-processing in one fullscreen display shader. Runtime setting changes update uniform buffers rather than rebuilding pipelines; FXAA can be toggled without resetting the auto-exposure history. Added CPU sanitization tests, WGSL parse/validation coverage and extended the ignored GPU test to execute the cinematic post stack on hardware. SSAO/GTAO, IBL, probes, TAA and cascaded/soft shadow improvements remain deferred.
+
+### Rendering anti-aliasing
+
+- Added `AntiAliasingSettings` and the `None`, 2x/4x/8x MSAA, and FXAA modes to `ribbon_plugin_render3d`. MSAA capability negotiation intersects HDR color resolve and depth-format sample support; unsupported requests fall back to the highest lower common sample count.
+- The main 3D color pass now uses matching multisampled HDR color/depth attachments and resolves into the single-sample HDR scene target before bloom and tone mapping. Resize recreates size-dependent MSAA targets. MSAA sample count is latched when renderer GPU resources are first created; runtime sample-count reconfiguration is deferred to preserve live GPU handles. FXAA can be toggled at runtime in the fullscreen post-tone-map pass.
+- Added sample-count negotiation/capability tests, FXAA WGSL validation, and an ignored GPU integration test for MSAA resolve followed by FXAA. The showcase's remaining-feature list no longer reports MSAA/FXAA as missing.
+- `ribbon_render::gpu_window::FrameTarget` now exposes the selected `wgpu::Adapter` so render passes can query format/sample-count capabilities before allocating optional multisampled targets; downstream code constructing `FrameTarget` literals must provide this adapter reference.
+
 ### Rendering API / migration
 
 - The legacy `ribbon_plugin_rendering::gpu::voxel::GpuRenderer` / `GpuPresenter`, the `gpu` feature,

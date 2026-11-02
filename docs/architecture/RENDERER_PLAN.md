@@ -19,7 +19,8 @@ The engine now has a usable native-surface mesh-rendering vertical slice:
   B=metallic), a directional light, ambient contribution, and a single
   directional depth shadow map.
 - Scene color renders to `Rgba16Float`, followed by a fullscreen Reinhard
-  tone-mapping pass before the native window image is presented.
+  tone-mapping/post pass with bloom, optional GPU-adapted exposure, color grading,
+  FXAA, vignette, animated grain and chromatic aberration before native presentation.
 - Camera-frustum sphere culling filters color-pass instances. Off-screen models
   are still retained in the shadow draw list so they can cast shadows into the
   visible scene.
@@ -74,8 +75,8 @@ implemented:
  4  Depth         opaque depth buffer now; dedicated pre-pass later if measured
  5  Opaque PBR    Cook-Torrance metallic-roughness into HDR RGBA16F
  6  Sky and fog   future sky model and volumetric fog
- 7  Transparent   future alpha modes and sorting
- 8  Post          Reinhard tonemap now; bloom, exposure controls, grade, AA later
+ 7  Transparent   OPAQUE/MASK and object-sorted BLEND now; OIT/refraction later
+ 8  Post          HDR tone map/bloom/fog, optional GPU auto exposure, color grade, FXAA and display effects
  9  UI/editor     DrawList quads over the image
 10  Present       wgpu surface
 ```
@@ -86,9 +87,9 @@ implemented:
 | --- | --- | --- |
 | Frame graph | Validated resource dependency graph; native `GpuWindow` passes chained by color versions | Transient resource allocation, explicit graph nodes for every internal mesh subpass, detailed tracing/profiling |
 | Mesh backend | Native wgpu surface, indexed meshes, depth buffer, GPU instance buffers | GPU-driven rendering, robust asset eviction, async upload, resource lifetime policy |
-| Materials | Cook-Torrance/GGX, base-color factor/map, metallic/roughness factors/map, generated mips | Normal maps, occlusion maps, emissive, alpha modes, vertex colors, compression, material caching/sharing |
-| Lighting | Directional sun, ambient term, single 1024 directional depth map | Cascaded shadows, multi-tap PCF/soft shadows, point/spot lights, physically based image-based lighting |
-| HDR/post | `Rgba16Float` scene color and fullscreen Reinhard tonemapping | Exposure control, bloom, color grading, anti-aliasing, fog, AO/GTAO |
+| Materials | Cook-Torrance/GGX, base-color/normal/AO/emissive maps, generated mips, OPAQUE/MASK/BLEND, per-material double-sided variants | Vertex colors, tangents/UV1, compression, material caching/sharing improvements, OIT/refraction |
+| Lighting | Directional sun/ambient, one frustum-fitted texel-snapped directional map, one selected spotlight shadow, up to eight importance-ranked unshadowed point lights | Cascades, multiple spotlight casters, point-light shadows, configurable soft shadows, image-based lighting |
+| HDR/post | `Rgba16Float` scene color, Reinhard tone mapping, basic bloom and exponential fog; negotiated 2x/4x/8x MSAA, post-tone-map FXAA, GPU-adapted average-log-luminance exposure, runtime color grading, vignette, film grain and chromatic aberration | SSAO/GTAO, configurable multi-level bloom, temporal AA, histogram-based exposure and HDR display output |
 | Visibility | Conservative CPU frustum sphere culling for main color pass; off-screen objects remain in shadow draws | Better bounds for animated/deformed meshes, occlusion culling, LOD, GPU culling, metrics |
 | Voxels | Mutable `ChunkedVoxelWorld`, edit revisions, dirty-owner/neighbor invalidation, incremental greedy remeshing, boundary culling, Y-up conversion, GPU uploads/eviction/reused slots, STUDS GPU route uses `studs_voxel_gpu::OffscreenVoxelRenderer`; Windows runtime smoke checks reported passing | Material atlas/texture IDs, chunk streaming/async remeshing, in-game block-edit mechanic, native-surface STUDS presentation |
 | Front end | Scene hierarchy, camera component, single active extracted camera | Multi-camera/render layers, picking, editor text UI |
@@ -107,7 +108,7 @@ implemented:
 | 4b: full material system | In progress | Normal, occlusion, emissive maps; alpha handling; conformance scenes and GPU verification |
 | 5a: directional shadows | Implemented baseline | Single directional depth map is rendered and sampled |
 | 5b: shadow quality | In progress | Multi-tap PCF, stable shadow bounds, acne/peter-panning regression coverage, cascades and additional light types |
-| 6: advanced post | Planned | Bloom, AO, fog, exposure and quality controls |
+| 6a: HDR/post foundation | Implemented baseline | HDR tone mapping, bloom, fog, auto exposure, display color grading, vignette, film grain, chromatic aberration and AA controls; SSAO/GTAO and TAA remain deferred |
 | 7a: voxel-to-mesh vertical slice | Implemented | Greedy mesher and native mesh pipeline render chunk-local meshes at their world origins |
 | 7b: Dynamic voxel integration / STUDS migration | Implemented; target Windows manual smoke checks reported passing | STUDS GPU route uses the engine mesh renderer, dynamic edits refresh only affected chunks (and face neighbors), empty meshes release GPU buffers, overlays/gameplay remain game-owned; CPU reference remains and legacy GPU code is disconnected from STUDS |
 | 8: advanced gameplay support | Planned | Skeletal animation, mesh colliders, 3D audio, state machines and profiling |

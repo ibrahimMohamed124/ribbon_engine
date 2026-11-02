@@ -2,7 +2,7 @@
 
 **Audit date:** 2026-11-02
 **Source:** `Ribbon_Engine(5).zip`
-**Scope:** Verified source audit, completed audio/ATHAR work, and the first rendering-completion phase. This report distinguishes code changes from features that remain deferred.
+**Scope:** Verified source audit, completed audio/ATHAR work, rendering shadow/light selection, glTF alpha materials, MSAA/FXAA, and HDR post-processing controls. This report distinguishes code changes from features that remain deferred.
 
 ## Repository and compatibility baseline
 
@@ -51,6 +51,15 @@ The `crates/math` source tree and its manifest are unchanged. `ribbon_math` rema
 
 **Not verified here:** These Rust tests were not compiled or executed because this container has no Cargo/Rust toolchain. Matrix behavior was independently checked with a small numerical reproduction, but that is not a substitute for running the Rust tests or a GPU-backed visual test on the user's Windows GPU.
 
+## 5. Anti-aliasing phase
+
+- Added `AntiAliasingSettings` with `None`, `Msaa2x`, `Msaa4x`, `Msaa8x`, and `Fxaa` modes.
+- MSAA negotiates a common sample count across `Rgba16Float` filterable HDR resolve support/usages and `Depth32Float` render-attachment support. It renders into matching multisampled color/depth attachments and resolves into the single-sample HDR target before bloom and tone mapping. Unsupported requests fall back downward and ultimately to one sample.
+- Resize recreates the size-dependent multisampled color target and the renderer recreates its matching depth target. The selected MSAA count is latched when renderer GPU resources are first created; runtime sample-count changes are deliberately not applied because the renderer owns generation-checked mesh/material handles and sample-dependent pipelines. FXAA can be toggled at runtime as a fullscreen post-tone-map filter; if selected after an MSAA renderer is initialized, it layers over the existing latched MSAA sample count.
+- Added pure sample-count/capability intersection tests, FXAA WGSL parser/validator coverage, and an ignored GPU test for HDR MSAA resolve followed by FXAA. TAA is not claimed or exposed.
+
+**Verification boundary:** Rust formatting, Cargo tests, Clippy, and GPU readback were not run in this packaging environment because it has no Cargo/Rust toolchain. The new GPU test must be explicitly run on a compatible adapter and visual output must be reviewed on the target GPU.
+
 ## Audited but deferred rendering and platform issues
 
 The following problems were checked against source and are not represented as fixed by this overlay:
@@ -61,11 +70,11 @@ The following problems were checked against source and are not represented as fi
 | Spot-light shadows | One selected shadow-casting spotlight at a time; selection is still based on extraction order | Deferred; no multi-caster atlas/array or deterministic caster ranking |
 | Point-light selection | Eight lights are selected by deterministic estimated contribution using camera distance, range, intensity, and color; value-based tie breaking removes ECS iteration-order dependence | Implemented, limited; fixed shader capacity, no explicit per-light developer priority |
 | Point-light shadows | Point lights use attenuation; no cubemap/array visibility test | Deferred |
-| glTF alpha modes | OPAQUE/MASK/BLEND are not represented as distinct GPU material paths | Deferred |
-| glTF double-sided | `doubleSided` is not imported into pipeline/culling variants | Deferred |
-| MSAA / FXAA | Render targets use sample count 1; no FXAA path | Deferred |
-| Post-processing | Existing HDR/tone-map, basic bloom and fog remain; no independent renderer-level quality/settings resource | Deferred |
-| Auto exposure / grading / vignette / grain / chromatic aberration | No corresponding implemented runtime effects | Deferred |
+| glTF alpha modes | OPAQUE ignores factor/texture alpha; MASK multiplies factor and texture alpha and discards below cutoff in color and shadow passes; BLEND uses straight-alpha blending, depth test/no depth write, and deterministic camera-space back-to-front bounds-center sorting | Implemented, limited; no OIT, blend objects do not cast current shadows |
+| glTF double-sided | Imported; per-material no-cull color and directional-shadow variants, back-face normal flipping; ordinary materials keep back-face culling | Implemented |
+| MSAA / FXAA | Adapter-negotiated 2x/4x/8x MSAA uses matching HDR color/depth targets with resolve before post-processing; FXAA is selected in the fullscreen post-tone-map pass | Implemented, limited; no TAA; MSAA sample count is fixed at renderer initialization, FXAA can toggle at runtime |
+| Post-processing | Public `PostProcessingSettings` resource controls the retained HDR/bloom/tone-map pipeline; runtime updates use uniform buffers without rebuilding pipelines | Implemented, limited; one bloom level and Reinhard tone mapping remain |
+| Auto exposure / grading / vignette / grain / chromatic aberration | GPU average-log-luminance compute adaptation, exposure compensation, contrast/saturation/temperature/tint, vignette, animated monochrome grain, and radial chromatic aberration | Implemented, limited; 16x16 sampling rather than histogram/local exposure; no physically calibrated camera model |
 | SSAO | No depth/normal-aware screen-space occlusion implementation | Deferred; material AO maps are not SSAO |
 | IBL | No environment-cubemap irradiance/prefilter/BRDF integration | Deferred |
 | Reflection probes / lightmaps | No complete runtime probe/lightmap data path or baking system | Deferred |
@@ -88,7 +97,7 @@ The following problems were checked against source and are not represented as fi
 - The user subsequently reported on Windows that `cargo fmt --all -- --check`, `cargo test -p ribbon_scene` (9/9), both ATHAR test configurations (27/27 each), both Audio test configurations after the mock `Debug` fix, the Steam Audio stress script (32/64/128 voices), and Release ATHAR packaging passed. The user's packaging log confirms 10 VC145 CRT DLLs, five room entities, 12 room/village models, and 10 audio assets. These are user-reported host results, not commands executed in this container.
 - `python tools/check_deps.py` was attempted here but stopped because it shells out to `cargo metadata` and `cargo` is absent. This is not a passing dependency-policy result.
 
-The following were **not run here**: Rust formatting, any Cargo check/test/clippy command, full workspace tests, real ATHAR or STUDS launch, Windows packaging against a real executable, graphics-backed validation, and audio-device playback. `cargo`, `rustc`, and `rustfmt` are not installed in this execution environment. The new directional-shadow regression tests are CPU-side matrix checks and have not been compiled or executed here. No GPU visual verification is claimed.
+The following were **not run here**: Rust formatting, any Cargo check/test/clippy command, full workspace tests, real ATHAR or STUDS launch, Windows packaging against a real executable, graphics-backed validation, and audio-device playback. The alpha-material GPU regression is included as an ignored test requiring an actual wgpu adapter; the default graphics showcase also loads the generated material-alpha GLB fixture, but neither was executed in this container. `cargo`, `rustc`, and `rustfmt` are not installed in this execution environment. The new directional-shadow regression tests are CPU-side matrix checks and have not been compiled or executed here. No GPU visual verification is claimed.
 
 ## Known limitations
 
@@ -96,4 +105,4 @@ The following were **not run here**: Rust formatting, any Cargo check/test/clipp
 - The save-point interaction currently presents a chime/checkpoint message only; it does not serialize or persist save state.
 - Door closing and monster movement/audio triggers are future gameplay hooks, not implemented gameplay.
 - The Windows packaging helper now discovers VC145/VC143 CRT redist directories with `vswhere`/Visual Studio layout discovery, and supports an explicit `--crt-dir`; it still fails rather than silently omitting the runtime when `--require-windows-crt` is used. The user reported a successful package stage bundling 10 VC145 CRT DLLs.
-- glTF alpha modes/double-sided pipeline variants, MSAA/FXAA, configurable post-processing, auto exposure, SSAO, IBL, probes/lightmaps, static/skinned vertex separation, tangents/UV1, complete display settings, gamepad and text/IME remain separate engineering phases.
+- Phase 3B implements GPU average-log-luminance auto exposure, exposure compensation, contrast/saturation/temperature/tint grading, vignette, animated film grain and chromatic aberration on top of Reinhard/bloom/fog. SSAO/GTAO, IBL, probes/lightmaps, cascaded and broader local-light shadows, static/skinned vertex separation, tangents/UV1, full display/HDR metadata, gamepad, text/IME and TAA remain separate engineering phases. glTF BLEND is conventional object-bounds-center sorting, not OIT; blend materials do not cast the current shadow maps and intersecting surfaces can sort imperfectly. The material showcase is a small regression fixture, not an artist-authing tool or OIT demo.
