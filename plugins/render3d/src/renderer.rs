@@ -194,7 +194,7 @@ pub struct Scene<'a> {
     pub sun: &'a SunLight,
     /// World-space spot lights. The renderer uses at most one shadow-casting light.
     pub spot_lights: &'a [SpotLight],
-    /// Non-shadowed point lights; only the first eight are consumed.
+    /// Point lights ranked by estimated contribution; the strongest eight are consumed.
     pub point_lights: &'a [PointLight],
     /// Exponential height/distance fog.
     pub fog: FogSettings,
@@ -225,8 +225,8 @@ struct Globals {
     spot_direction_outer: [f32; 4],
     spot_color_intensity: [f32; 4],
     spot_params: [f32; 4],
-    point_positions_range: [[f32; 4]; 8],
-    point_colors_intensity: [[f32; 4]; 8],
+    point_positions_range: [[f32; 4]; MAX_POINT_LIGHTS],
+    point_colors_intensity: [[f32; 4]; MAX_POINT_LIGHTS],
     point_count: [f32; 4],
     fog_color_density: [f32; 4],
     fog_params: [f32; 4],
@@ -443,6 +443,8 @@ impl MeshRenderer {
     };
 }
 const MIN_INSTANCE_CAPACITY: usize = 16;
+/// Shader/uniform capacity for point lights. Keep synchronized with `Globals` and mesh.wgsl.
+pub const MAX_POINT_LIGHTS: usize = 8;
 const INSTANCE_BUFFER_SHRINK_THRESHOLD: usize = 256;
 const INSTANCE_BUFFER_SHRINK_AFTER_FRAMES: u32 = 120;
 /// Per-frame storage palette capacity (mat4x4<f32> per joint); overflow is rejected, never indexed.
@@ -768,10 +770,15 @@ fn sphere_visible(planes: &[Vec4; 6], center: Vec3, radius: f32) -> bool {
         .all(|plane| plane.truncate().dot(center) + plane.w >= -radius)
 }
 
-fn pack_point_lights(lights: &[PointLight]) -> ([[f32; 4]; 8], [[f32; 4]; 8]) {
-    let mut positions_range = [[0.0; 4]; 8];
-    let mut colors_intensity = [[0.0; 4]; 8];
-    for (index, light) in lights.iter().take(8).enumerate() {
+fn pack_point_lights(
+    lights: &[PointLight],
+) -> (
+    [[f32; 4]; MAX_POINT_LIGHTS],
+    [[f32; 4]; MAX_POINT_LIGHTS],
+) {
+    let mut positions_range = [[0.0; 4]; MAX_POINT_LIGHTS];
+    let mut colors_intensity = [[0.0; 4]; MAX_POINT_LIGHTS];
+    for (index, light) in lights.iter().take(MAX_POINT_LIGHTS).enumerate() {
         positions_range[index] = [
             light.position.x,
             light.position.y,
@@ -786,6 +793,88 @@ fn pack_point_lights(lights: &[PointLight]) -> ([[f32; 4]; 8], [[f32; 4]; 8]) {
         ];
     }
     (positions_range, colors_intensity)
+}
+
+/// Estimate point-light contribution near the active camera. This deliberately mirrors the
+/// shader's range-limited inverse-square behavior while preferring lights with useful range.
+/// Invalid/non-positive lights are rejected before they reach the uniform buffer.
+fn point_light_importance(light: PointLight, camera_position: Vec3) -> f32 {
+    if !light.position.is_finite()
+        || !light.color.is_finite()
+        || !light.intensity.is_finite()
+        || !light.range.is_finite()
+        || !camera_position.is_finite()
+        || light.intensity <= 0.0
+        || light.range <= 0.0
+    {
+        return 0.0;
+    }
+
+    let distance_squared = light.position.distance_squared(camera_position);
+    if !distance_squared.is_finite() {
+        return 0.0;
+    }
+    let color = light.color.max(Vec3::ZERO);
+    let luminance = color.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+    let range_squared = light.range * light.range;
+    let denominator = distance_squared + (range_squared * 0.04).max(1.0e-4);
+    let score = light.intensity * luminance * range_squared / denominator;
+    if score.is_finite() { score } else { f32::MAX }
+}
+
+/// Compare light values lexicographically so equal-importance lights are independent of ECS
+/// query/insertion order. Identical records are interchangeable in the GPU uniform buffer.
+fn compare_point_light_identity(a: &PointLight, b: &PointLight) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let a_values = [
+        a.position.x,
+        a.position.y,
+        a.position.z,
+        a.color.x,
+        a.color.y,
+        a.color.z,
+        a.intensity,
+        a.range,
+    ];
+    let b_values = [
+        b.position.x,
+        b.position.y,
+        b.position.z,
+        b.color.x,
+        b.color.y,
+        b.color.z,
+        b.intensity,
+        b.range,
+    ];
+    for (a, b) in a_values.into_iter().zip(b_values) {
+        let order = a.total_cmp(&b);
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+    Ordering::Equal
+}
+
+/// Select the strongest bounded set of point lights in deterministic order.
+fn select_point_lights(lights: &[PointLight], camera_position: Vec3) -> Vec<PointLight> {
+    let mut ranked: Vec<(f32, PointLight)> = lights
+        .iter()
+        .copied()
+        .filter_map(|light| {
+            let score = point_light_importance(light, camera_position);
+            (score > 0.0).then_some((score, light))
+        })
+        .collect();
+    ranked.sort_by(|(score_a, light_a), (score_b, light_b)| {
+        score_b
+            .total_cmp(score_a)
+            .then_with(|| compare_point_light_identity(light_a, light_b))
+    });
+    ranked
+        .into_iter()
+        .take(MAX_POINT_LIGHTS)
+        .map(|(_, light)| light)
+        .collect()
 }
 
 fn select_spot_lights(lights: &[SpotLight]) -> (Option<SpotLight>, Option<SpotLight>) {

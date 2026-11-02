@@ -1,6 +1,6 @@
 use super::{
-    build_mips, pack_point_lights, select_spot_lights, Draw, MeshRenderer, Scene, SkinnedDraw,
-    TextureData,
+    build_mips, pack_point_lights, select_point_lights, select_spot_lights, Draw, MeshRenderer,
+    Scene, SkinnedDraw, TextureData,
 };
 use crate::components::{Camera3D, FogSettings, PointLight, SpotLight, SunLight, Transform3D};
 use glam::{Mat4, Vec3};
@@ -258,6 +258,80 @@ fn spotlight_selection_prefers_the_shadow_casting_light() {
     let (active, caster) = select_spot_lights(&[non_shadow]);
     assert_eq!(active, Some(non_shadow));
     assert_eq!(caster, None);
+}
+
+
+#[test]
+fn point_light_selection_ranks_by_distance_range_intensity_and_color_contribution() {
+    let near_bright = PointLight {
+        position: Vec3::new(2.0, 0.0, 0.0),
+        color: Vec3::ONE,
+        intensity: 10.0,
+        range: 10.0,
+    };
+    let far_long_range = PointLight {
+        position: Vec3::new(50.0, 0.0, 0.0),
+        color: Vec3::ONE,
+        intensity: 10.0,
+        range: 50.0,
+    };
+    let near_dim = PointLight {
+        position: Vec3::new(2.0, 0.0, 0.0),
+        color: Vec3::splat(0.05),
+        intensity: 1.0,
+        range: 10.0,
+    };
+    let selected = select_point_lights(&[near_dim, far_long_range, near_bright], Vec3::ZERO);
+    assert_eq!(selected, vec![near_bright, far_long_range, near_dim]);
+
+    let moved = select_point_lights(
+        &[near_dim, far_long_range, near_bright],
+        Vec3::new(50.0, 0.0, 0.0),
+    );
+    assert_eq!(
+        moved[0], far_long_range,
+        "camera movement should affect ranking"
+    );
+}
+
+#[test]
+fn equal_importance_point_lights_use_stable_value_tie_breaking() {
+    let left = PointLight {
+        position: Vec3::new(-3.0, 0.0, 0.0),
+        ..PointLight::default()
+    };
+    let right = PointLight {
+        position: Vec3::new(3.0, 0.0, 0.0),
+        ..PointLight::default()
+    };
+    let a = select_point_lights(&[right, left], Vec3::ZERO);
+    let b = select_point_lights(&[left, right], Vec3::ZERO);
+    assert_eq!(a, b);
+    assert_eq!(a, vec![left, right]);
+}
+
+#[test]
+fn point_light_selection_is_stable_under_insertion_order_and_caps_at_shader_capacity() {
+    let lights: Vec<_> = (0..12)
+        .map(|index| PointLight {
+            position: Vec3::new(index as f32 - 5.0, 0.0, -2.0),
+            color: Vec3::new(0.5 + index as f32 * 0.01, 0.8, 1.0),
+            intensity: 4.0,
+            range: 16.0,
+        })
+        .collect();
+    let forward = select_point_lights(&lights, Vec3::ZERO);
+    let reverse_input: Vec<_> = lights.iter().copied().rev().collect();
+    let reverse = select_point_lights(&reverse_input, Vec3::ZERO);
+    assert_eq!(forward, reverse);
+    assert_eq!(forward.len(), super::MAX_POINT_LIGHTS);
+
+    let invalid = PointLight {
+        position: Vec3::splat(f32::NAN),
+        ..PointLight::default()
+    };
+    let selected = select_point_lights(&[invalid, PointLight::default()], Vec3::ZERO);
+    assert_eq!(selected, vec![PointLight::default()]);
 }
 
 #[test]

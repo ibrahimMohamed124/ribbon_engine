@@ -10,7 +10,7 @@ impl MeshRenderer {
             label: Some("directional shadow shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/shadow.wgsl").into()),
         });
-        let shadow_size = 1024_u32;
+        let shadow_size = super::shadows::DIRECTIONAL_SHADOW_RESOLUTION;
         let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("directional shadow map"),
             size: wgpu::Extent3d {

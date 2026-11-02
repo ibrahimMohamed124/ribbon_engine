@@ -115,7 +115,8 @@ impl Default for SpotLight {
     }
 }
 
-/// A non-shadowed point light. The renderer evaluates the first eight extracted lights.
+/// A non-shadowed point light. The native renderer deterministically ranks extracted lights and
+/// evaluates at most eight records in its current shader uniform layout.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointLight {
     pub position: Vec3,

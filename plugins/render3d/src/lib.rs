@@ -40,6 +40,7 @@ pub use preload::{
 pub use renderer::{
     Draw, GpuSamplerAddressMode, GpuSamplerDesc, GpuSamplerFilter, MaterialId, MeshId,
     MeshRenderer, PbrMaterialDesc, SamplerId, Scene, SkinnedDraw, TextureData, TextureId,
+    MAX_POINT_LIGHTS,
 };
 pub use ribbon_render::gpu::{
     GpuContext, TransientTextureDescriptor, TransientTextureHandle, TransientTexturePool,

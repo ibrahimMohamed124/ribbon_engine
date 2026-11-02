@@ -234,7 +234,9 @@ impl MeshRenderer {
         let spot_view_proj = shadow_spot
             .map(Self::spot_shadow_matrix)
             .unwrap_or(Mat4::IDENTITY);
-        let (point_positions_range, point_colors_intensity) = pack_point_lights(scene.point_lights);
+        let selected_point_lights = select_point_lights(scene.point_lights, scene.camera_position);
+        let (point_positions_range, point_colors_intensity) =
+            pack_point_lights(&selected_point_lights);
         let spot = active_spot.unwrap_or_default();
         let globals = Globals {
             view_proj: scene.view_proj.to_cols_array_2d(),
@@ -277,7 +279,7 @@ impl MeshRenderer {
             ],
             point_positions_range,
             point_colors_intensity,
-            point_count: [scene.point_lights.len().min(8) as f32, 0.0, 0.0, 0.0],
+            point_count: [selected_point_lights.len() as f32, 0.0, 0.0, 0.0],
             fog_color_density: [
                 scene.fog.color.x,
                 scene.fog.color.y,

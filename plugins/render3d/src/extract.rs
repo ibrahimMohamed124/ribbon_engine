@@ -77,7 +77,7 @@ pub struct ExtractedScene3D {
     pub sun: SunLight,
     /// World-space spotlight components for the native mesh renderer.
     pub spot_lights: Vec<SpotLight>,
-    /// World-space point lights (only eight are consumed by the renderer).
+    /// World-space point lights; the renderer ranks them and consumes the strongest eight.
     pub point_lights: Vec<PointLight>,
     /// Exponential atmosphere settings.
     pub fog: FogSettings,
