@@ -14,6 +14,10 @@ cargo run --release -p athar
 4. Walk through the doorway. The room is unloaded and the exterior village scene is spawned.
 5. Explore **Wet Creek**, a roughly 260-by-260-unit village with 60 houses, a landmark hall, tree-lined edges, cobbled streets, lamps, a stone well, distance fog, and 220 animated rain streaks that follow the player.
 
+## Audio
+
+ATHAR registers `AudioPlugin` and attempts to initialize the Kira/CPAL `ThreadedAudioSink` backend. When no output device is available, the startup log reports the issue and gameplay continues silently. The listener is attached to the first-person camera and uses `GlobalTransform3D`; room-to-village ambience changes once per phase, while footsteps are cadence-based and door/key/save-point sounds are emitted only on their corresponding interactions. Original procedural indoor/rain ambience and gameplay cues are bundled under `assets/audio/` and credited in [`assets/CREDITS.md`](assets/CREDITS.md). The current door is a one-way opening door, so the close cue is packaged but not played; the monster remains a static placeholder, so its future movement cue is also not played. The save-point interaction is atmospheric and session-only; persistence is not implemented.
+
 ## Controls
 
 - **W / A / S / D** — walk and strafe.
@@ -48,13 +52,26 @@ python games/athar/tools/validate_horror_assets.py
 
 The fetcher checks downloaded bytes and only writes the set after all requested maps validate. If the API/network is unavailable, keep the packaged models; they already contain the downloaded CC0 fallback maps. Procedural maps are explicitly marked `PLACEHOLDER` and are not credited as external photographs. See [`assets/asset_manifest.json`](assets/asset_manifest.json) and [`assets/CREDITS.md`](assets/CREDITS.md).
 
+## Runtime assets and distribution
+
+Runtime asset lookup uses this order: `--assets PATH`, `RIBBON_ATHAR_ASSETS`, an `assets/` directory beside the executable, then a debug-only source-checkout fallback. Release binaries do not resolve assets through `CARGO_MANIFEST_DIR`. The selected root is printed at startup. The default `audio` Cargo feature enables Kira output; `--no-default-features` keeps headless builds available and logs that sound output is disabled. To validate the full room, streamed-village, audio, manifest, and credits payload without opening a window or audio device:
+
+```powershell
+cargo run -p athar -- --validate-assets
+python tools/package_athar.py --binary target/release/athar.exe --output dist/athar
+```
+
+The package contains the executable, the complete `games/athar/assets/` tree, credits, and a run guide. The packaging tool launches the staged executable with `--validate-assets` from a separate working directory to test relocation. CI publishes a separate `athar-{OS}` artifact; the existing STUDS artifact remains separate. On Windows the CI packaging step requires and bundles the MSVC x64 runtime DLLs.
+
 ## Validation
 
 ```powershell
 cargo fmt --all -- --check
 cargo test --locked -p athar
 cargo clippy --locked -p athar --all-targets -- -D warnings
-cargo run --release -p athar
+cargo run -p athar
+cargo run -p studs
+cargo run --release -p athar -- --validate-assets
 python games/athar/tools/validate_horror_assets.py
 ```
 

@@ -3,6 +3,7 @@
 use super::player::{FirstPersonController, PLAYER_CAMERA_OFFSET};
 use super::village;
 use super::{AdventureState, GamePhase, VillageTransitionState};
+use crate::audio::{self, SOUND_DOOR_LOCKED, SOUND_DOOR_OPEN, SOUND_KEY_PICKUP, SOUND_SAVE_POINT};
 use ribbon_app::{Time, World};
 use ribbon_platform::input::Key;
 use ribbon_platform::Input;
@@ -16,6 +17,7 @@ use std::time::Instant;
 
 const KEY_INTERACT_RADIUS: f32 = 1.55;
 const DOOR_INTERACT_RADIUS: f32 = 2.45;
+const SAVE_POINT_INTERACT_RADIUS: f32 = 1.45;
 const DOOR_ANIMATION_SECONDS: f32 = 0.88;
 const DOOR_CLEAR_PROGRESS: f32 = 0.86;
 // Stage the already-warmed renderables before the door reaches its collision-clear angle so the
@@ -69,6 +71,7 @@ fn next_door_open_progress(progress: f32, unlocked: bool, dt: f32) -> f32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RoomInteraction {
     PickUpKey,
+    SavePoint,
     LockedDoor,
     UnlockDoor,
     DoorAlreadyUnlocked,
@@ -81,9 +84,12 @@ fn choose_room_interaction(
     door_unlocked: bool,
     key_position: Vec3,
     door_position: Vec3,
+    save_point_position: Vec3,
 ) -> RoomInteraction {
     if !key_collected && near(player, key_position, KEY_INTERACT_RADIUS) {
         RoomInteraction::PickUpKey
+    } else if near(player, save_point_position, SAVE_POINT_INTERACT_RADIUS) {
+        RoomInteraction::SavePoint
     } else if near(player, door_position, DOOR_INTERACT_RADIUS) {
         if !key_collected {
             RoomInteraction::LockedDoor
@@ -644,8 +650,10 @@ pub fn gameplay_update(world: &mut World) {
                     state.door_unlocked,
                     state.key_position,
                     state.door_position,
+                    state.save_point_position,
                 ) {
                     RoomInteraction::PickUpKey => {
+                        audio::emit_spatial(world, SOUND_KEY_PICKUP, state.key_position, 0.92);
                         state.key_collected = true;
                         if let Some(key) = state.key_entity.take() {
                             let _ = world.despawn(key);
@@ -655,11 +663,25 @@ pub fn gameplay_update(world: &mut World) {
                         }
                         state.set_message("Brass key collected. Find the locked exit door.", 5.0);
                     }
+                    RoomInteraction::SavePoint => {
+                        audio::emit_spatial(
+                            world,
+                            SOUND_SAVE_POINT,
+                            state.save_point_position + Vec3::Y * 0.7,
+                            0.85,
+                        );
+                        state.set_message(
+                            "The lantern answers with a quiet chime. Checkpoint is session-only.",
+                            4.0,
+                        );
+                    }
                     RoomInteraction::LockedDoor => {
+                        audio::emit_spatial(world, SOUND_DOOR_LOCKED, state.door_position, 0.78);
                         state.set_message("LOCKED. You need the brass key.", 3.0);
                     }
                     RoomInteraction::UnlockDoor => {
                         state.door_unlocked = true;
+                        audio::emit_spatial(world, SOUND_DOOR_OPEN, state.door_position, 1.0);
                         state.set_message("The key turns. The old door creaks open...", 4.0);
                     }
                     RoomInteraction::DoorAlreadyUnlocked => {
@@ -692,6 +714,15 @@ pub fn gameplay_update(world: &mut World) {
             }
         }
     });
+
+    let (phase, camera_entity) = {
+        let state = world.resource::<AdventureState>();
+        (state.phase, state.camera_entity)
+    };
+    let audio_position = world
+        .get::<Transform3D>(camera_entity)
+        .map(|transform| transform.translation);
+    audio::update_gameplay_audio(world, phase, audio_position, dt);
 
     update_hud(world);
 }
@@ -842,24 +873,77 @@ mod tests {
         let key = Vec3::new(0.85, 0.025, 1.55);
         let door = Vec3::new(5.84, 0.0, -2.0);
         assert_eq!(
-            choose_room_interaction(key, false, false, key, door),
+            choose_room_interaction(
+                key,
+                false,
+                false,
+                key,
+                door,
+                Vec3::new(-0.6, 0.0, 2.35),
+            ),
             RoomInteraction::PickUpKey
         );
         assert_eq!(
-            choose_room_interaction(door, false, false, key, door),
+            choose_room_interaction(
+                door,
+                false,
+                false,
+                key,
+                door,
+                Vec3::new(-0.6, 0.0, 2.35),
+            ),
             RoomInteraction::LockedDoor
         );
         assert_eq!(
-            choose_room_interaction(door, true, false, key, door),
+            choose_room_interaction(
+                door,
+                true,
+                false,
+                key,
+                door,
+                Vec3::new(-0.6, 0.0, 2.35),
+            ),
             RoomInteraction::UnlockDoor
         );
         assert_eq!(
-            choose_room_interaction(door, true, true, key, door),
+            choose_room_interaction(
+                door,
+                true,
+                true,
+                key,
+                door,
+                Vec3::new(-0.6, 0.0, 2.35),
+            ),
             RoomInteraction::DoorAlreadyUnlocked
         );
         assert_eq!(
-            choose_room_interaction(Vec3::new(-4.0, 1.6, 4.0), false, false, key, door),
+            choose_room_interaction(
+                Vec3::new(-4.0, 1.6, 4.0),
+                false,
+                false,
+                key,
+                door,
+                Vec3::new(-0.6, 0.0, 2.35),
+            ),
             RoomInteraction::NothingNearby
+        );
+    }
+
+    #[test]
+    fn save_point_interaction_is_selected_when_the_player_is_nearby() {
+        let key = Vec3::new(0.85, 0.025, 1.55);
+        let door = Vec3::new(5.84, 0.0, -2.0);
+        let save_point = Vec3::new(-0.6, 0.0, 2.35);
+        assert_eq!(
+            choose_room_interaction(
+                save_point,
+                true,
+                false,
+                key,
+                door,
+                save_point,
+            ),
+            RoomInteraction::SavePoint
         );
     }
 
@@ -982,6 +1066,7 @@ mod tests {
             None,
             None,
             1.2,
+            Vec3::ZERO,
             Vec3::ZERO,
             Vec3::ZERO,
         );

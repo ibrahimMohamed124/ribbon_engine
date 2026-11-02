@@ -194,7 +194,7 @@ jobs:
       - name: Build release
         run: cargo build --locked --workspace --release
 
-      - name: Package
+      - name: Package STUDS
         shell: bash
         run: |
           mkdir dist
@@ -209,3 +209,19 @@ jobs:
         with:
           name: studs-${{ runner.os }}
           path: dist
+
+      - name: Package and relocated-smoke-test ATHAR
+        shell: bash
+        run: |
+          ATHAR_BINARY=target/release/athar
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ATHAR_BINARY=target/release/athar.exe
+            python tools/package_athar.py --binary "$ATHAR_BINARY" --output athar-dist --require-windows-crt
+          else
+            python tools/package_athar.py --binary "$ATHAR_BINARY" --output athar-dist
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: athar-${{ runner.os }}
+          path: athar-dist

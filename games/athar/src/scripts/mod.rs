@@ -71,6 +71,7 @@ pub struct AdventureState {
     pub door_collision_removed: bool,
     pub key_position: Vec3,
     pub door_position: Vec3,
+    pub save_point_position: Vec3,
     pub elapsed: f32,
     pub message: String,
     pub message_seconds: f32,
@@ -90,6 +91,7 @@ impl AdventureState {
         door_collider_half_height: f32,
         key_position: Vec3,
         door_position: Vec3,
+        save_point_position: Vec3,
     ) -> Self {
         Self {
             phase: GamePhase::Room,
@@ -116,6 +118,7 @@ impl AdventureState {
             door_collision_removed: false,
             key_position,
             door_position,
+            save_point_position,
             elapsed: 0.0,
             message: "Find the brass key.".to_owned(),
             message_seconds: 5.0,
@@ -149,6 +152,7 @@ mod tests {
             1.2,
             Vec3::new(0.85, 0.025, 1.55),
             Vec3::new(5.84, 0.0, -2.0),
+            Vec3::new(-0.60, 0.0, 2.35),
         );
         assert_eq!(state.phase, GamePhase::Room);
         assert_eq!(

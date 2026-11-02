@@ -4,6 +4,7 @@
 //! the pointer, and left-click to capture it again. Run `cargo run -p athar`.
 //! Optional profile capture: `cargo run -p athar --release -- --frames 1800 --profile-csv target/profiles/athar.csv`.
 
+mod audio;
 mod scripts;
 
 use ribbon_app::{App, AppExit, Stage, Time, World};
@@ -14,6 +15,7 @@ use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
 use ribbon_plugin_physics::{
     CharacterController, CharacterMovementIntent, Collider, PhysicsPlugin, RigidBody,
 };
+use ribbon_plugin_audio::{AcousticZone, AudioPlugin, AudioVec3, AudioZoneVolume};
 use ribbon_plugin_render3d::glam::{Quat, Vec3};
 use ribbon_plugin_render3d::{
     Camera3D, FogSettings, ModelInstance, PointLight, Render3dPlugin, SpotLight, SunLight,
@@ -35,9 +37,9 @@ use scripts::player::{
 };
 use scripts::{AdventureState, GameModelHandles};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 struct FrameLimit(Option<u64>);
 
@@ -112,14 +114,79 @@ struct StaticCollider {
     half_extents: [f32; 3],
 }
 
-fn load_room() -> Result<RoomDefinition, Box<dyn Error>> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/room.ron");
+fn load_room(asset_root: &Path) -> Result<RoomDefinition, Box<dyn Error>> {
+    let path = asset_root.join("room.ron");
     let source = std::fs::read_to_string(&path)?;
     let room: RoomDefinition = ron::from_str(&source)?;
     if room.version != 1 {
         return Err(format!("unsupported room.ron version {}", room.version).into());
     }
     Ok(room)
+}
+
+/// Resolve the distributable `assets/` root without relying on a build-machine checkout path.
+/// Release binaries intentionally have no `CARGO_MANIFEST_DIR` fallback.
+fn resolve_asset_root(explicit: Option<PathBuf>) -> Result<PathBuf, Box<dyn Error>> {
+    let mut candidates: Vec<(&'static str, PathBuf)> = Vec::new();
+    if let Some(path) = explicit {
+        candidates.push(("--assets", path));
+    }
+    if let Some(path) = std::env::var_os("RIBBON_ATHAR_ASSETS") {
+        candidates.push(("RIBBON_ATHAR_ASSETS", PathBuf::from(path)));
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            candidates.push(("executable-adjacent assets", directory.join("assets")));
+        }
+    }
+    #[cfg(debug_assertions)]
+    candidates.push((
+        "development fallback",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+    ));
+
+    let mut rejected = Vec::new();
+    for (source, candidate) in candidates {
+        if candidate.join("room.ron").is_file() && candidate.join("models").is_dir() {
+            return Ok(candidate.canonicalize().unwrap_or(candidate));
+        }
+        rejected.push(format!("{source}: {}", candidate.display()));
+    }
+    Err(format!(
+        "could not resolve ATHAR assets; each candidate must contain room.ron and models/: {}. Supply --assets PATH or RIBBON_ATHAR_ASSETS",
+        rejected.join("; ")
+    )
+    .into())
+}
+
+fn validate_asset_root(asset_root: &Path, room: &RoomDefinition) -> Result<usize, Box<dyn Error>> {
+    let mut required_models: HashSet<&str> = room
+        .entities
+        .iter()
+        .map(|entity| entity.asset.as_str())
+        .collect();
+    required_models.extend(crate::scripts::village::VILLAGE_MODEL_ASSETS);
+    for model_name in &required_models {
+        let model = asset_root.join("models").join(model_name);
+        if !model.is_file() {
+            return Err(format!(
+                "ATHAR package is missing required model `{}`",
+                model.display()
+            )
+            .into());
+        }
+    }
+    for required in ["CREDITS.md", "asset_manifest.json"] {
+        if !asset_root.join(required).is_file() {
+            return Err(format!("ATHAR package is missing assets/{required}").into());
+        }
+    }
+    for sound in crate::audio::ATHAR_AUDIO_ASSETS {
+        if !asset_root.join("audio").join(sound).is_file() {
+            return Err(format!("ATHAR package is missing audio asset audio/{sound}").into());
+        }
+    }
+    Ok(required_models.len())
 }
 
 /// Spawn an engine-owned physics proxy for a box-shaped room/village obstacle.
@@ -168,6 +235,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut frame_limit = None;
     let mut profile_csv: Option<String> = None;
     let mut profile_warmup = 120_u64;
+    let mut assets_override: Option<PathBuf> = None;
+    let mut validate_assets_only = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -187,6 +256,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .ok_or("--profile-warmup expects a number")?
                     .parse::<u64>()?;
             }
+            "--assets" => {
+                assets_override = Some(PathBuf::from(
+                    args.next().ok_or("--assets expects a directory")?,
+                ));
+            }
+            "--validate-assets" => validate_assets_only = true,
             "--help" | "-h" => {
                 println!(concat!(
                     "Ribbon Horror Slice\n\n",
@@ -201,6 +276,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     "  --frames N Exit after N frames\n",
                     "  --profile-csv PATH Write a bounded post-warmup render profile\n",
                     "  --profile-warmup N Frames excluded before capture\n",
+                    "  --assets PATH      Use this packaged asset directory\n",
+                    "  --validate-assets  Validate runtime assets, then exit\n",
                     "  -h, --help Show this help\n"
                 ));
                 return Ok(());
@@ -209,9 +286,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let room = load_room()?;
+    let asset_root = resolve_asset_root(assets_override)?;
+    println!("[ATHAR] runtime asset root: {}", asset_root.display());
+    let room = load_room(&asset_root)?;
+    let model_asset_count = validate_asset_root(&asset_root, &room)?;
+    if validate_assets_only {
+        println!(
+            "[ATHAR] package validation passed: {} room entities, {} unique room/village models, {} audio assets",
+            room.entities.len(),
+            model_asset_count,
+            crate::audio::ATHAR_AUDIO_ASSETS.len()
+        );
+        return Ok(());
+    }
     let streaming_profile_enabled = profile_csv.is_some();
-    let asset_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/models");
     let mut app = App::new();
     app.insert_resource(PlatformConfig {
         title: "Ribbon | Horror Slice".to_owned(),
@@ -251,6 +339,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_system(Stage::FixedUpdate, submit_character_movement);
     app.add_plugin(PhysicsPlugin)?;
     app.add_plugin(AssetPlugin)?;
+    app.add_plugin(AudioPlugin)?;
+    app.world.insert_resource(audio::GameplayAudioState::default());
+    audio::initialize_output(&mut app.world);
     app.add_plugin(GpuWindowPlugin)?;
     app.add_plugin(Render3dPlugin)?;
     app.add_plugin(StreamingPlugin::new(StreamingConfig {
@@ -278,7 +369,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (handles, leases) = {
         let server = app.world.resource_mut::<AssetServer>();
         server.register_loader(GltfLoader);
-        server.add_source(0, FsSource::new(asset_root));
+        server.add_source(0, FsSource::new(asset_root.join("models")));
         let mut map = HashMap::new();
         let mut leases = HashMap::new();
         for asset in requested_assets {
@@ -307,6 +398,26 @@ fn main() -> Result<(), Box<dyn Error>> {
             fov_y: 68.0_f32.to_radians(),
             near: 0.04,
             far: 100.0,
+        },
+        ribbon_plugin_audio::SpatialAudioListener::default(),
+    ));
+    app.world.spawn((
+        Transform3D {
+            translation: Vec3::new(0.0, 1.5, 0.0),
+            ..Transform3D::default()
+        },
+        AudioZoneVolume {
+            id: 1,
+            priority: 10,
+            half_extents: AudioVec3::new(6.0, 7.0, 3.0),
+            blend_distance: 0.8,
+            acoustics: AcousticZone {
+                id: 1,
+                wet_mix: 0.24,
+                low_pass_hz: 17_500.0,
+                reverb_seconds: 1.15,
+                ambience_gain: 0.88,
+            },
         },
     ));
     // Rapier's capsule is centered on the body; the rendered camera sits at a fixed eye offset.
@@ -508,6 +619,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         door_collider_half_height,
         key_position,
         door_position,
+        Vec3::from_array(room.save_point),
     ));
 
     let collider_names: Vec<_> = room
@@ -544,6 +656,23 @@ mod tests {
     use std::path::Path;
 
     #[test]
+    fn explicit_asset_root_is_accepted_independently_of_working_directory() {
+        use super::resolve_asset_root;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ribbon-athar-assets-{unique}"));
+        std::fs::create_dir_all(root.join("models")).expect("create models directory");
+        std::fs::write(root.join("room.ron"), "").expect("create room marker");
+        let resolved = resolve_asset_root(Some(root.clone())).expect("explicit root resolves");
+        assert_eq!(resolved, root.canonicalize().expect("canonical temp path"));
+        std::fs::remove_dir_all(root).expect("remove temp assets");
+    }
+
+    #[test]
     fn room_static_geometry_is_registered_in_rapier_and_raycastable() {
         use super::spawn_static_room_colliders;
         use ribbon_app::{App, Time};
@@ -554,7 +683,8 @@ mod tests {
         use ribbon_scene::ScenePlugin;
         use std::time::Duration;
 
-        let room = super::load_room().expect("room manifest parses");
+        let asset_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let room = super::load_room(&asset_root).expect("room manifest parses");
         let mut app = App::new();
         app.add_plugin(ScenePlugin).expect("scene plugin");
         app.add_plugin(PhysicsPlugin).expect("physics plugin");
@@ -586,7 +716,8 @@ mod tests {
 
     #[test]
     fn room_definition_contains_a_key_door_and_existing_models() {
-        let room = load_room().expect("the packaged room definition must parse");
+        let asset_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let room = load_room(&asset_root).expect("the packaged room definition must parse");
         assert_eq!(room.version, 1);
         assert!(room.entities.iter().any(|entity| entity.kind == "Key"));
         assert!(room.entities.iter().any(|entity| entity.kind == "Door"));
@@ -595,7 +726,7 @@ mod tests {
             .iter()
             .any(|entity| entity.kind == "StaticRoomGeometry"));
 
-        let model_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/models");
+        let model_root = asset_root.join("models");
         for entity in &room.entities {
             assert!(
                 model_root.join(&entity.asset).is_file(),
