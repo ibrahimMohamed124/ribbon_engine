@@ -7,6 +7,7 @@ pub(super) fn add_scene(
     checker_center: Vec3,
     triangle: ribbon_assets::Handle<ModelAsset>,
     triangle_center: Vec3,
+    alpha_showcase: ribbon_assets::Handle<ModelAsset>,
 ) {
     // Ground slab and a subtle grid make perspective, scale, and camera movement easy to read.
     spawn_cube(
@@ -94,6 +95,16 @@ pub(super) fn add_scene(
         0.8,
         0.16,
     );
+
+    // A dedicated multi-primitive glTF asset displays opaque, alpha-cutout,
+    // overlapping transparent, and reversed-winding double-sided materials.
+    // It is deliberately static so the back-to-front ordering is easy to inspect.
+    world.spawn((
+        Transform3D::default(),
+        ModelInstance {
+            model: alpha_showcase,
+        },
+    ));
 
     // A row of differently colored instanced cubes, with varied size and motion.
     let palette: [[f32; 3]; 7] = [

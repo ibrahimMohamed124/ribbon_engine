@@ -8,6 +8,11 @@ Run from the repository root:
 ```sh
 cargo run -p graphics_showcase
 cargo run -p graphics_showcase -- --frames 600
+cargo run -p graphics_showcase -- --aa none
+cargo run -p graphics_showcase -- --aa msaa4
+cargo run -p graphics_showcase -- --aa fxaa
+cargo run -p graphics_showcase -- --post-preset cinematic
+cargo run -p graphics_showcase -- --aa msaa4 --post-preset cinematic
 ```
 
 ## Controls
@@ -24,17 +29,22 @@ cargo run -p graphics_showcase -- --frames 600
 - ECS extraction of camera, global transforms, models and sunlight.
 - glTF/GLB loading, cached imported models, base-color textures and mip chains.
 - Cook-Torrance/GGX metallic-roughness material shading.
-- A single directional shadow map, an `Rgba16Float` HDR scene target, and Reinhard tone mapping.
+- A single directional shadow map, an `Rgba16Float` HDR scene target, Reinhard tone mapping and basic bloom.
+- GPU average-log-luminance auto exposure with asymmetric temporal adaptation, plus configurable exposure compensation, contrast, saturation, temperature and tint.
+- Optional vignette, animated film grain and pixel-scaled chromatic aberration in the final display pass.
+- Thin grid lines and continuously moving/rotating objects for visual comparison of no AA, MSAA, and FXAA.
 - CPU frustum culling for the main color pass while retaining off-screen objects for shadows.
 - Per-frame transforms, camera orbit, and frame-limit shutdown for capture workflows.
 
 `ribbon_plugin_render3d` also accepts greedy-meshed voxel chunks; run
 `cargo run -p voxel_mesh_showcase` to see that path.
 
-This is a first PBR/rendering vertical slice, not a complete modern renderer. Normal,
-occlusion and emissive maps, alpha modes, cascaded/soft shadows, point/spot lights,
-ambient occlusion, bloom, fog, IBL, GPU culling and STUDS migration remain future
-work. See [`../../docs/architecture/RENDERER_PLAN.md`](../../docs/architecture/RENDERER_PLAN.md).
+This is a first PBR/rendering vertical slice, not a complete modern renderer. The renderer now
+supports normal/occlusion/emissive maps, glTF OPAQUE/MASK/BLEND, per-material double-sided
+pipelines, one frustum-fitted directional shadow map, one selected spotlight shadow map, up to
+eight unshadowed point lights, basic bloom and fog. Cascaded/soft shadows, point-light shadowing,
+SSAO, IBL, GPU culling and order-independent transparency remain future work. See
+[`../../docs/architecture/RENDERER_PLAN.md`](../../docs/architecture/RENDERER_PLAN.md).
 
 ## Render profiling capture
 
@@ -80,3 +90,32 @@ captured memory values remain renderer estimates, and capture-time upload/reload
 cycle mode rather than steady-state frame cost. The report includes both the latest and peak values for placement,
 cache-entry and instance-capacity metrics so a capture that ends while the grid is inactive still shows the
 largest workload it contained. No stress mode is enabled unless its CLI options are passed.
+
+
+## glTF alpha-material showcase
+
+The default scene also loads `assets/models/material_alpha_showcase.glb`: a generated five-primitive display wall containing an OPAQUE panel with a deliberately low alpha factor (OPAQUE must ignore it), a textured MASK cutout panel, two overlapping BLEND sheets, and a reversed-winding double-sided panel. The fixture is generated specifically for Ribbon regression/visual inspection and contains no third-party texture or model content. View it in the default scene; it is not loaded in asset-stress mode.
+
+## Anti-aliasing comparison
+
+Pass `--aa none`, `--aa msaa2`, `--aa msaa4`, `--aa msaa8`, or `--aa fxaa` before the renderer creates its first GPU resources. The showcase inserts `AntiAliasingSettings` before `Render3dPlugin` and prints the requested mode at startup. Unsupported MSAA counts fall back to the highest supported lower count; the renderer logs the actual fallback. MSAA sample count is fixed for the renderer lifetime, so restart the showcase when comparing sample counts. The default scene includes sub-pixel-thin floor grid lines and animated/rotating cubes; compare captures from the same camera/frame state. FXAA is a post-tone-map spatial filter, not TAA.
+
+An adapter-backed smoke test is available through:
+
+```powershell
+cargo test --locked -p ribbon_plugin_render3d multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu -- --ignored --nocapture
+```
+
+That ignored GPU test requires an adapter supporting a multisampled, filterable `Rgba16Float` HDR color target with resolve plus the matching `Depth32Float` sample count. If the adapter does not expose that pair, the engine falls back to 1x and the GPU test should be run on another supported adapter.
+
+## HDR post-processing controls
+
+The `PostProcessingSettings` resource is installed by `Render3dPlugin` and can be replaced or mutated at runtime. Its defaults preserve the existing fixed-exposure look. `PostProcessingSettings::cinematic()` enables GPU auto exposure, restrained color grading, vignette, film grain and chromatic aberration. Auto exposure computes a 16x16 average-log-luminance sample grid directly from the HDR texture in a compute pass, then adapts a persistent GPU exposure value using separate brighten/darken rates; it performs no CPU readback. All user-facing floats are sanitized before upload.
+
+```powershell
+cargo run --locked -p graphics_showcase -- --post-preset neutral
+cargo run --locked -p graphics_showcase -- --post-preset cinematic
+cargo run --locked -p graphics_showcase -- --aa msaa4 --post-preset cinematic
+```
+
+The example preset is intended for visual verification, not as a mandatory game look. The effects are independently configurable through `AutoExposureSettings`, `ColorGradingSettings`, `VignetteSettings`, `FilmGrainSettings` and `ChromaticAberrationSettings`.

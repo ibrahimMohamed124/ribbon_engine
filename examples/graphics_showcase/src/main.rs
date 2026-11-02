@@ -12,8 +12,8 @@ use ribbon_platform::{Input, PlatformConfig, PlatformPlugin};
 use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
 use ribbon_plugin_render3d::glam::{Quat, Vec3};
 use ribbon_plugin_render3d::{
-    BuiltinMesh, Camera3D, ExtractedScene3D, MeshInstance, ModelInstance, Render3dPlugin, SunLight,
-    Transform3D,
+    AntiAliasingMode, AntiAliasingSettings, BuiltinMesh, Camera3D, ExtractedScene3D, MeshInstance,
+    ModelInstance, PostProcessingSettings, Render3dPlugin, SunLight, Transform3D,
 };
 use ribbon_plugins::AppPluginExt;
 use ribbon_render::gpu_window::{ClearColor, GpuWindowPlugin};
@@ -82,6 +82,29 @@ const ACTIVE_ASSET_PRIORITY: i32 = 100;
 const BACKGROUND_ASSET_PRIORITY: i32 = -100;
 const MAX_STRESS_EXTRACT_EMPTY_FRAMES: u32 = 8;
 
+fn parse_anti_aliasing_mode(value: &str) -> Result<AntiAliasingMode, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "none" => Ok(AntiAliasingMode::None),
+        "msaa2" | "2x" => Ok(AntiAliasingMode::Msaa2x),
+        "msaa4" | "4x" => Ok(AntiAliasingMode::Msaa4x),
+        "msaa8" | "8x" => Ok(AntiAliasingMode::Msaa8x),
+        "fxaa" => Ok(AntiAliasingMode::Fxaa),
+        _ => Err(format!(
+            "unknown anti-aliasing mode `{value}`; expected none, msaa2, msaa4, msaa8, or fxaa"
+        )),
+    }
+}
+
+fn parse_post_processing_preset(value: &str) -> Result<PostProcessingSettings, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "neutral" | "none" => Ok(PostProcessingSettings::default()),
+        "cinematic" => Ok(PostProcessingSettings::cinematic()),
+        _ => Err(format!(
+            "unknown post-processing preset `{value}`; expected neutral or cinematic"
+        )),
+    }
+}
+
 mod scene;
 mod setup;
 mod stress;
@@ -91,6 +114,9 @@ use stress::{spawn_large_scene_grid, stress_asset_path, update_large_scene_stres
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut frame_limit = None;
+    let mut anti_aliasing_mode = AntiAliasingMode::None;
+    let mut post_processing_settings = PostProcessingSettings::default();
+    let mut post_processing_preset = "neutral".to_owned();
     let mut profile_csv: Option<String> = None;
     let mut profile_warmup = 120_u64;
     let mut stress_grid_side = 0_usize;
@@ -108,6 +134,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .ok_or("--frames expects a number")?
                         .parse::<u64>()?,
                 );
+            }
+            "--aa" => {
+                anti_aliasing_mode =
+                    parse_anti_aliasing_mode(&args.next().ok_or("--aa expects a mode")?)?;
+            }
+            "--post-preset" => {
+                post_processing_preset = args.next().ok_or("--post-preset expects a preset")?;
+                post_processing_settings = parse_post_processing_preset(&post_processing_preset)?;
             }
             "--profile-csv" => {
                 profile_csv = Some(args.next().ok_or("--profile-csv expects a path")?);
@@ -153,7 +187,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             "--help" | "-h" => {
                 println!(
-                    "graphics_showcase\n\nOptions:\n  --frames N                  Exit after N frames\n  --profile-csv PATH          Write a render profile CSV at shutdown\n  --profile-warmup N          Frames excluded before capture (default: 120)\n  --profile-static-scene      Keep stress-scene camera fixed during capture\n  --stress-grid SIDE          Render SIDE x SIDE stress placements (0 disables; max 128)\n  --stress-cycle-frames N     Despawn/reload the active stress scene every N frames\n  --stress-multi-asset-count N Use N distinct generated GLB assets in the active scene (max 128)\n  --stress-cache-prefetch-count N Request N extra low-priority, unleased assets (max 128)\n  --asset-memory-budget-mib N Set the soft decoded-CPU cache budget for unpinned assets\n  -h, --help                  Show this help\n\nStress examples:\n  --stress-grid 32 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/large-scene.csv\n  --stress-grid 48 --stress-multi-asset-count 32 --stress-cache-prefetch-count 32 --asset-memory-budget-mib 1 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/multi-asset.csv\n  --stress-grid 24 --stress-multi-asset-count 16 --stress-cache-prefetch-count 48 --asset-memory-budget-mib 1 --stress-cycle-frames 300 --frames 1950 --profile-warmup 60 --profile-csv target/profiles/multi-asset-lifecycle.csv"
+                    "graphics_showcase\n\nOptions:\n  --frames N                  Exit after N frames\n  --aa MODE                   none | msaa2 | msaa4 | msaa8 | fxaa (default: none)\n  --post-preset PRESET        neutral | cinematic (default: neutral)\n  --profile-csv PATH          Write a render profile CSV at shutdown\n  --profile-warmup N          Frames excluded before capture (default: 120)\n  --profile-static-scene      Keep stress-scene camera fixed during capture\n  --stress-grid SIDE          Render SIDE x SIDE stress placements (0 disables; max 128)\n  --stress-cycle-frames N     Despawn/reload the active stress scene every N frames\n  --stress-multi-asset-count N Use N distinct generated GLB assets in the active scene (max 128)\n  --stress-cache-prefetch-count N Request N extra low-priority, unleased assets (max 128)\n  --asset-memory-budget-mib N Set the soft decoded-CPU cache budget for unpinned assets\n  -h, --help                  Show this help\n\nStress examples:\n  --stress-grid 32 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/large-scene.csv\n  --stress-grid 48 --stress-multi-asset-count 32 --stress-cache-prefetch-count 32 --asset-memory-budget-mib 1 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/multi-asset.csv\n  --stress-grid 24 --stress-multi-asset-count 16 --stress-cache-prefetch-count 48 --asset-memory-budget-mib 1 --stress-cycle-frames 300 --frames 1950 --profile-warmup 60 --profile-csv target/profiles/multi-asset-lifecycle.csv"
                 );
                 return Ok(());
             }
@@ -212,7 +246,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_plugin(PlatformPlugin)?;
     app.add_plugin(ScenePlugin)?;
     app.add_plugin(AssetPlugin)?;
-    let (checker, checker_center, optional_triangle) = {
+    let (checker, checker_center, optional_triangle, alpha_showcase) = {
         let server = app.world.resource_mut::<AssetServer>();
         server.register_loader(GltfLoader);
         if stress_multi_asset_count > 0 {
@@ -238,7 +272,40 @@ fn main() -> Result<(), Box<dyn Error>> {
         } else {
             None
         };
-        (checker, checker_center, triangle)
+        let alpha_showcase = if stress_grid_side == 0 {
+            let handle = server.load::<ModelAsset>("models/material_alpha_showcase.glb")?;
+            let imported = server
+                .get(handle)
+                .ok_or("material_alpha_showcase.glb failed to decode")?;
+            let has_alpha_modes = imported
+                .materials
+                .iter()
+                .any(|material| material.alpha_mode == ribbon_plugin_gltf::AlphaMode::Opaque)
+                && imported
+                    .materials
+                    .iter()
+                    .any(|material| material.alpha_mode == ribbon_plugin_gltf::AlphaMode::Mask)
+                && imported
+                    .materials
+                    .iter()
+                    .filter(|material| material.alpha_mode == ribbon_plugin_gltf::AlphaMode::Blend)
+                    .count()
+                    >= 2
+                && imported
+                    .materials
+                    .iter()
+                    .any(|material| material.double_sided);
+            if !has_alpha_modes || imported.nodes.len() != 5 {
+                return Err(
+                    "material_alpha_showcase.glb is missing the expected OPAQUE/MASK/BLEND/doubleSided fixtures"
+                        .into(),
+                );
+            }
+            Some(handle)
+        } else {
+            None
+        };
+        (checker, checker_center, triangle, alpha_showcase)
     };
 
     let mut stress_model_paths = Vec::<String>::new();
@@ -302,6 +369,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         height: 800,
     });
     app.insert_resource(ClearColor([0.018, 0.028, 0.048, 1.0]));
+    app.insert_resource(AntiAliasingSettings {
+        mode: anti_aliasing_mode,
+    });
+    app.insert_resource(post_processing_settings);
+    println!("[RENDER3D AA] requested mode: {anti_aliasing_mode:?}");
+    println!("[RENDER3D POST] preset: {post_processing_preset}");
     app.insert_resource(ShowcaseState {
         orbit_angle: 0.35,
         orbit_speed: if profile_static_scene { 0.0 } else { 0.24 },
@@ -380,13 +453,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "[ASSET STRESS] started grid={stress_grid_side}x{stress_grid_side}; placements={count}; model_asset_id/generations={asset_identities:?}; CPU auto-eviction=enabled; cycle_frames={stress_cycle_frames:?}; initial_active_assets={initial_active_assets}"
             );
         }
-    } else if let Some((triangle, triangle_center)) = optional_triangle {
+    } else if let (Some((triangle, triangle_center)), Some(alpha_showcase)) =
+        (optional_triangle, alpha_showcase)
+    {
         add_scene(
             &mut app.world,
             checker,
             checker_center,
             triangle,
             triangle_center,
+            alpha_showcase,
         );
     } else {
         return Err("default showcase triangle was not initialized".into());
@@ -400,14 +476,61 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Ribbon Graphics Showcase");
     println!("Live features: native wgpu surface, ECS extraction, indexed meshes, depth buffer,");
     println!("Cook-Torrance metallic-roughness PBR, HDR tone mapping, directional shadows, and frustum culling.");
+    if stress_grid_side == 0 {
+        println!(
+            "Material wall: OPAQUE alpha-ignore, MASK cutout, overlapping BLEND sheets, reversed-winding doubleSided panel."
+        );
+    }
     println!(
         "Controls: Space pause/resume, Left/Right orbit speed, Up/Down camera height, R reset."
     );
-    println!("Remaining: normal/occlusion/emissive maps, alpha modes, cascaded/soft shadows, AO, bloom, fog, IBL, and GPU culling.");
+    println!("Remaining: cascaded/soft shadows, multiple local-light shadows, SSAO/GTAO, IBL, probes, lightmaps, and GPU culling.");
     println!(
         "Run `cargo run -p voxel_mesh_showcase` to view greedy voxels on the same mesh pipeline."
     );
 
     app.build()?.run();
     Ok(())
+}
+
+#[cfg(test)]
+mod anti_aliasing_cli_tests {
+    use super::{parse_anti_aliasing_mode, parse_post_processing_preset};
+    use ribbon_plugin_render3d::AntiAliasingMode;
+
+    #[test]
+    fn parses_supported_anti_aliasing_modes_and_aliases() {
+        assert_eq!(parse_anti_aliasing_mode("none"), Ok(AntiAliasingMode::None));
+        assert_eq!(
+            parse_anti_aliasing_mode("MSAA2"),
+            Ok(AntiAliasingMode::Msaa2x)
+        );
+        assert_eq!(parse_anti_aliasing_mode("4x"), Ok(AntiAliasingMode::Msaa4x));
+        assert_eq!(
+            parse_anti_aliasing_mode("msaa8"),
+            Ok(AntiAliasingMode::Msaa8x)
+        );
+        assert_eq!(parse_anti_aliasing_mode("FxAa"), Ok(AntiAliasingMode::Fxaa));
+    }
+
+    #[test]
+    fn rejects_unknown_anti_aliasing_modes() {
+        assert!(parse_anti_aliasing_mode("taa").is_err());
+        assert!(parse_anti_aliasing_mode("msaa16").is_err());
+    }
+    #[test]
+    fn parses_supported_post_processing_presets() {
+        let neutral = parse_post_processing_preset("neutral").unwrap();
+        assert!(!neutral.auto_exposure.enabled);
+        let cinematic = parse_post_processing_preset("CINEMATIC").unwrap();
+        assert!(cinematic.auto_exposure.enabled);
+        assert!(cinematic.vignette.intensity > 0.0);
+        assert!(cinematic.film_grain.intensity > 0.0);
+        assert!(cinematic.chromatic_aberration.intensity_pixels > 0.0);
+    }
+
+    #[test]
+    fn rejects_unknown_post_processing_presets() {
+        assert!(parse_post_processing_preset("photoreal").is_err());
+    }
 }
