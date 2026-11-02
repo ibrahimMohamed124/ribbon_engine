@@ -29,3 +29,13 @@ audionimbus = { version = "=0.16.0", default-features = false, features = ["auto
 name = "audio_engine_showcase"
 path = "examples/audio_engine_showcase.rs"
 required-features = ["audio"]
+
+[[example]]
+name = "audio_priority_stress"
+path = "examples/audio_priority_stress.rs"
+required-features = ["steam-audio"]
+
+[[example]]
+name = "audio_stress"
+path = "examples/audio_stress.rs"
+required-features = ["steam-audio"]

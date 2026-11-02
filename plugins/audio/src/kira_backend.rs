@@ -2364,7 +2364,8 @@ fn add_child_bus_track(
     parent: &mut TrackHandle,
     sends: &[(SendTrackId, f32)],
 ) -> Result<BusTrack, String> {
-    let mut builder = TrackBuilder::new().sub_track_capacity(MAX_CUSTOM_BUSES + MAX_VOICES);
+    // Voice stealing overlaps the replacement with the retiring voice until its fade ends.
+    let mut builder = TrackBuilder::new().sub_track_capacity(MAX_CUSTOM_BUSES + (MAX_VOICES * 2));
     for (send_id, gain) in sends {
         builder = builder.with_send(*send_id, gain_to_db(*gain));
     }
