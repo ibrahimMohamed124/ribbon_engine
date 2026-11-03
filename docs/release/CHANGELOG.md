@@ -5,7 +5,9 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 
 ## Unreleased
 
-- Added `ribbon_ui`, bundled Noto fonts with cosmic-text shaping, basic immediate-mode widgets, a GPU geometry overlay pass, and the `ui_showcase` example. Glyph GPU rendering and full IME/focus behavior remain incomplete.
+### Immediate-mode UI
+
+- Added `ribbon_ui` with vertical/horizontal layouts, cross-axis alignment, anchored panels, clipped scroll areas, keyboard/gamepad focus and repeat, single-line caret editing, IME pre-edit/candidate positioning, cosmic-text advanced shaping, an R8 glyph atlas with dirty-region uploads, and an ordered GPU overlay pass. The `ui_showcase` example uses typed app states. Selection/clipboard/undo, multiline input, grapheme-aware caret movement, color emoji and full RTL layout mirroring remain out of scope; GPU visual verification is still required on a compatible host.
 
 ### Gameplay AI
 
@@ -31,7 +33,7 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 
 - The modern audio ECS transform path now reads `GlobalTransform3D` and derives listener orientation from the world quaternion using Y-up / local -Z-forward. Legacy `AudioListener` remains a separate compatibility path; `ribbon_math` and STUDS coordinate conventions are unchanged.
 - Added regression tests for front/back/left/right/above/below spatial direction, listener quaternion rotation, invalid transforms, transformed acoustic zones, and listener removal. Parent hierarchy and device-backed playback still require the Rust test suite and runtime validation on a supported host.
-- ATHAR now registers `AudioPlugin`, enables Kira output through its default `audio` feature (while retaining a no-default-features headless build), attempts device initialization without failing the game when no device is available, and emits procedural ambience, footstep, door, key, and save-point audio events. Save-point persistence, monster behavior, and door-close gameplay remain unimplemented.
+- ATHAR now registers `AudioPlugin`, enables Kira output through its default `audio` feature (while retaining a no-default-features headless build), attempts device initialization without failing the game when no device is available, and emits procedural ambience, footstep, door, key, and save-point audio events. Save-point autosave and `--continue` persistence are implemented; village restoration remains limited to the room-start fallback, while monster movement and door-close gameplay remain unimplemented.
 - ATHAR resolves assets from command-line/environment overrides or beside the executable, with a debug-only source fallback. Added an ATHAR package builder and a separate CI artifact path while retaining the STUDS artifact. CI's package script smoke-tests relocated asset resolution; CI execution remains the verification authority.
 
 ### 3D lighting and directional shadow stability
@@ -59,7 +61,7 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 - Expanded physical keyboard mapping from the original small subset to all 194 standard `winit 0.30.13` `KeyCode` variants, including international/language, media/browser/system and F1-F35 keys. Added exhaustive unique key-name and mapping coverage tests; left/right modifiers remain distinct.
 - Added frame-local Unicode text commits and IME pre-edit/lifecycle events, safe UTF-8 byte-boundary normalization for native composition cursor offsets, and a `WindowHandle` hook to position the operating-system IME candidate window. Text input remains separate from physical gameplay bindings. Unidentified native physical scan codes are now preserved for local rebinding (not portable serialized bindings).
 - Added runtime `DisplaySettings` for Windowed/Borderless/Exclusive fullscreen, optional validated physical-resolution overrides, exact-size exclusive mode lookup with borderless fallback, and capability-negotiated VSync (`On`, `Adaptive`, `Off`). Clearing a resolution override follows `PlatformConfig`; clearing a VSync override restores the environment-selected present mode.
-- The native gamepad backend, editor text-widget focus/surrounding-text integration and display-settings persistence/HDR metadata remain deferred.
+- Native gamepad discovery, analog axes, bindings and rumble are implemented in `ribbon_platform`; editor text-widget focus/surrounding-text integration and display-settings persistence/HDR metadata remain deferred.
 
 ### Rendering API / migration
 

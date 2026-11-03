@@ -7,7 +7,7 @@ core: math / ecs / events / schedule / reflect / profiling / input
   -> app and plugin composition (typed app states)
   -> platform (native gamepad polling) / assets / scene / render contracts / render / commands
   -> editor and editor tools / ribbon_ui
-  -> rendering, particles, physics, audio, animation, glTF plugins
+  -> rendering (`ribbon_plugin_render3d`), particles (`ribbon_plugin_particles`), physics, audio, animation, AI (`ribbon_plugin_ai`), and glTF plugins
   -> games and examples
 ```
 

@@ -1,7 +1,7 @@
 # Ribbon Engine — Engine-Wide Upgrade Audit
 
-**Audit date:** 2026-11-02
-**Source:** `Ribbon_Engine(5).zip`
+**Audit date:** 2026-11-02  
+**Source:** `Ribbon_Engine(5).zip`  
 **Scope:** Verified source audit, completed audio/ATHAR work, rendering shadow/light selection, glTF alpha materials, MSAA/FXAA, and HDR post-processing controls. This report distinguishes code changes from features that remain deferred.
 
 ## Repository and compatibility baseline
@@ -75,15 +75,26 @@ The following problems were checked against source and are not represented as fi
 | MSAA / FXAA | Adapter-negotiated 2x/4x/8x MSAA uses matching HDR color/depth targets with resolve before post-processing; FXAA is selected in the fullscreen post-tone-map pass | Implemented, limited; no TAA; MSAA sample count is fixed at renderer initialization, FXAA can toggle at runtime |
 | Post-processing | Public `PostProcessingSettings` resource controls the retained HDR/bloom/tone-map pipeline; runtime updates use uniform buffers without rebuilding pipelines | Implemented, limited; one bloom level and Reinhard tone mapping remain |
 | Auto exposure / grading / vignette / grain / chromatic aberration | GPU average-log-luminance compute adaptation, exposure compensation, contrast/saturation/temperature/tint, vignette, animated monochrome grain, and radial chromatic aberration | Implemented, limited; 16x16 sampling rather than histogram/local exposure; no physically calibrated camera model |
-| SSAO | No depth/normal-aware screen-space occlusion implementation | Deferred; material AO maps are not SSAO |
+| Screen-space AO | Optional deterministic depth-reconstructed GTAO-style horizon pass; supports single-sample and MSAA depth | Implemented, spatial only; temporal reprojection, denoising and geometric-normal/G-buffer path deferred |
 | IBL | No environment-cubemap irradiance/prefilter/BRDF integration | Deferred |
 | Reflection probes / lightmaps | No complete runtime probe/lightmap data path or baking system | Deferred |
 | Vertex formats | One shared `Vertex` carries 8 joint indices and 8 weights for all vertices (80 bytes before any alignment effects) | Deferred; no static/skinned split |
 | Tangents / UV1 | glTF importer currently retains UV0; mesh format does not store tangents or UV1; normal mapping uses derivative TBN reconstruction | Deferred |
-| Display settings | Basic configured width/height path exists; no complete runtime window-mode/present-mode/resolution settings API | Deferred |
-| Keyboard / gamepad / text / IME | Physical key coverage is incomplete; gamepad backend and full IME/text lifecycle are not complete | Deferred |
+| Display settings | `DisplaySettings` applies Windowed/Borderless/Exclusive modes, optional physical-resolution overrides, exact-size exclusive mode selection with borderless fallback, and VSync policy negotiation against surface capabilities. Clearing a resolution override follows `PlatformConfig`; clearing VSync restores the initial environment-selected present mode. | Runtime foundation implemented; no persisted settings format, HDR metadata/display calibration API, multi-monitor selector, or native runtime verification in this environment |
+| Keyboard | All 194 standard `winit 0.30.13` `KeyCode` variants map to physical `Key` values; unidentified physical keys preserve platform-native scan-code identities for local rebinding; stable names round-trip for the portable catalogue; focus loss releases held keys. | Platform mapping implemented; native scan-code persistence remains application-specific and those codes are not portable |
+| Text / IME | Unicode commits, pre-edit composition, enable/disable lifecycle, UTF-8-safe byte cursor range, and native candidate/caret rectangle hook are exposed separately from gameplay keys. | Implemented platform event foundation; editor/UI widget focus ownership, editing commands, surrounding-text replacement, and platform IME runtime matrix remain deferred |
+| Gamepad | `BindingSource::GamepadButton` is only a schema extension point; no native polling backend exists. | Deferred; no device discovery, axes/triggers, deadzones, multiple devices, haptics, or hardware tests |
 
 `docs/architecture/ARCHITECTURE.md`, `plugins/render3d/README.md`, and the new `plugins/gltf/README.md` were aligned with those observed limitations. The status language intentionally avoids describing deferred capabilities as implemented.
+
+## Platform input and display checkpoint (source update)
+
+- Expanded the platform-neutral physical `Key` catalogue and winit mapping to all 194 standard `KeyCode` variants documented by the workspace's pinned winit 0.30.13 line. Key-name serialization helpers round-trip every portable catalogue entry; left/right modifiers remain distinct. Native `PhysicalKey::Unidentified` scan-code identities are preserved by `Key::Native` for local rebinding, while portable name serialization intentionally excludes them. Mapping uniqueness/coverage and native-code state handling have regression tests.
+- Added committed Unicode text and IME pre-edit/lifecycle events as a separate input stream, a frame-local `TextInput` resource, UTF-8 boundary clamping for byte-indexed composition cursor ranges, and a native IME candidate/caret rectangle hook on `WindowHandle`. This is a platform event foundation, not a full editor text-widget implementation.
+- Added runtime `DisplaySettings` for Windowed, BorderlessFullscreen and ExclusiveFullscreen modes, an optional validated physical-resolution override, exact requested-size exclusive mode lookup, borderless fallback, and VSync selection from actual surface capabilities. Clearing the resolution override follows the legacy `PlatformConfig` dimensions; `vsync = None` preserves the original environment-selected present mode and restores it when a runtime override is cleared.
+- Remaining platform work is explicit: persistable display preferences/HDR metadata, multi-monitor policy, native gamepad discovery and polling, analog axes/triggers/deadzones/haptics, and editor widget focus/surrounding-text lifecycle. These are not advertised as complete.
+
+**Validation boundary for this source update:** static source consistency and catalogue cardinality checks were performed in the packaging environment. Rust formatting, Cargo tests, Clippy, native fullscreen transitions, swapchain reconfiguration and real IME behavior were not executed here because Cargo/Rust are unavailable.
 
 ## Validation actually performed
 
@@ -105,4 +116,4 @@ The following were **not run here**: Rust formatting, any Cargo check/test/clipp
 - The save-point interaction currently presents a chime/checkpoint message only; it does not serialize or persist save state.
 - Door closing and monster movement/audio triggers are future gameplay hooks, not implemented gameplay.
 - The Windows packaging helper now discovers VC145/VC143 CRT redist directories with `vswhere`/Visual Studio layout discovery, and supports an explicit `--crt-dir`; it still fails rather than silently omitting the runtime when `--require-windows-crt` is used. The user reported a successful package stage bundling 10 VC145 CRT DLLs.
-- Phase 3B implements GPU average-log-luminance auto exposure, exposure compensation, contrast/saturation/temperature/tint grading, vignette, animated film grain and chromatic aberration on top of Reinhard/bloom/fog. SSAO/GTAO, IBL, probes/lightmaps, cascaded and broader local-light shadows, static/skinned vertex separation, tangents/UV1, full display/HDR metadata, gamepad, text/IME and TAA remain separate engineering phases. glTF BLEND is conventional object-bounds-center sorting, not OIT; blend materials do not cast the current shadow maps and intersecting surfaces can sort imperfectly. The material showcase is a small regression fixture, not an artist-authing tool or OIT demo.
+- Phase 3B implements GPU average-log-luminance auto exposure, exposure compensation, contrast/saturation/temperature/tint grading, vignette, animated film grain and chromatic aberration on top of Reinhard/bloom/fog. Temporal AO reprojection/denoising, IBL, probes/lightmaps, cascaded and broader local-light shadows, static/skinned vertex separation, tangents/UV1, display-settings persistence/HDR metadata, native gamepad backend, editor widget text focus/surrounding-text management, and TAA remain separate engineering phases. glTF BLEND is conventional object-bounds-center sorting, not OIT; blend materials do not cast the current shadow maps and intersecting surfaces can sort imperfectly. The material showcase is a small regression fixture, not an artist-authing tool or OIT demo.
