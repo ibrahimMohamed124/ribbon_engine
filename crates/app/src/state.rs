@@ -169,7 +169,7 @@ fn run_hooks<S: States>(world: &mut World, state: S, entering: bool) {
 mod tests {
     use super::*;
     use crate::{App, HeadlessRunner, SystemConfig};
-    use ribbon_events::EventCursor;
+    use ribbon_events::{EventCursor, WorldEventsExt};
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -187,20 +187,21 @@ mod tests {
         let l = log.clone();
         app.on_exit(Screen::Menu, move |_| l.lock().unwrap().push("exit"));
         let l = log.clone();
-        app.on_enter(Screen::Playing, move |_| l.lock().unwrap().push("enter"));
+        let mut event_cursor = EventCursor::<StateTransition<Screen>>::default();
+        app.on_enter(Screen::Playing, move |world| {
+            if event_cursor
+                .read(world.events::<StateTransition<Screen>>())
+                .any(|event| event.from == Screen::Menu && event.to == Screen::Playing)
+            {
+                l.lock().unwrap().push("event");
+            }
+            l.lock().unwrap().push("enter");
+        });
         app.world
             .resource_mut::<NextState<Screen>>()
             .set(Screen::Playing);
         app.update();
-        assert_eq!(*log.lock().unwrap(), ["exit", "enter"]);
-        let mut cursor = EventCursor::<StateTransition<Screen>>::default();
-        assert_eq!(
-            cursor
-                .read(app.world.events::<StateTransition<Screen>>())
-                .next()
-                .map(|e| (e.from, e.to)),
-            Some((Screen::Menu, Screen::Playing))
-        );
+        assert_eq!(*log.lock().unwrap(), ["exit", "event", "enter"]);
     }
 
     #[test]
