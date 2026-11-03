@@ -53,6 +53,89 @@ pub struct AntiAliasingSettings {
     pub mode: AntiAliasingMode,
 }
 
+/// Sampling quality for the depth-based ambient-occlusion pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AmbientOcclusionQuality {
+    /// Four screen-space directions with two samples per direction.
+    Low,
+    /// Six screen-space directions with three samples per direction.
+    #[default]
+    Medium,
+    /// Eight screen-space directions with four samples per direction.
+    High,
+}
+
+impl AmbientOcclusionQuality {
+    const fn sample_counts(self) -> (u32, u32) {
+        match self {
+            Self::Low => (4, 2),
+            Self::Medium => (6, 3),
+            Self::High => (8, 4),
+        }
+    }
+}
+
+/// Screen-space ambient-occlusion settings. The pass reconstructs world-space geometry from
+/// the main depth buffer; it is deliberately disabled by default so existing projects retain their
+/// previous image and GPU cost until they opt in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AmbientOcclusionSettings {
+    pub enabled: bool,
+    pub quality: AmbientOcclusionQuality,
+    /// Approximate world-space sampling radius.
+    pub radius: f32,
+    /// AO contribution strength in [0, 1].
+    pub intensity: f32,
+    /// World-space depth/normal bias used to suppress self-occlusion.
+    pub bias: f32,
+    /// Power curve applied to the visibility result.
+    pub power: f32,
+}
+
+impl Default for AmbientOcclusionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            quality: AmbientOcclusionQuality::Medium,
+            radius: 1.25,
+            intensity: 0.85,
+            bias: 0.025,
+            power: 1.25,
+        }
+    }
+}
+
+impl AmbientOcclusionSettings {
+    pub fn cinematic() -> Self {
+        Self {
+            enabled: true,
+            quality: AmbientOcclusionQuality::High,
+            radius: 1.4,
+            intensity: 0.9,
+            bias: 0.03,
+            power: 1.2,
+        }
+    }
+
+    fn sanitized(self) -> Self {
+        let finite_or = |value: f32, fallback: f32| {
+            if value.is_finite() {
+                value
+            } else {
+                fallback
+            }
+        };
+        Self {
+            enabled: self.enabled,
+            quality: self.quality,
+            radius: finite_or(self.radius, 1.25).clamp(0.05, 8.0),
+            intensity: finite_or(self.intensity, 0.85).clamp(0.0, 1.0),
+            bias: finite_or(self.bias, 0.025).clamp(0.0001, 0.5),
+            power: finite_or(self.power, 1.25).clamp(0.25, 4.0),
+        }
+    }
+}
+
 /// Select the highest supported sample count not greater than the requested quality. Sample
 /// count one is the unconditional fallback. The caller supplies the intersection of color and
 /// depth format capabilities, so a selected count is compatible with both attachments.
@@ -282,11 +365,23 @@ impl HdrTarget {
 }
 
 #[derive(Clone, Copy)]
-struct PostProcessRenderOptions<'a> {
-    settings: &'a PostProcessingSettings,
-    fxaa: bool,
-    profile_cpu: bool,
-    submitted_frame: u64,
+pub(crate) struct PostProcessRenderOptions<'a> {
+    pub(crate) settings: &'a PostProcessingSettings,
+    pub(crate) fxaa: bool,
+    pub(crate) ao_settings: &'a AmbientOcclusionSettings,
+    pub(crate) ao_frame: Option<AmbientOcclusionFrame<'a>>,
+    pub(crate) profile_cpu: bool,
+    pub(crate) submitted_frame: u64,
+}
+
+/// Per-frame camera/depth inputs for the GPU ambient-occlusion pass.
+#[derive(Clone, Copy)]
+pub(crate) struct AmbientOcclusionFrame<'a> {
+    pub depth_view: &'a wgpu::TextureView,
+    pub inverse_view_projection: [[f32; 4]; 4],
+    pub camera_position: [f32; 3],
+    pub fov_y_radians: f32,
+    pub sample_count: u32,
 }
 
 #[repr(C)]
@@ -305,6 +400,25 @@ struct ExposureComputeUniform {
     adaptation: [f32; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GtaoUniform {
+    inverse_view_projection: [[f32; 4]; 4],
+    camera_and_radius: [f32; 4],
+    settings: [f32; 4],
+    dimensions: [u32; 4],
+    quality: [u32; 4],
+}
+
+const DEFAULT_AO_SETTINGS: AmbientOcclusionSettings = AmbientOcclusionSettings {
+    enabled: false,
+    quality: AmbientOcclusionQuality::Medium,
+    radius: 1.25,
+    intensity: 0.85,
+    bias: 0.025,
+    power: 1.25,
+};
+
 /// Fullscreen tone mapping and configurable display post-processing.
 pub struct ToneMapper {
     pipeline: wgpu::RenderPipeline,
@@ -316,13 +430,24 @@ pub struct ToneMapper {
     _exposure_state_buffer: wgpu::Buffer,
     exposure_params_buffer: wgpu::Buffer,
     tone_map_uniform_buffer: wgpu::Buffer,
+    ao_params_buffer: wgpu::Buffer,
+    ao_single_pipeline: wgpu::ComputePipeline,
+    ao_msaa_pipeline: wgpu::ComputePipeline,
+    ao_single_layout: wgpu::BindGroupLayout,
+    ao_msaa_layout: wgpu::BindGroupLayout,
+    ao_bind_group: Option<wgpu::BindGroup>,
+    ao_depth_signature: Option<(u32, u32, u32)>,
     _bloom_texture: wgpu::Texture,
     bloom_view: wgpu::TextureView,
+    _ao_texture: wgpu::Texture,
+    ao_view: wgpu::TextureView,
     _sampler: wgpu::Sampler,
     estimated_bytes: u64,
     gpu_timing: Option<GpuTimestampProfiler>,
     initial_fxaa: bool,
     output_srgb: bool,
+    width: u32,
+    height: u32,
     started_at: Instant,
     last_frame_at: Instant,
 }
@@ -460,6 +585,16 @@ impl ToneMapper {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let exposure_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -530,6 +665,30 @@ impl ToneMapper {
                 }),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
+        let ao_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("render3d full-resolution ambient-occlusion visibility"),
+            size: wgpu::Extent3d {
+                width: size.0.max(1),
+                height: size.1.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let ao_view = ao_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ao_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("GTAO camera and sampling parameters"),
+            contents: bytemuck::bytes_of(&GtaoUniform::zeroed()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let (ao_single_layout, ao_single_pipeline) =
+            create_gtao_pipeline(device, false, include_str!("../shaders/gtao.wgsl"));
+        let (ao_msaa_layout, ao_msaa_pipeline) =
+            create_gtao_pipeline(device, true, include_str!("../shaders/gtao_msaa.wgsl"));
         let bloom_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bright pass bind group"),
             layout: &bloom_layout,
@@ -567,6 +726,10 @@ impl ToneMapper {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: tone_map_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&ao_view),
                 },
             ],
         });
@@ -686,9 +849,13 @@ impl ToneMapper {
         let bloom_bytes = u64::from((size.0 / 4).max(1))
             .saturating_mul(u64::from((size.1 / 4).max(1)))
             .saturating_mul(8);
+        let ao_bytes = u64::from(size.0.max(1))
+            .saturating_mul(u64::from(size.1.max(1)))
+            .saturating_mul(4);
         let fixed_bytes = std::mem::size_of::<f32>() as u64
             + std::mem::size_of::<ExposureComputeUniform>() as u64
-            + std::mem::size_of::<ToneMapUniform>() as u64;
+            + std::mem::size_of::<ToneMapUniform>() as u64
+            + std::mem::size_of::<GtaoUniform>() as u64;
         Self {
             pipeline,
             bind_group,
@@ -699,19 +866,32 @@ impl ToneMapper {
             _exposure_state_buffer: exposure_state_buffer,
             exposure_params_buffer,
             tone_map_uniform_buffer,
+            ao_params_buffer,
+            ao_single_pipeline,
+            ao_msaa_pipeline,
+            ao_single_layout,
+            ao_msaa_layout,
+            ao_bind_group: None,
+            ao_depth_signature: None,
             _bloom_texture: bloom_texture,
             bloom_view,
+            _ao_texture: ao_texture,
+            ao_view,
             _sampler: sampler,
-            estimated_bytes: bloom_bytes.saturating_add(fixed_bytes),
+            estimated_bytes: bloom_bytes
+                .saturating_add(ao_bytes)
+                .saturating_add(fixed_bytes),
             gpu_timing: GpuTimestampProfiler::new(device),
             initial_fxaa,
             output_srgb,
+            width: size.0.max(1),
+            height: size.1.max(1),
             started_at: Instant::now(),
             last_frame_at: Instant::now(),
         }
     }
 
-    /// Estimated bytes for the bloom target, post-process uniforms and timestamp readback buffers.
+    /// Estimated bytes for bloom/AO targets, post-process uniforms and timestamp readback buffers.
     /// Pipelines, bind groups, query-set storage and allocator overhead are not included.
     pub fn estimated_bytes(&self) -> u64 {
         self.estimated_bytes.saturating_add(
@@ -765,6 +945,8 @@ impl ToneMapper {
             PostProcessRenderOptions {
                 settings: &PostProcessingSettings::default(),
                 fxaa,
+                ao_settings: &DEFAULT_AO_SETTINGS,
+                ao_frame: None,
                 profile_cpu: false,
                 submitted_frame: 0,
             },
@@ -788,32 +970,22 @@ impl ToneMapper {
             PostProcessRenderOptions {
                 settings,
                 fxaa,
+                ao_settings: &DEFAULT_AO_SETTINGS,
+                ao_frame: None,
                 profile_cpu: false,
                 submitted_frame: 0,
             },
         );
     }
 
-    pub(crate) fn render_profiled_with_settings(
+    pub(crate) fn render_with_options(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         target: &wgpu::TextureView,
-        settings: &PostProcessingSettings,
-        fxaa: bool,
-        submitted_frame: u64,
+        options: PostProcessRenderOptions<'_>,
     ) -> Vec<RenderPassTiming> {
-        self.render_internal(
-            device,
-            queue,
-            target,
-            PostProcessRenderOptions {
-                settings,
-                fxaa,
-                profile_cpu: true,
-                submitted_frame,
-            },
-        )
+        self.render_internal(device, queue, target, options)
     }
 
     fn render_internal(
@@ -825,6 +997,9 @@ impl ToneMapper {
     ) -> Vec<RenderPassTiming> {
         let settings = options.settings.sanitized();
         let fxaa = options.fxaa;
+        let ao_settings = options.ao_settings.sanitized();
+        let ao_frame = options.ao_frame;
+        let ao_enabled = ao_settings.enabled && ao_frame.is_some();
         let profile_cpu = options.profile_cpu;
         let submitted_frame = options.submitted_frame;
         let now = Instant::now();
@@ -859,7 +1034,7 @@ impl ToneMapper {
             flags: [
                 settings.auto_exposure.enabled as u8 as f32,
                 self.output_srgb as u8 as f32,
-                0.0,
+                ao_enabled as u8 as f32,
                 0.0,
             ],
         };
@@ -883,6 +1058,56 @@ impl ToneMapper {
             queue.write_buffer(&self.exposure_params_buffer, 0, bytemuck::bytes_of(&params));
         }
 
+        if let (true, Some(frame)) = (ao_enabled, ao_frame) {
+            let signature = (self.width, self.height, frame.sample_count.max(1));
+            if self.ao_depth_signature != Some(signature) || self.ao_bind_group.is_none() {
+                let layout = if frame.sample_count > 1 {
+                    &self.ao_msaa_layout
+                } else {
+                    &self.ao_single_layout
+                };
+                self.ao_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("cached GTAO depth and visibility bind group"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(frame.depth_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&self.ao_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self.ao_params_buffer.as_entire_binding(),
+                        },
+                    ],
+                }));
+                self.ao_depth_signature = Some(signature);
+            }
+            let (directions, steps) = ao_settings.quality.sample_counts();
+            let uniform = GtaoUniform {
+                inverse_view_projection: frame.inverse_view_projection,
+                camera_and_radius: [
+                    frame.camera_position[0],
+                    frame.camera_position[1],
+                    frame.camera_position[2],
+                    ao_settings.radius,
+                ],
+                settings: [
+                    ao_settings.intensity,
+                    ao_settings.bias,
+                    ao_settings.power,
+                    1.0 / (frame.fov_y_radians * 0.5).tan().max(0.001),
+                ],
+                dimensions: [self.width, self.height, frame.sample_count.max(1), 0],
+                quality: [directions, steps, 0, 0],
+            };
+            queue.write_buffer(&self.ao_params_buffer, 0, bytemuck::bytes_of(&uniform));
+        }
+        let ao_bind_group = ao_enabled.then_some(self.ao_bind_group.as_ref()).flatten();
+
         let mut cpu_phases = Vec::new();
         let timing_slot = self
             .gpu_timing
@@ -897,6 +1122,25 @@ impl ToneMapper {
             label: Some("HDR post-processing encoder"),
         });
         let mut phase_started = profile_cpu.then(Instant::now);
+        if let Some(bind_group) = ao_bind_group.as_ref() {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("depth-based GTAO ambient occlusion"),
+                timestamp_writes: None,
+            });
+            if ao_frame.is_some_and(|frame| frame.sample_count > 1) {
+                pass.set_pipeline(&self.ao_msaa_pipeline);
+            } else {
+                pass.set_pipeline(&self.ao_single_pipeline);
+            }
+            pass.set_bind_group(0, *bind_group, &[]);
+            pass.dispatch_workgroups(self.width.div_ceil(8), self.height.div_ceil(8), 1);
+        }
+        record_cpu_phase(
+            &mut cpu_phases,
+            "GTAO ambient-occlusion command encoding",
+            phase_started.take(),
+        );
+        phase_started = profile_cpu.then(Instant::now);
         if settings.auto_exposure.enabled {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("GPU average log-luminance exposure adaptation"),
@@ -986,6 +1230,78 @@ impl ToneMapper {
     }
 }
 
+fn create_gtao_pipeline(
+    device: &wgpu::Device,
+    multisampled: bool,
+    shader_source: &'static str,
+) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(if multisampled {
+            "GTAO multisampled depth layout"
+        } else {
+            "GTAO depth layout"
+        }),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(if multisampled {
+            "GTAO multisampled depth shader"
+        } else {
+            "GTAO depth shader"
+        }),
+        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("GTAO compute pipeline layout"),
+        bind_group_layouts: &[&layout],
+        push_constant_ranges: &[],
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some(if multisampled {
+            "GTAO multisampled depth pipeline"
+        } else {
+            "GTAO depth pipeline"
+        }),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: Some("cs_main"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        cache: None,
+    });
+    (layout, pipeline)
+}
+
 fn record_cpu_phase(
     phases: &mut Vec<RenderPassTiming>,
     name: &'static str,
@@ -1002,9 +1318,9 @@ fn record_cpu_phase(
 #[cfg(test)]
 mod anti_aliasing_tests {
     use super::{
-        negotiate_msaa_sample_count, AntiAliasingMode, AutoExposureSettings,
-        ChromaticAberrationSettings, ColorGradingSettings, FilmGrainSettings,
-        PostProcessingSettings, VignetteSettings,
+        negotiate_msaa_sample_count, AmbientOcclusionQuality, AmbientOcclusionSettings,
+        AntiAliasingMode, AutoExposureSettings, ChromaticAberrationSettings, ColorGradingSettings,
+        FilmGrainSettings, PostProcessingSettings, VignetteSettings,
     };
 
     #[test]
@@ -1023,6 +1339,36 @@ mod anti_aliasing_tests {
         assert_eq!(AntiAliasingMode::Fxaa.requested_samples(), 1);
         assert!(AntiAliasingMode::Fxaa.uses_fxaa());
         assert_eq!(AntiAliasingMode::None.requested_samples(), 1);
+    }
+
+    #[test]
+    fn ambient_occlusion_defaults_are_disabled_and_quality_samples_are_bounded() {
+        let defaults = AmbientOcclusionSettings::default();
+        assert!(!defaults.enabled);
+        assert_eq!(AmbientOcclusionQuality::Low.sample_counts(), (4, 2));
+        assert_eq!(AmbientOcclusionQuality::Medium.sample_counts(), (6, 3));
+        assert_eq!(AmbientOcclusionQuality::High.sample_counts(), (8, 4));
+        let cinematic = AmbientOcclusionSettings::cinematic().sanitized();
+        assert!(cinematic.enabled);
+        assert!((0.05..=8.0).contains(&cinematic.radius));
+        assert!((0.0..=1.0).contains(&cinematic.intensity));
+    }
+
+    #[test]
+    fn ambient_occlusion_sanitization_contains_nan_and_extreme_values() {
+        let settings = AmbientOcclusionSettings {
+            enabled: true,
+            quality: AmbientOcclusionQuality::High,
+            radius: f32::INFINITY,
+            intensity: f32::NAN,
+            bias: -100.0,
+            power: 100.0,
+        }
+        .sanitized();
+        assert_eq!(settings.radius, 1.25);
+        assert_eq!(settings.intensity, 0.85);
+        assert_eq!(settings.bias, 0.0001);
+        assert_eq!(settings.power, 4.0);
     }
 
     #[test]

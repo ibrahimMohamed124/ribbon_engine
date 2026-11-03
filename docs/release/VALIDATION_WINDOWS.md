@@ -27,15 +27,15 @@ cargo tree -p ribbon_plugin_render3d
 if ($LASTEXITCODE -ne 0) { throw 'render3d dependency tree failed' }
 cargo tree -p ribbon_plugin_physics
 if ($LASTEXITCODE -ne 0) { throw 'physics dependency tree failed' }
-cargo tree -p ribbon_plugin_weather
-if ($LASTEXITCODE -ne 0) { throw 'weather dependency tree failed' }
+cargo tree -p ribbon_plugin_particles
+if ($LASTEXITCODE -ne 0) { throw 'particle dependency tree failed' }
 
 $renderTree = cargo tree --locked -p ribbon_plugin_render3d
 if ($renderTree -match 'studs_voxel|studs_voxel_gpu|studs_cpu_renderer') { throw 'render3d depends on STUDS-owned voxel packages' }
 $physicsTree = cargo tree --locked -p ribbon_plugin_physics
 if ($physicsTree -match 'studs_voxel|studs_voxel_gpu|studs_cpu_renderer') { throw 'physics depends on STUDS-owned voxel packages' }
-$weatherTree = cargo tree --locked -p ribbon_plugin_weather
-if ($weatherTree -match 'ribbon_plugin_render3d|studs_voxel|studs_cpu_renderer') { throw 'weather must depend on renderer-neutral contracts only' }
+$particlesTree = cargo tree --locked -p ribbon_plugin_particles
+if ($particlesTree -match 'ribbon_plugin_render3d|studs_voxel|studs_cpu_renderer') { throw 'particles must not depend on renderer or game code' }
 python games/athar/tools/validate_horror_assets.py
 if ($LASTEXITCODE -ne 0) { throw 'Athar asset validation failed' }
 python tools/check_deps.py
@@ -80,4 +80,4 @@ cargo run --locked -p studs -- --renderer gpu
 if ($LASTEXITCODE -ne 0) { throw 'STUDS GPU launch failed' }
 ```
 
-The weather package is required to depend on `ribbon_render_contracts`, not on `ribbon_plugin_render3d`; inspect `cargo tree -p ribbon_plugin_weather` to confirm the implementation boundary. Also inspect `cargo tree -p ribbon_plugin_render3d` and `cargo tree -p ribbon_plugin_physics` to ensure neither pulls in `studs_voxel`, `studs_voxel_gpu`, or `studs_cpu_renderer`. Do not interpret source-level checks as proof of GPU output correctness: manually verify mouse look, WASD movement, cursor capture/release, room readability, lighting/shadows, rain activation at the village transition, and normal shutdown in the Windows GPU run.
+The particle package is required to depend on `ribbon_render_contracts`, not on `ribbon_plugin_render3d`; inspect `cargo tree -p ribbon_plugin_particles` to confirm the implementation boundary. Also inspect `cargo tree -p ribbon_plugin_render3d` and `cargo tree -p ribbon_plugin_physics` to ensure neither pulls in `studs_voxel`, `studs_voxel_gpu`, or `studs_cpu_renderer`. Do not interpret source-level checks as proof of GPU output correctness: manually verify mouse look, WASD movement, cursor capture/release, room readability, lighting/shadows, the rain particle emitter at the village transition, and normal shutdown in the Windows GPU run.

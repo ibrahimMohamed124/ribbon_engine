@@ -1,3 +1,5 @@
+> Superseded by ADR 0016: the weather plugin was removed; renderer-neutral contracts are now used by the particle plugin.
+
 # 0012 — Renderer-neutral contracts for reusable weather
 
 ## Context

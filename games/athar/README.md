@@ -12,7 +12,7 @@ cargo run --release -p athar
 2. Walk close to the key and press **E**. The key disappears from the floor and the HUD confirms it is carried.
 3. Walk to the metal exit door and press **E**. Without the key, it reports that the door is locked. With the key, the lock opens and the door swings on its hinge.
 4. Walk through the doorway. The room is unloaded and the exterior village scene is spawned.
-5. Explore **Wet Creek**, a roughly 260-by-260-unit village with 60 houses, a landmark hall, tree-lined edges, cobbled streets, lamps, a stone well, distance fog, and 220 animated rain streaks that follow the player.
+5. Explore **Wet Creek**, a roughly 260-by-260-unit village with 60 houses, a landmark hall, tree-lined edges, cobbled streets, lamps, a stone well, distance fog, and rain from `ParticleEmitter::rain()` attached to the camera.
 
 ## Audio
 
@@ -26,11 +26,11 @@ ATHAR registers `AudioPlugin` and attempts to initialize the Kira/CPAL `Threaded
 - **E** — pick up the key or unlock the door when within reach.
 - **Escape** — release the pointer; left-click the window to capture it again.
 
-The in-window HUD shows the current objective, interaction prompts, and the village's scale/weather status. Walking is driven by the engine `ribbon_plugin_physics::PhysicsPlugin`: a kinematic capsule receives one movement intent per `FixedUpdate`, while Rapier resolves it against authored room and village collider entities. The key has a sensor collider, the scripted door uses a fixed collider proxy whose pose is reconciled before character queries, and the save-point/monster placeholder and village obstacles use engine-owned fixed colliders. The legacy `Aabb3` / `slide_capsule_xz` helpers remain available to older callers but do not resolve ATHAR movement. Quest progression, door animation, and village placement are scripts in `src/scripts/`. The engine-owned `ribbon_plugin_weather` plugin manages rain particles; ATHAR only enables rain when entering the village. Mesh rendering, glTF loading, frame presentation, and component storage stay in engine crates.
+The in-window HUD shows the current objective, interaction prompts, and the village's scale/weather status. Walking is driven by the engine `ribbon_plugin_physics::PhysicsPlugin`: a kinematic capsule receives one movement intent per `FixedUpdate`, while Rapier resolves it against authored room and village collider entities. The key has a sensor collider, the scripted door uses a fixed collider proxy whose pose is reconciled before character queries, and the save-point/monster placeholder and village obstacles use engine-owned fixed colliders. The legacy `Aabb3` / `slide_capsule_xz` helpers remain available to older callers but do not resolve ATHAR movement. Quest progression, door animation, and village placement are scripts in `src/scripts/`. ATHAR spawns `ParticleEmitter::rain()` when entering the village. Mesh rendering, glTF loading, frame presentation, and component storage stay in engine crates.
 
-## Village and weather implementation
+## Village and rain implementation
 
-The outdoor scene is deterministic and uses shared glTF asset handles for repeated house/tree/lamp instances. The room's static Rapier collider entities are despawned on transition and replaced with a village collider set. The village ground now has a fixed Rapier collider; the main roads remain open, each house has a collision volume, trees have trunk collision, and world-edge colliders prevent walking off the ground plane. Rain streaks are lightweight built-in cube meshes with deterministic randomized offsets and fall speeds. The engine weather plugin recycles them through the standard mesh renderer without adding a separate particle renderer.
+The outdoor scene is deterministic and uses shared glTF asset handles for repeated house/tree/lamp instances. The room's static Rapier collider entities are despawned on transition and replaced with a village collider set. The village ground now has a fixed Rapier collider; the main roads remain open, each house has a collision volume, trees have trunk collision, and world-edge colliders prevent walking off the ground plane. Rain is emitted by the engine `ParticleEmitter::rain()` preset and rendered by the particle path inside the existing 3D mesh pass.
 
 The scene uses the engine's native-surface mesh renderer, PBR glTF model support, directional lighting, spotlight, point lights, distance/height fog, and a reusable `WindowTextOverlayPass`. The text overlay is an engine-level rendering utility in `ribbon_render`; quest rules and all Horror Slice-specific content remain in this game.
 

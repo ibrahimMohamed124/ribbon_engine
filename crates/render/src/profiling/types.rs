@@ -70,6 +70,10 @@ pub struct RenderResourceStats {
     pub visible_mesh_instances: usize,
     /// Grouped indexed draw calls issued by the main color pass.
     pub visible_draw_calls: usize,
+    /// Particle instances drawn in the main 3D pass.
+    pub particle_instances_drawn: usize,
+    /// Particle batches drawn in the main 3D pass.
+    pub particle_batches_drawn: usize,
     /// Grouped indexed draw calls issued by the directional shadow pass.
     pub shadow_draw_calls: usize,
     /// Skinned draws retained after the bounded per-frame joint-palette admission step.

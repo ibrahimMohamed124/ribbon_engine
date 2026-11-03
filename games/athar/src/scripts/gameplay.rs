@@ -470,9 +470,22 @@ fn enter_village(world: &mut World, state: &mut AdventureState) -> Result<(), St
     world.resource_mut::<ClearColor>().0 = [0.24, 0.29, 0.34, 1.0];
     apply_village_lighting(world, state.camera_entity, true);
     state.village_preview_lighting_active = true;
-    world
-        .resource_mut::<ribbon_plugin_weather::RainSettings>()
-        .enabled = true;
+    if let Some(entity) = state.rain_emitter {
+        if let Some(mut emitter) = world.get_mut::<ribbon_plugin_particles::ParticleEmitter>(entity)
+        {
+            emitter.enabled = true;
+        }
+    } else {
+        let entity = world.spawn((
+            Transform3D {
+                translation: Vec3::new(0.0, 13.5, 0.0),
+                ..Default::default()
+            },
+            ribbon_scene::Parent(state.camera_entity),
+            ribbon_plugin_particles::ParticleEmitter::rain(),
+        ));
+        state.rain_emitter = Some(entity);
+    }
 
     for entity in state.room_entities.drain(..) {
         let _ = world.despawn(entity);
@@ -501,7 +514,6 @@ fn enter_village(world: &mut World, state: &mut AdventureState) -> Result<(), St
     state.door_collider_entity = None;
     state.village_first_physics_profile_logged = false;
     state.village_transform_profile_logged = false;
-    state.village_rain_profile_logged = false;
     if let Some(diagnostics) = world.try_resource::<ribbon_scene::TransformPropagationDiagnostics>()
     {
         let _ = diagnostics;
@@ -603,18 +615,6 @@ pub fn gameplay_update(world: &mut World) {
                         .resource_mut::<ribbon_plugin_physics::PhysicsDiagnostics>()
                         .timing_enabled = false;
                     state.village_first_physics_profile_logged = true;
-                }
-            }
-        }
-        if state.phase == GamePhase::Village && !state.village_rain_profile_logged {
-            if let Some(rain) = world.try_resource::<ribbon_plugin_weather::RainDiagnostics>() {
-                if rain.particle_batches_created > 0 {
-                    eprintln!(
-                        "[ATHAR transition] rain particle batch: {} entities created in {} us",
-                        rain.last_batch_particle_count,
-                        rain.last_batch_creation_time_ns / 1_000,
-                    );
-                    state.village_rain_profile_logged = true;
                 }
             }
         }
@@ -760,8 +760,8 @@ fn update_hud(world: &mut World) {
             state.message_seconds,
             if state.phase == GamePhase::Village {
                 world
-                    .try_resource::<ribbon_plugin_weather::RainSettings>()
-                    .map_or(0, ribbon_plugin_weather::RainSettings::active_particles)
+                    .try_resource::<ribbon_plugin_particles::ParticleDiagnostics>()
+                    .map_or(0, |d| d.alive_particles)
             } else {
                 0
             },

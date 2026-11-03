@@ -644,7 +644,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_system(Stage::Update, scripts::gameplay::gameplay_update);
     // Keep the weather update after gameplay so a room-to-village transition activates rain in
     // this frame, while the plugin remains responsible for particle state and recycling.
-    app.add_plugin(ribbon_plugin_weather::WeatherPlugin)?;
+    app.add_plugin(ribbon_plugin_particles::ParticlePlugin)?;
     app.add_system(Stage::Update, report_asset_failures);
     app.add_system(Stage::Update, enforce_frame_limit);
     app.build()?.run();

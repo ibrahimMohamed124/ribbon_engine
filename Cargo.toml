@@ -25,7 +25,7 @@ members = [
   "plugins/audio",
   "plugins/editor_tools",
   "plugins/render3d",
-  "plugins/weather",
+  "plugins/particles",
   "plugins/gltf",
   "examples/hello_ecs",
   "games/studs/showcases/voxel_room",

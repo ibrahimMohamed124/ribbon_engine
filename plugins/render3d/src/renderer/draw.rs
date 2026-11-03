@@ -227,6 +227,8 @@ impl MeshRenderer {
         let mut cpu_phases = Vec::new();
         self.last_visible_mesh_instances = 0;
         self.last_visible_draw_calls = 0;
+        self.last_particle_instances_drawn = 0;
+        self.last_particle_batches_drawn = 0;
         self.last_shadow_draw_calls = 0;
         self.last_skinned_draws_after_palette_budget = 0;
         self.last_skinned_draws_rejected_palette_capacity = 0;
@@ -234,8 +236,17 @@ impl MeshRenderer {
         if size.0 == 0 || size.1 == 0 {
             return cpu_phases;
         }
+        let (particle_instances, particle_batches) = self.particles.prepare(
+            device,
+            queue,
+            scene.particles,
+            scene.camera_position,
+            scene.view_proj,
+        );
+        self.last_particle_instances_drawn = particle_instances;
+        self.last_particle_batches_drawn = particle_batches;
         let mut phase_started = profile_cpu.then(Instant::now);
-        if scene.draws.is_empty() && skinned_draws.is_empty() {
+        if scene.draws.is_empty() && skinned_draws.is_empty() && scene.particles.is_empty() {
             self.maintain_instance_buffers(device, 0);
             return cpu_phases;
         }
@@ -294,7 +305,7 @@ impl MeshRenderer {
             draws.iter().filter(|draw| draw.palette.is_some()).count();
         self.last_skinned_draws_rejected_palette_capacity = rejected_skin_palettes;
         self.last_skin_palette_matrices_staged = skin_matrices.len();
-        if draws.is_empty() {
+        if draws.is_empty() && scene.particles.is_empty() {
             self.maintain_instance_buffers(device, 0);
             return cpu_phases;
         }
@@ -328,9 +339,6 @@ impl MeshRenderer {
             .collect();
         let mut visible_draws = visible_draws;
         sort_visible_draws(self, &mut visible_draws, scene);
-        if visible_draws.is_empty() {
-            return cpu_phases;
-        }
         self.last_visible_mesh_instances = visible_draws.len();
         self.last_visible_draw_calls = visible_draws
             .chunk_by(|left, right| {
@@ -536,6 +544,7 @@ impl MeshRenderer {
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
                 start = end;
             }
+            self.particles.draw(&mut pass, &self.globals_group);
         }
         if shadow_spot.is_some() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

@@ -11,9 +11,9 @@ pub mod mesh;
 pub mod model;
 pub mod post;
 pub use post::{
-    negotiate_msaa_sample_count, AntiAliasingMode, AntiAliasingSettings, AutoExposureSettings,
-    ChromaticAberrationSettings, ColorGradingSettings, FilmGrainSettings, PostProcessingSettings,
-    VignetteSettings,
+    negotiate_msaa_sample_count, AmbientOcclusionQuality, AmbientOcclusionSettings,
+    AntiAliasingMode, AntiAliasingSettings, AutoExposureSettings, ChromaticAberrationSettings,
+    ColorGradingSettings, FilmGrainSettings, PostProcessingSettings, VignetteSettings,
 };
 pub mod prefab;
 pub mod preload;
@@ -64,7 +64,7 @@ pub use wgpu;
 
 use crate::mesh::MeshData;
 use crate::model::upload_validated_model;
-use crate::post::{ToneMapper, HDR_FORMAT};
+use crate::post::{AmbientOcclusionFrame, PostProcessRenderOptions, ToneMapper, HDR_FORMAT};
 use crate::preload::{model_key, ModelWarmupCounts, ModelWarmupSnapshot};
 use glam::Mat4;
 use ribbon_app::World;
@@ -181,6 +181,7 @@ struct MeshPass {
     latched_requested_sample_count: Option<u32>,
     aa_reconfiguration_warning: Option<(u32, u32)>,
     last_reported_fxaa: Option<bool>,
+    last_reported_ao: Option<(bool, AmbientOcclusionQuality)>,
     transient_targets: TransientTexturePool,
     tonemapper: Option<(wgpu::TextureFormat, (u32, u32), ToneMapper)>,
     /// Uploaded models keyed by asset handle id and generation.
@@ -223,6 +224,7 @@ impl FramePass for MeshPass {
         self.latched_requested_sample_count = None;
         self.aa_reconfiguration_warning = None;
         self.last_reported_fxaa = None;
+        self.last_reported_ao = None;
         self.tonemapper = None;
         self.transient_targets = TransientTexturePool::default();
         self.models.clear();
@@ -289,7 +291,7 @@ fn compatible_msaa_sample_counts(
 ) -> Vec<u32> {
     let resolve_usages =
         wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
-    let depth_usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+    let depth_usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
     let color_resolve_supported = color.allowed_usages.contains(resolve_usages)
         && color
             .flags
@@ -343,7 +345,7 @@ impl MeshPass {
             );
         } else if requested > 1 {
             eprintln!(
-                "[RENDER3D AA] using {sample_count}x MSAA (HDR resolve and depth attachment capabilities verified)",
+                "[RENDER3D AA] using {sample_count}x MSAA (HDR resolve and sampleable depth capabilities verified)",
             );
         }
         MeshRenderer::new_with_sample_count(target.device, target.queue, HDR_FORMAT, sample_count)
@@ -579,6 +581,8 @@ impl MeshPass {
             resources.streamed_texture_bytes_estimate = stats.standalone_texture_bytes_estimate;
             resources.visible_mesh_instances = stats.visible_mesh_instances;
             resources.visible_draw_calls = stats.visible_draw_calls;
+            resources.particle_instances_drawn = stats.particle_instances_drawn;
+            resources.particle_batches_drawn = stats.particle_batches_drawn;
             resources.shadow_draw_calls = stats.shadow_draw_calls;
             resources.skinned_draws_after_palette_budget = stats.skinned_draws_after_palette_budget;
             resources.skinned_draws_rejected_palette_capacity =
@@ -1771,6 +1775,7 @@ impl MeshPass {
                 point_lights: &extracted.point_lights,
                 fog: extracted.fog,
                 draws: &draws,
+                particles: &extracted.particles,
             };
             if profile_cpu {
                 self.cpu_phases
@@ -1815,25 +1820,62 @@ impl MeshPass {
             .try_resource::<PostProcessingSettings>()
             .copied()
             .unwrap_or_default();
-        if let Some((_, _, tonemapper)) = self.tonemapper.as_mut() {
-            if profile_cpu {
-                self.cpu_phases
-                    .extend(tonemapper.render_profiled_with_settings(
-                        target.device,
-                        target.queue,
-                        target.view,
-                        &post_settings,
-                        fxaa_enabled,
-                        frame,
-                    ));
-            } else {
-                tonemapper.render_with_settings(
-                    target.device,
-                    target.queue,
-                    target.view,
-                    &post_settings,
-                    fxaa_enabled,
+        let ao_settings = world
+            .try_resource::<AmbientOcclusionSettings>()
+            .copied()
+            .unwrap_or_default();
+        let ao_report = (ao_settings.enabled, ao_settings.quality);
+        if self.last_reported_ao != Some(ao_report) {
+            if ao_settings.enabled {
+                eprintln!(
+                    "[RENDER3D AO] enabled: quality={:?}, radius={:.2}, intensity={:.2}",
+                    ao_settings.quality, ao_settings.radius, ao_settings.intensity
                 );
+            } else {
+                eprintln!("[RENDER3D AO] disabled");
+            }
+            self.last_reported_ao = Some(ao_report);
+        }
+        let ao_frame = if ao_settings.enabled {
+            self.renderer.as_ref().and_then(|renderer| {
+                renderer
+                    .depth_view()
+                    .map(|depth_view| AmbientOcclusionFrame {
+                        depth_view,
+                        inverse_view_projection: view_proj.inverse().to_cols_array_2d(),
+                        camera_position: [
+                            camera.transform.translation.x,
+                            camera.transform.translation.y,
+                            camera.transform.translation.z,
+                        ],
+                        fov_y_radians: camera.camera.fov_y,
+                        sample_count: renderer.sample_count(),
+                    })
+            })
+        } else {
+            None
+        };
+        if ao_settings.enabled && ao_frame.is_none() {
+            eprintln!(
+                "[RENDER3D AO] unavailable: main depth attachment was not created for this frame"
+            );
+        }
+        if let Some((_, _, tonemapper)) = self.tonemapper.as_mut() {
+            let phases = tonemapper.render_with_options(
+                target.device,
+                target.queue,
+                target.view,
+                PostProcessRenderOptions {
+                    settings: &post_settings,
+                    fxaa: fxaa_enabled,
+                    ao_settings: &ao_settings,
+                    ao_frame,
+                    profile_cpu,
+                    submitted_frame: frame,
+                },
+            );
+            if profile_cpu {
+                self.cpu_phases.extend(phases);
             }
         }
     }
@@ -1867,7 +1909,7 @@ mod model_warmup_integration_tests {
     use std::path::Path;
 
     #[test]
-    fn msaa_capabilities_intersect_hdr_resolve_and_depth_attachment_support() {
+    fn msaa_capabilities_intersect_hdr_resolve_and_sampled_depth_support() {
         let color = wgpu::TextureFormatFeatures {
             allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -1878,7 +1920,8 @@ mod model_warmup_integration_tests {
                 | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X8,
         };
         let depth = wgpu::TextureFormatFeatures {
-            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
             flags: wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2
                 | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
         };
@@ -1890,7 +1933,8 @@ mod model_warmup_integration_tests {
     #[test]
     fn msaa_falls_back_to_single_sample_without_a_valid_hdr_resolve_path() {
         let depth = wgpu::TextureFormatFeatures {
-            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
             flags: wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
         };
         let no_resolve = wgpu::TextureFormatFeatures {
@@ -1904,11 +1948,22 @@ mod model_warmup_integration_tests {
                 | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
                 | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
         };
+        let color_resolve = wgpu::TextureFormatFeatures {
+            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            flags: wgpu::TextureFormatFeatureFlags::FILTERABLE
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
+        };
         let not_filterable = wgpu::TextureFormatFeatures {
             allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING,
             flags: wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
                 | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
+        };
+        let unsampleable_depth = wgpu::TextureFormatFeatures {
+            allowed_usages: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            flags: wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4,
         };
         assert_eq!(
             super::compatible_msaa_sample_counts(no_resolve, depth),
@@ -1920,6 +1975,10 @@ mod model_warmup_integration_tests {
         );
         assert_eq!(
             super::compatible_msaa_sample_counts(not_filterable, depth),
+            vec![1]
+        );
+        assert_eq!(
+            super::compatible_msaa_sample_counts(color_resolve, unsampleable_depth),
             vec![1]
         );
     }
@@ -2056,6 +2115,7 @@ mod model_warmup_integration_tests {
     }
 
     #[test]
+    #[ignore = "requires a working wgpu adapter; validates GPU model warmup and cache handoff"]
     fn model_warmup_is_gpu_ready_without_placement_and_cache_survives_handoff() {
         let context = match pollster::block_on(GpuContext::new_offscreen(8, 8)) {
             Ok(context) => context,

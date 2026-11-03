@@ -5,6 +5,10 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 
 ## Unreleased
 
+### Engine particles
+
+- Added renderer-neutral particle batch contracts, deterministic CPU emitters and presets, and replaced ATHAR's rain meshes with `ParticleEmitter::rain()`. The weather plugin was removed. GPU visual output remains unverified here.
+
 ### Gamepad input
 
 - Added four-pad button/axis state processing, radial stick and trigger deadzones, trigger hysteresis, gamepad binding sources, threaded gilrs polling, event output, rumble requests, and a virtual raw-event injection path. Native device behavior remains unverified without hardware.

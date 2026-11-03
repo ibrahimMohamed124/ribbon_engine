@@ -2,7 +2,7 @@
 //!
 //! Reusable rendering, asset loading, collision resolution, and input snapshots remain in the
 //! engine. These scripts own this game's player controls, quest state, and village layout. The
-//! engine weather plugin owns rain simulation; ATHAR only enables it for the village phase.
+//! engine particle emitter is spawned by ATHAR when the village becomes active.
 
 pub mod gameplay;
 pub mod player;
@@ -50,9 +50,8 @@ pub struct AdventureState {
     pub village_first_physics_profile_logged: bool,
     /// Logs the one-shot 3D transform propagation sample after destination activation.
     pub village_transform_profile_logged: bool,
-    /// Logs the one-time rain particle-allocation batch when weather activates in the village.
-    pub village_rain_profile_logged: bool,
     pub camera_entity: Entity,
+    pub rain_emitter: Option<Entity>,
     pub player_body_entity: Entity,
     pub room_entities: Vec<Entity>,
     /// Room prop lights to remove when leaving the room. The player flashlight is deliberately
@@ -101,8 +100,8 @@ impl AdventureState {
             transition_preparation_ms: None,
             village_first_physics_profile_logged: false,
             village_transform_profile_logged: false,
-            village_rain_profile_logged: false,
             camera_entity,
+            rain_emitter: None,
             player_body_entity,
             room_entities,
             room_lights,

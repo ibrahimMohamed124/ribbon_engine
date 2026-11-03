@@ -14,6 +14,9 @@ use std::sync::{Arc, OnceLock, Weak};
 use std::time::Instant;
 use wgpu::util::DeviceExt;
 
+#[path = "particles.rs"]
+mod particles;
+
 /// Depth format used by the mesh pass.
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -227,6 +230,8 @@ pub struct Scene<'a> {
     pub fog: FogSettings,
     /// Objects to draw.
     pub draws: &'a [Draw],
+    /// Extracted particle batches drawn after mesh instances.
+    pub particles: &'a [ribbon_render_contracts::ParticleBatch],
 }
 
 #[repr(C)]
@@ -362,6 +367,10 @@ pub struct MeshRendererResourceStats {
     pub visible_mesh_instances: usize,
     /// Number of grouped indexed draw calls issued by the main color pass.
     pub visible_draw_calls: usize,
+    /// Number of particle instances drawn in the latest main pass.
+    pub particle_instances_drawn: usize,
+    /// Number of particle batches drawn in the latest main pass.
+    pub particle_batches_drawn: usize,
     /// Number of grouped indexed draw calls issued by the directional shadow pass.
     pub shadow_draw_calls: usize,
     /// Skinned draws retained for the current frame's color/shadow submissions.
@@ -458,6 +467,9 @@ pub struct MeshRenderer {
     peak_resource_bytes_estimate: u64,
     last_visible_mesh_instances: usize,
     last_visible_draw_calls: usize,
+    last_particle_instances_drawn: usize,
+    last_particle_batches_drawn: usize,
+    particles: particles::ParticleGpu,
     last_shadow_draw_calls: usize,
     last_skinned_draws_after_palette_budget: usize,
     last_skinned_draws_rejected_palette_capacity: usize,
@@ -477,6 +489,12 @@ impl MeshRenderer {
     /// Actual sample count used by the color pipelines and matching depth target.
     pub fn sample_count(&self) -> u32 {
         self.sample_count
+    }
+
+    /// Main scene depth view used by the screen-space ambient-occlusion post pass.
+    /// The view is valid until the renderer is resized or its device is lost.
+    pub(crate) fn depth_view(&self) -> Option<&wgpu::TextureView> {
+        self.depth.as_ref().map(|depth| &depth.view)
     }
 
     /// Generation-checked handle for the permanent built-in cube mesh (slot zero).

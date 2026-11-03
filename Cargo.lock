@@ -155,10 +155,10 @@ dependencies = [
  "ribbon_platform",
  "ribbon_plugin_audio",
  "ribbon_plugin_gltf",
+ "ribbon_plugin_particles",
  "ribbon_plugin_physics",
  "ribbon_plugin_render3d",
  "ribbon_plugin_streaming",
- "ribbon_plugin_weather",
  "ribbon_plugins",
  "ribbon_render",
  "ribbon_scene",
@@ -2743,6 +2743,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ribbon_plugin_particles"
+version = "0.1.0"
+dependencies = [
+ "glam 0.30.10",
+ "ribbon_app",
+ "ribbon_ecs",
+ "ribbon_plugins",
+ "ribbon_render_contracts",
+ "ribbon_scene",
+]
+
+[[package]]
 name = "ribbon_plugin_physics"
 version = "0.1.0"
 dependencies = [
@@ -2795,17 +2807,6 @@ dependencies = [
  "ribbon_scene",
  "ron",
  "serde",
-]
-
-[[package]]
-name = "ribbon_plugin_weather"
-version = "0.1.0"
-dependencies = [
- "glam 0.30.10",
- "ribbon_app",
- "ribbon_ecs",
- "ribbon_plugins",
- "ribbon_render_contracts",
 ]
 
 [[package]]

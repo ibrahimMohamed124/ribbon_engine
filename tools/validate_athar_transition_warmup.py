@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import os
 import re, struct, sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +21,6 @@ preload = read('plugins/render3d/src/preload.rs')
 model = read('plugins/render3d/src/model.rs')
 extract = read('plugins/render3d/src/extract.rs')
 window = read('crates/render/src/gpu_window.rs')
-weather = read('plugins/weather/src/lib.rs')
 physics = read('plugins/physics/src/runtime.rs')
 csv = read('crates/render/src/profiling/csv.rs')
 
@@ -56,15 +56,14 @@ check('warmup profiling columns appended to CSV schema', all(f'"{x}"' in csv for
 check('scene extraction profile is conditional on profiling', 'RenderProfileRecorder' in extract and 'extraction_cpu_time_ns' in extract)
 check('physics timings are explicitly gated to a short window', 'timing_enabled' in physics and '.then(std::time::Instant::now)' in physics and 'last_reconcile_time_ns' in physics and 'last_fixed_step_time_ns' in physics)
 check('transition arms one-shot physics timing for next reconcile/fixed step', 'diagnostics.timing_enabled = true;' in gameplay and 'diagnostics.last_reconcile_time_ns = 0;' in gameplay)
-check('rain allocation timing is measured only on creation batches', 'if created_count == 0' in weather and 'Instant::now()' in weather and 'RainDiagnostics' in weather)
-check('ATHAR reports first village rain allocation batch', 'village_rain_profile_logged' in gameplay and 'rain particle batch' in gameplay)
+check('ATHAR spawns the engine rain emitter', 'ParticleEmitter::rain()' in gameplay)
+check('weather plugin removed', not os.path.exists(os.path.join('plugins', 'weather')))
 check('window clear executes every frame independently of scene draws', 'struct WindowClearNode' in window and 'clear_view(target.device, target.queue, target.view, color);' in window)
 check('transition regression test is present', 'village_commit_requires_ready_state_and_room_phase' in gameplay)
 check('transition regression rejects reentrant commit states', 'VillageTransitionState::CommittingTransition' in gameplay and 'VillageTransitionState::VillageActive' in gameplay)
 check('GPU warmup has a no-placement and cache-handoff integration test', 'model_warmup_is_gpu_ready_without_placement_and_cache_survives_handoff' in render)
 check('empty-scene render pass preserves previously cleared output test exists', 'empty_scene_mesh_pass_preserves_the_window_clear_color' in render)
 check('early-return frames reset per-frame model upload diagnostic', 'self.model_gpu_uploads_this_frame = 0;' in render_runtime and 'early_return_frame_resets_per_frame_model_upload_diagnostic' in render)
-check('weather allocation regression test is present', 'rain_particle_creation_batch_is_measured_once_and_then_reuses_entities' in weather)
 check('model upload cache-lifetime regression test is present', 'model_upload_does_not_allocate_gpu_meshes_for_unplaced_primitives' in model)
 check('village spawn preflights before entity creation', 'missing_village_handle_fails_preflight_without_spawning_any_entities' in village)
 check('generic streaming render staging is present and used for Region-owned entities', 'StagedRender' in render and 'StagedRender' in read('plugins/render3d/src/extract.rs') and 'RegionState::Ready' in gameplay)

@@ -5,7 +5,12 @@
 
 use glam::{Mat4, Vec3};
 
+pub mod particles;
 mod reflection;
+pub use particles::{
+    ParticleBatch, ParticleBillboard, ParticleBlendMode, ParticleInstance, ParticleRenderData,
+    ParticleShape,
+};
 pub use ribbon_scene::{GlobalTransform3D, Transform3D};
 
 /// Perspective camera. The first entity with a `Camera3D` and local/global 3D transforms is used.

@@ -20,7 +20,7 @@ ribbon_plugin_gltf = { path = "../../plugins/gltf" }
 ribbon_plugin_physics = { path = "../../plugins/physics" }
 ribbon_plugin_render3d = { path = "../../plugins/render3d" }
 ribbon_plugin_streaming = { path = "../../plugins/streaming" }
-ribbon_plugin_weather = { path = "../../plugins/weather" }
+ribbon_plugin_particles = { path = "../../plugins/particles" }
 ribbon_plugin_audio = { path = "../../plugins/audio", default-features = false }
 ron = "0.10"
 serde = { version = "1", features = ["derive"] }

@@ -57,6 +57,7 @@ impl Harness {
                 point_lights: &[],
                 fog: FogSettings::default(),
                 draws,
+                particles: &[],
             },
         );
         self.context.readback().expect("readback").pixels
@@ -109,6 +110,7 @@ fn vertex_attributes_match_the_interleaved_joint_and_weight_storage_layout() {
 }
 
 #[test]
+#[ignore = "requires a working wgpu adapter; validates GPU pipeline creation"]
 fn renderer_creates_alpha_and_double_sided_pipeline_variants_when_gpu_is_available() {
     // Pipeline creation performs wgpu's bind-group/layout validation. The separate ignored
     // readback test below validates the visible MASK/BLEND/double-sided results.
@@ -129,6 +131,9 @@ fn lighting_post_and_shadow_wgsl_shaders_validate_without_a_gpu_adapter() {
         include_str!("../../shaders/tonemap_unorm.wgsl"),
         include_str!("../../shaders/tonemap_post.wgsl"),
         include_str!("../../shaders/auto_exposure.wgsl"),
+        include_str!("../../shaders/gtao.wgsl"),
+        include_str!("../../shaders/gtao_msaa.wgsl"),
+        include_str!("../../shaders/particles.wgsl"),
     ];
     for (index, source) in shaders.iter().enumerate() {
         let module = naga::front::wgsl::parse_str(source)
@@ -192,6 +197,7 @@ fn skinned_vertex_palette_moves_geometry_in_the_color_pass_on_gpu() {
         point_lights: &[],
         fog: FogSettings::default(),
         draws: &[],
+        particles: &[],
     };
     let skin = Arc::<[Mat4]>::from(vec![
         Mat4::from_translation(Vec3::new(0.4, 0.0, 0.0)),
@@ -388,6 +394,7 @@ fn frustum_rejects_objects_behind_the_camera_and_keeps_visible_objects() {
 }
 
 #[test]
+#[ignore = "requires a working wgpu adapter; validates rendered pixels"]
 fn cube_is_drawn_in_the_center_and_background_is_untouched() {
     let Some(mut h) = harness() else { return };
     let pixels = h.draw(&[cube(Mat4::IDENTITY, [1.0, 0.0, 0.0])]);
@@ -402,6 +409,7 @@ fn cube_is_drawn_in_the_center_and_background_is_untouched() {
 }
 
 #[test]
+#[ignore = "requires a working wgpu adapter; validates the main depth pass"]
 fn depth_test_keeps_the_nearer_cube_in_front() {
     let Some(mut h) = harness() else { return };
     let far = Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0));
@@ -418,6 +426,7 @@ fn depth_test_keeps_the_nearer_cube_in_front() {
 }
 
 #[test]
+#[ignore = "requires a working wgpu adapter; validates material texture output"]
 fn base_color_texture_shows_up_on_the_surface() {
     let Some(mut h) = harness() else { return };
     // 2x2 checker: red, green / blue, white.
@@ -458,6 +467,7 @@ fn base_color_texture_shows_up_on_the_surface() {
 }
 
 #[test]
+#[ignore = "requires a working wgpu adapter; writes and checks a rendered PNG"]
 fn spotlight_only_corridor_writes_a_headless_png() {
     const WIDTH: u32 = 160;
     const HEIGHT: u32 = 90;
@@ -558,6 +568,7 @@ fn spotlight_only_corridor_writes_a_headless_png() {
                     height_falloff: 0.08,
                 },
                 draws: &draws,
+                particles: &[],
             },
         );
         context
@@ -884,6 +895,88 @@ fn gltf_mask_discards_texture_alpha_and_blend_composites_back_to_front() {
 }
 
 #[test]
+#[ignore = "requires a real wgpu adapter; validates the single-sample GTAO depth path"]
+fn gtao_single_sample_depth_compute_runs_on_gpu() {
+    use crate::post::{
+        AmbientOcclusionSettings, HdrTarget, PostProcessRenderOptions, PostProcessingSettings,
+        ToneMapper, HDR_FORMAT,
+    };
+
+    let context = pollster::block_on(GpuContext::new_offscreen(SIZE, SIZE))
+        .expect("GTAO GPU test requires a working wgpu adapter");
+    let depth_features = context
+        .adapter()
+        .get_texture_format_features(crate::renderer::DEPTH_FORMAT);
+    assert!(
+        depth_features.allowed_usages.contains(
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+        ),
+        "adapter depth format cannot be sampled by the GTAO compute path"
+    );
+    let hdr_target = HdrTarget::new(context.device(), (SIZE, SIZE));
+    let mut renderer =
+        MeshRenderer::new_with_sample_count(context.device(), context.queue(), HDR_FORMAT, 1);
+    let eye = Transform3D::looking_at(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, Vec3::Y);
+    let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
+    let camera = Camera3D::default();
+    let sun = SunLight::default();
+    let scene = Scene {
+        view_proj: camera.projection(1.0) * view,
+        camera_position: eye.translation,
+        sun: &sun,
+        spot_lights: &[],
+        point_lights: &[],
+        fog: FogSettings::default(),
+        draws: &[cube(Mat4::IDENTITY, [0.9, 0.65, 0.3])],
+        particles: &[],
+    };
+    renderer.render(
+        context.device(),
+        context.queue(),
+        &hdr_target.view,
+        (SIZE, SIZE),
+        &scene,
+    );
+    let ao_frame = crate::post::AmbientOcclusionFrame {
+        depth_view: renderer
+            .depth_view()
+            .expect("single-sample depth target should exist"),
+        inverse_view_projection: scene.view_proj.inverse().to_cols_array_2d(),
+        camera_position: [eye.translation.x, eye.translation.y, eye.translation.z],
+        fov_y_radians: camera.fov_y,
+        sample_count: 1,
+    };
+    let mut tonemapper = ToneMapper::new(
+        context.device(),
+        &hdr_target.view,
+        wgpu::TextureFormat::Rgba8Unorm,
+        (SIZE, SIZE),
+    );
+    let post_settings = PostProcessingSettings::default();
+    let ao_settings = AmbientOcclusionSettings::cinematic();
+    tonemapper.render_with_options(
+        context.device(),
+        context.queue(),
+        context.target().view(),
+        PostProcessRenderOptions {
+            settings: &post_settings,
+            fxaa: false,
+            ao_settings: &ao_settings,
+            ao_frame: Some(ao_frame),
+            profile_cpu: false,
+            submitted_frame: 1,
+        },
+    );
+    let pixels = context.readback().expect("GTAO output readback").pixels;
+    assert!(
+        pixels.iter().any(|pixel| {
+            ((pixel >> 16) & 0xff) > 1 || ((pixel >> 8) & 0xff) > 1 || (pixel & 0xff) > 1
+        }),
+        "single-sample GTAO plus tone mapping produced an all-black image"
+    );
+}
+
+#[test]
 #[ignore = "requires a real GPU adapter with an MSAA resolve-capable HDR/depth format pair"]
 fn multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu() {
     use crate::post::{negotiate_msaa_sample_count, HdrTarget, ToneMapper, HDR_FORMAT};
@@ -907,9 +1000,10 @@ fn multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu() {
                         .flags
                         .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE)
                     && color_features.flags.sample_count_supported(*count)
-                    && depth_features
-                        .allowed_usages
-                        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+                    && depth_features.allowed_usages.contains(
+                        wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                    )
                     && depth_features.flags.sample_count_supported(*count))
         })
         .collect();
@@ -960,6 +1054,7 @@ fn multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu() {
         point_lights: &[],
         fog: FogSettings::default(),
         draws: &[cube(Mat4::IDENTITY, [1.0, 0.35, 0.2])],
+        particles: &[],
     };
     renderer.render_with_skinning_resolve(
         RenderTarget {
@@ -980,13 +1075,31 @@ fn multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu() {
         (SIZE, SIZE),
         true,
     );
-    tonemapper.render_with_settings(
+    let ao_frame = crate::post::AmbientOcclusionFrame {
+        depth_view: renderer
+            .depth_view()
+            .expect("main scene depth target should exist after the MSAA mesh pass"),
+        inverse_view_projection: scene.view_proj.inverse().to_cols_array_2d(),
+        camera_position: [eye.translation.x, eye.translation.y, eye.translation.z],
+        fov_y_radians: Camera3D::default().fov_y,
+        sample_count,
+    };
+    let post_settings = crate::post::PostProcessingSettings::cinematic();
+    let ao_settings = crate::post::AmbientOcclusionSettings::cinematic();
+    let phases = tonemapper.render_with_options(
         context.device(),
         context.queue(),
         context.target().view(),
-        &crate::post::PostProcessingSettings::cinematic(),
-        true,
+        crate::post::PostProcessRenderOptions {
+            settings: &post_settings,
+            fxaa: true,
+            ao_settings: &ao_settings,
+            ao_frame: Some(ao_frame),
+            profile_cpu: false,
+            submitted_frame: 1,
+        },
     );
+    assert!(phases.is_empty());
     let pixels = context
         .readback()
         .expect("resolved MSAA/FXAA/post-process readback")
@@ -995,6 +1108,6 @@ fn multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu() {
         pixels.iter().any(|pixel| {
             ((pixel >> 16) & 0xff) > 1 || ((pixel >> 8) & 0xff) > 1 || (pixel & 0xff) > 1
         }),
-        "MSAA resolve followed by adaptive exposure, FXAA and display effects produced an all-black RGB image"
+        "MSAA resolve followed by adaptive exposure, GTAO, FXAA and display effects produced an all-black RGB image"
     );
 }

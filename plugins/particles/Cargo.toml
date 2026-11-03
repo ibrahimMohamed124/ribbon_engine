@@ -1,5 +1,5 @@
 [package]
-name = "ribbon_plugin_weather"
+name = "ribbon_plugin_particles"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,5 +7,6 @@ edition = "2021"
 ribbon_app = { path = "../../crates/app" }
 ribbon_ecs = { path = "../../crates/ecs" }
 ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_scene = { path = "../../crates/scene" }
 ribbon_render_contracts = { path = "../../crates/render_contracts" }
 glam = "0.30"

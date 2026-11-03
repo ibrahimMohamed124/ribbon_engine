@@ -17,6 +17,7 @@ use ribbon_assets::Handle;
 use ribbon_plugin_gltf::ModelAsset;
 use ribbon_plugins::Plugin;
 use ribbon_render::profiling::RenderProfileRecorder;
+use ribbon_render_contracts::{ParticleBatch, ParticleRenderData};
 use ribbon_scene::GlobalTransform3D;
 use std::sync::Arc;
 use std::time::Instant;
@@ -79,6 +80,8 @@ pub struct ExtractedScene3D {
     pub spot_lights: Vec<SpotLight>,
     /// World-space point lights; the renderer ranks them and consumes the strongest eight.
     pub point_lights: Vec<PointLight>,
+    /// Renderer-neutral particle batches copied from the particle simulation.
+    pub particles: Vec<ParticleBatch>,
     /// Exponential atmosphere settings.
     pub fog: FogSettings,
     /// App frame counter used by tools to correlate diagnostics with a frame.
@@ -99,7 +102,13 @@ pub fn extract_scene_3d(world: &mut World) {
         .copied()
         .unwrap_or_default();
 
+    let particles = if world.try_resource::<ParticleRenderData>().is_some() {
+        world.resource_scope::<ParticleRenderData, _>(|_, data| std::mem::take(&mut data.batches))
+    } else {
+        Vec::new()
+    };
     world.resource_scope::<ExtractedScene3D, _>(|world, extracted| {
+        extracted.particles = particles;
         extracted.camera = world
             .query::<(&GlobalTransform3D, &Camera3D, Option<&StagedRender>)>()
             .iter()
