@@ -1,0 +1,16 @@
+[package]
+name = "ui_showcase"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+ribbon_app = { path = "../../crates/app" }
+ribbon_ecs = { path = "../../crates/ecs" }
+ribbon_events = { path = "../../crates/events" }
+ribbon_platform = { path = "../../crates/platform" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_render = { path = "../../crates/render" }
+ribbon_scene = { path = "../../crates/scene" }
+ribbon_ui = { path = "../../crates/ui" }
+ribbon_plugin_render3d = { path = "../../plugins/render3d" }

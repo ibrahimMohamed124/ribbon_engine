@@ -5,6 +5,8 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 
 ## Unreleased
 
+- Added `ribbon_ui`, bundled Noto fonts with cosmic-text shaping, basic immediate-mode widgets, a GPU geometry overlay pass, and the `ui_showcase` example. Glyph GPU rendering and full IME/focus behavior remain incomplete.
+
 ### Gameplay AI
 
 - Added generic ECS state machines, resumable behavior trees, grid A* navigation with smoothing and physics baking, steering output, and budgeted line-of-sight perception. Navmesh and multi-floor navigation remain out of scope.

@@ -161,6 +161,14 @@ external = ["serde", "ron", "directories", "crc32fast", "tempfile"]
 workspace = ["ribbon_app", "ribbon_ecs", "ribbon_plugins", "ribbon_scene", "ribbon_plugin_physics"]
 external = ["glam", "pathfinding", "serde", "ron"]
 
+[allowed."ribbon_ui"]
+workspace = ["ribbon_app", "ribbon_ecs", "ribbon_plugins", "ribbon_platform", "ribbon_render", "ribbon_math"]
+external = ["cosmic-text", "wgpu", "bytemuck", "naga"]
+
+[allowed."ui_showcase"]
+workspace = ["ribbon_app", "ribbon_ecs", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_ui", "ribbon_plugin_render3d"]
+external = []
+
 [allowed."studs_voxel_gpu"]
 workspace = ["ribbon_plugin_render3d", "studs_voxel"]
 external = []

@@ -1,0 +1,18 @@
+[package]
+name = "ribbon_ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_app = { path = "../app" }
+ribbon_ecs = { path = "../ecs" }
+ribbon_plugins = { path = "../plugins" }
+ribbon_platform = { path = "../platform" }
+ribbon_render = { path = "../render", default-features = false, features = ["gpu"] }
+ribbon_math = { path = "../math" }
+cosmic-text = "0.12"
+wgpu = "25.0.2"
+bytemuck = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+naga = { version = "25.0.1", features = ["wgsl-in"] }

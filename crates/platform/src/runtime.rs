@@ -147,6 +147,10 @@ pub struct Focused(pub bool);
 pub struct WindowHandle(pub std::sync::Arc<winit::window::Window>);
 
 impl WindowHandle {
+    /// Return the native window's OS scaling factor.
+    pub fn scale_factor(&self) -> f64 {
+        self.0.scale_factor()
+    }
     /// Change the window icon and, on Windows, its taskbar icon.
     pub fn set_icon(&self, icon: winit::window::Icon) {
         crate::window::set_window_icon(&self.0, Some(icon));

@@ -341,6 +341,7 @@ impl OffscreenVoxelRenderer {
                     spot_lights: &[],
                     point_lights: &[],
                     fog: FogSettings::default(),
+                    particles: &[],
                     draws: &draws,
                 };
                 self.renderer.render(

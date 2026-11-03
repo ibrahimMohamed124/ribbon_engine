@@ -20,3 +20,4 @@
 - [`0016-particle-system.md`](0016-particle-system.md) — engine particle simulation and renderer-owned particle draws.
 - [`0017-save-system.md`](0017-save-system.md) — versioned game-owned save sections and atomic slot files.
 - [`0018-ai-plugin.md`](0018-ai-plugin.md) — reusable FSM, behavior-tree, grid-navigation, and sight services.
+- [`0019-ui-system.md`](0019-ui-system.md) — immediate-mode game UI, Unicode shaping, and window overlay pass.
