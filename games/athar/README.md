@@ -16,7 +16,7 @@ cargo run --release -p athar
 
 ## Audio
 
-ATHAR registers `AudioPlugin` and attempts to initialize the Kira/CPAL `ThreadedAudioSink` backend. When no output device is available, the startup log reports the issue and gameplay continues silently. The listener is attached to the first-person camera and uses `GlobalTransform3D`; room-to-village ambience changes once per phase, while footsteps are cadence-based and door/key/save-point sounds are emitted only on their corresponding interactions. Original procedural indoor/rain ambience and gameplay cues are bundled under `assets/audio/` and credited in [`assets/CREDITS.md`](assets/CREDITS.md). The current door is a one-way opening door, so the close cue is packaged but not played; the monster remains a static placeholder, so its future movement cue is also not played. The save-point interaction is atmospheric and session-only; persistence is not implemented.
+ATHAR registers `AudioPlugin` and attempts to initialize the Kira/CPAL `ThreadedAudioSink` backend. When no output device is available, the startup log reports the issue and gameplay continues silently. The listener is attached to the first-person camera and uses `GlobalTransform3D`; room-to-village ambience changes once per phase, while footsteps are cadence-based and door/key/save-point sounds are emitted only on their corresponding interactions. Original procedural indoor/rain ambience and gameplay cues are bundled under `assets/audio/` and credited in [`assets/CREDITS.md`](assets/CREDITS.md). The current door is a one-way opening door, so the close cue is packaged but not played; the monster remains a static placeholder, so its future movement cue is also not played. The save-point interaction writes the `autosave` slot through `ribbon_save`; `--continue` loads it at startup. Room progress is restored, while village saves return the player to the room start because village restoration is not implemented yet.
 
 ## Controls
 
@@ -91,7 +91,7 @@ python tools/perf/render_profile_report.py target/profiles/horror-slice.csv --ou
 ## Scope and remaining limitations
 
 - The monster is still a static silhouette; skeletal animation, monster AI, combat, and scripted scares are not part of this slice.
-- The key/door quest currently transitions one-way into the village; there is no return door or persistence/save serialization.
+- The key/door quest currently transitions one-way into the village; there is no return door, and village scene restoration is not implemented.
 - Rain is a visual weather effect; raindrop collision, wet-surface simulation, thunder audio, and dynamic puddles are not implemented.
 - The village layout is a deliberate hand-authored grid, not procedural terrain streaming. All village assets are loaded as a finite scene.
 - `SurfaceShader` callbacks remain CPU-only; this game's 3D scene uses the renderer's glTF PBR material data.

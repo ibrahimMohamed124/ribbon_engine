@@ -102,7 +102,7 @@ workspace = ["ribbon_assets"]
 external = ["glam", "gltf"]
 
 [allowed."athar"]
-workspace = ["ribbon_app", "ribbon_assets", "ribbon_ecs", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_gltf", "ribbon_plugin_physics", "ribbon_plugin_render3d", "ribbon_plugin_streaming", "ribbon_plugin_particles", "ribbon_plugin_audio"]
+workspace = ["ribbon_app", "ribbon_assets", "ribbon_ecs", "ribbon_events", "ribbon_platform", "ribbon_plugins", "ribbon_render", "ribbon_scene", "ribbon_plugin_gltf", "ribbon_plugin_physics", "ribbon_plugin_render3d", "ribbon_plugin_streaming", "ribbon_plugin_particles", "ribbon_plugin_audio", "ribbon_save"]
 external = ["ron", "serde"]
 
 [allowed."model_viewer"]
@@ -152,6 +152,10 @@ external = ["glam"]
 [allowed."ribbon_plugin_particles"]
 workspace = ["ribbon_app", "ribbon_ecs", "ribbon_plugins", "ribbon_scene", "ribbon_render_contracts"]
 external = ["glam"]
+
+[allowed."ribbon_save"]
+workspace = ["ribbon_app", "ribbon_ecs", "ribbon_plugins"]
+external = ["serde", "ron", "directories", "crc32fast", "tempfile"]
 
 [allowed."studs_voxel_gpu"]
 workspace = ["ribbon_plugin_render3d", "studs_voxel"]

@@ -6,7 +6,7 @@
 pub mod state;
 pub mod time;
 
-use ribbon_events::{EventCursor, Events, WorldEventsExt};
+pub use ribbon_events::{EventCursor, Events, WorldEventsExt};
 use ribbon_schedule::Schedule;
 use std::time::Duration;
 

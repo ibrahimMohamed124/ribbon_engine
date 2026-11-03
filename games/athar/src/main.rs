@@ -5,6 +5,7 @@
 //! Optional profile capture: `cargo run -p athar --release -- --frames 1800 --profile-csv target/profiles/athar.csv`.
 
 mod audio;
+mod save;
 mod scripts;
 
 use ribbon_app::{App, AppExit, Stage, Time, World};
@@ -30,6 +31,7 @@ use ribbon_render::gpu_window::{
     ClearColor, GpuWindow, GpuWindowPlugin, WindowTextOverlay, WindowTextOverlayPass,
 };
 use ribbon_render::profiling::RenderProfilePlugin;
+use ribbon_save::{AppSaveExt, SaveConfig, SavePlugin};
 use ribbon_scene::ScenePlugin;
 use scripts::player::{
     first_person_controller, submit_character_movement, sync_player_camera, FirstPersonController,
@@ -237,6 +239,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut profile_warmup = 120_u64;
     let mut assets_override: Option<PathBuf> = None;
     let mut validate_assets_only = false;
+    let mut continue_game = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -262,6 +265,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 ));
             }
             "--validate-assets" => validate_assets_only = true,
+            "--continue" => continue_game = true,
             "--help" | "-h" => {
                 println!(concat!(
                     "Ribbon Horror Slice\n\n",
@@ -278,6 +282,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     "  --profile-warmup N Frames excluded before capture\n",
                     "  --assets PATH      Use this packaged asset directory\n",
                     "  --validate-assets  Validate runtime assets, then exit\n",
+                    "  --continue        Load the autosave slot if it exists\n",
                     "  -h, --help Show this help\n"
                 ));
                 return Ok(());
@@ -301,6 +306,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let streaming_profile_enabled = profile_csv.is_some();
     let mut app = App::new();
+    app.insert_resource(save::RoomStartPosition(Vec3::from_array(room.player_spawn)));
     app.insert_resource(PlatformConfig {
         title: "Ribbon | Horror Slice".to_owned(),
         width: 1280,
@@ -333,6 +339,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Native window / scene / asset / mesh rendering path; no offscreen readback bridge.
     app.add_plugin(PlatformPlugin)?;
     app.add_plugin(ScenePlugin)?;
+    app.add_plugin(SavePlugin {
+        config: SaveConfig {
+            qualifier: "dev".into(),
+            organization: "Ribbon".into(),
+            application: "ATHAR".into(),
+            game_id: "athar".into(),
+            root_override: None,
+        },
+    })?;
+    app.register_save_section::<save::AtharProgress>();
     // These producers must be registered before PhysicsPlugin so intent is consumed in the same
     // engine fixed step and mouse-look is current before physics reconciliation.
     app.add_system(Stage::PreUpdate, first_person_controller);
@@ -647,6 +663,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_plugin(ribbon_plugin_particles::ParticlePlugin)?;
     app.add_system(Stage::Update, report_asset_failures);
     app.add_system(Stage::Update, enforce_frame_limit);
+    if continue_game {
+        app.add_system(Stage::Startup, save::request_continue);
+    }
     app.build()?.run();
     Ok(())
 }

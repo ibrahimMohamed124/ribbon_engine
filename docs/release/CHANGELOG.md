@@ -5,6 +5,10 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 
 ## Unreleased
 
+### Save/load
+
+- Added versioned save sections, CRC-checked RON slot files, atomic replacement with backup recovery, section migrations, and ATHAR autosave/continue support. Save I/O remains synchronous; village restoration is limited.
+
 ### Engine particles
 
 - Added renderer-neutral particle batch contracts, deterministic CPU emitters and presets, and replaced ATHAR's rain meshes with `ParticleEmitter::rain()`. The weather plugin was removed. GPU visual output remains unverified here.

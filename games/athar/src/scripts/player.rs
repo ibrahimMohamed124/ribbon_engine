@@ -20,7 +20,7 @@ pub(crate) const PLAYER_CAMERA_OFFSET: f32 = 0.79;
 
 /// Game-specific player input/collision state. Collision shapes and queries belong to Rapier.
 pub(crate) struct FirstPersonController {
-    pub(super) yaw: f32,
+    pub(crate) yaw: f32,
     pub(super) pitch: f32,
     pub(crate) player_entity: Option<Entity>,
     /// Keep the body on the room side of the exit until all village models are GPU-ready.

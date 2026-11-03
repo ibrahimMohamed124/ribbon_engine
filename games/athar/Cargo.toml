@@ -22,5 +22,6 @@ ribbon_plugin_render3d = { path = "../../plugins/render3d" }
 ribbon_plugin_streaming = { path = "../../plugins/streaming" }
 ribbon_plugin_particles = { path = "../../plugins/particles" }
 ribbon_plugin_audio = { path = "../../plugins/audio", default-features = false }
+ribbon_save = { path = "../../crates/save" }
 ron = "0.10"
 serde = { version = "1", features = ["derive"] }

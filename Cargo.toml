@@ -14,6 +14,7 @@ members = [
   "crates/scene",
   "crates/render",
   "crates/render_contracts",
+  "crates/save",
   "crates/commands",
   "crates/editor",
   "games/studs/crates/studs_voxel",

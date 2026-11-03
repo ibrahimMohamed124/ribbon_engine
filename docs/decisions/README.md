@@ -18,3 +18,4 @@
 - [`0014-app-states.md`](0014-app-states.md) — typed state resources, deferred transitions, and hooks.
 - [`0015-gamepad-backend.md`](0015-gamepad-backend.md) — threaded gilrs polling and backend-neutral gamepad processing.
 - [`0016-particle-system.md`](0016-particle-system.md) — engine particle simulation and renderer-owned particle draws.
+- [`0017-save-system.md`](0017-save-system.md) — versioned game-owned save sections and atomic slot files.

@@ -1,0 +1,16 @@
+[package]
+name = "ribbon_save"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_app = { path = "../app" }
+ribbon_ecs = { path = "../ecs" }
+ribbon_plugins = { path = "../plugins" }
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.10"
+directories = "5"
+crc32fast = "1"
+
+[dev-dependencies]
+tempfile = "3"

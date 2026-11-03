@@ -4,7 +4,7 @@ use super::player::{FirstPersonController, PLAYER_CAMERA_OFFSET};
 use super::village;
 use super::{AdventureState, GamePhase, VillageTransitionState};
 use crate::audio::{self, SOUND_DOOR_LOCKED, SOUND_DOOR_OPEN, SOUND_KEY_PICKUP, SOUND_SAVE_POINT};
-use ribbon_app::{Time, World};
+use ribbon_app::{Time, World, WorldEventsExt};
 use ribbon_platform::input::Key;
 use ribbon_platform::Input;
 use ribbon_plugin_render3d::glam::{Quat, Vec3};
@@ -670,10 +670,11 @@ pub fn gameplay_update(world: &mut World) {
                             state.save_point_position + Vec3::Y * 0.7,
                             0.85,
                         );
-                        state.set_message(
-                            "The lantern answers with a quiet chime. Checkpoint is session-only.",
-                            4.0,
-                        );
+                        world.send_event(ribbon_save::SaveRequest {
+                            slot: "autosave".into(),
+                            label: "Save point".into(),
+                        });
+                        state.set_message("Progress saved", 4.0);
                     }
                     RoomInteraction::LockedDoor => {
                         audio::emit_spatial(world, SOUND_DOOR_LOCKED, state.door_position, 0.78);
