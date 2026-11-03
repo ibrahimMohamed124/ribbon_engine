@@ -6,7 +6,8 @@ game identity, format/version checks, migrations, atomic replacement, backups, l
 
 Loading parses and migrates every registered section before invoking any apply closure, preventing
 partial application from missing sections or decode/migration failures. A corrupt current file can
-fall back to its `.bak` copy. Saves run synchronously on the main thread.
+fall back to its `.bak` copy. A backup-only slot is also recoverable when an interruption occurs after
+the previous main file has been renamed but before the temporary file becomes the new main file. Saves run synchronously on the main thread.
 
 ATHAR's `athar.progress` section records quest flags, door opening progress, player pose, and yaw.
 Village saves currently restore room progress flags and return the player to the room start; full

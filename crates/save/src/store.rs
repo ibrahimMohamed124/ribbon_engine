@@ -57,10 +57,28 @@ fn parse(path: &Path) -> Result<Envelope, SaveError> {
     ron::from_str(body).map_err(|e| SaveError::Ron(e.to_string()))
 }
 fn parse_with_backup(path: &Path, world: &mut World) -> Result<Envelope, SaveError> {
+    let backup = path.with_extension("rsav.bak");
+    if !path.exists() {
+        if !backup.exists() {
+            return Err(SaveError::NoSuchSlot(
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+            ));
+        }
+        world.resource_mut::<ribbon_app::LogBuffer>().push(
+            LogLevel::Warn,
+            format!(
+                "save `{}` is missing; recovering from backup",
+                path.display()
+            ),
+        );
+        return parse(&backup);
+    }
     match parse(path) {
         Ok(envelope) => Ok(envelope),
         Err(error @ (SaveError::Corrupt(_) | SaveError::Crc | SaveError::Ron(_))) => {
-            let backup = path.with_extension("rsav.bak");
             if backup.exists() {
                 world.resource_mut::<ribbon_app::LogBuffer>().push(
                     LogLevel::Warn,
@@ -144,9 +162,6 @@ pub fn save_to_slot(world: &World, slot: &str, label: &str) -> Result<SaveMeta, 
 }
 pub fn load_from_slot(world: &mut World, slot: &str) -> Result<SaveMeta, SaveError> {
     let path = slot_path(world, slot)?;
-    if !path.exists() {
-        return Err(SaveError::NoSuchSlot(slot.into()));
-    }
     let envelope = parse_with_backup(&path, world)?;
     if envelope.format != FORMAT {
         return Err(SaveError::UnsupportedEnvelope(envelope.format));
@@ -196,17 +211,75 @@ pub fn list_slots(world: &World) -> Result<Vec<SaveMeta>, SaveError> {
     if !dir.exists() {
         return Ok(metas);
     }
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.extension().is_some_and(|e| e == "rsav") {
+    let mut primary_slots = std::collections::HashSet::new();
+    let entries = fs::read_dir(&dir)?.collect::<Result<Vec<_>, _>>()?;
+    // Prefer a valid primary file. If it exists but is corrupt, expose a valid
+    // backup instead of hiding the recoverable slot from the menu.
+    for entry in &entries {
+        let path = entry.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "rsav")
+        {
+            let slot = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_owned();
+            let backup = path.with_extension("rsav.bak");
             match parse(&path) {
-                Ok(e) if e.format == FORMAT => metas.push(e.meta),
-                Ok(_) => {}
-                Err(error) => eprintln!(
-                    "[ribbon_save] skipping unreadable save {}: {error}",
-                    path.display()
-                ),
+                Ok(envelope) if envelope.format == FORMAT => {
+                    primary_slots.insert(slot);
+                    metas.push(envelope.meta);
+                }
+                Ok(_) => {
+                    primary_slots.insert(slot);
+                }
+                Err(primary_error) if backup.exists() => match parse(&backup) {
+                    Ok(envelope) if envelope.format == FORMAT => {
+                        primary_slots.insert(slot);
+                        metas.push(envelope.meta);
+                    }
+                    Ok(_) => {
+                        primary_slots.insert(slot);
+                    }
+                    Err(backup_error) => {
+                        primary_slots.insert(slot);
+                        eprintln!(
+                            "[ribbon_save] skipping unreadable save {} and backup {}: {primary_error}; {backup_error}",
+                            path.display(),
+                            backup.display()
+                        );
+                    }
+                },
+                Err(error) => {
+                    primary_slots.insert(slot);
+                    eprintln!(
+                        "[ribbon_save] skipping unreadable save {}: {error}",
+                        path.display()
+                    );
+                }
             }
+        }
+    }
+    for entry in &entries {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(slot) = name.strip_suffix(".rsav.bak") else {
+            continue;
+        };
+        if primary_slots.contains(slot) {
+            continue;
+        }
+        match parse(&path) {
+            Ok(envelope) if envelope.format == FORMAT => metas.push(envelope.meta),
+            Ok(_) => {}
+            Err(error) => eprintln!(
+                "[ribbon_save] skipping unreadable backup {}: {error}",
+                path.display()
+            ),
         }
     }
     metas.sort_by(|a, b| {
@@ -218,18 +291,21 @@ pub fn list_slots(world: &World) -> Result<Vec<SaveMeta>, SaveError> {
 }
 pub fn delete_slot(world: &World, slot: &str) -> Result<(), SaveError> {
     let path = slot_path(world, slot)?;
-    if !path.exists() {
+    let backup = path.with_extension("rsav.bak");
+    if !path.exists() && !backup.exists() {
         return Err(SaveError::NoSuchSlot(slot.into()));
     }
-    fs::remove_file(&path)?;
-    let backup = path.with_extension("rsav.bak");
+    if path.exists() {
+        fs::remove_file(&path)?;
+    }
     if backup.exists() {
         fs::remove_file(backup)?;
     }
     Ok(())
 }
 pub fn slot_exists(world: &World, slot: &str) -> bool {
-    slot_path(world, slot).is_ok_and(|p| p.exists())
+    slot_path(world, slot)
+        .is_ok_and(|path| path.exists() || path.with_extension("rsav.bak").exists())
 }
 pub(crate) fn advance_play_time(world: &mut World) {
     let dt = world
