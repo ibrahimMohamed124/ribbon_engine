@@ -544,7 +544,6 @@ impl MeshRenderer {
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
                 start = end;
             }
-            self.particles.draw(&mut pass, &self.globals_group);
         }
         if shadow_spot.is_some() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -595,6 +594,7 @@ impl MeshRenderer {
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
                 start = end;
             }
+            self.particles.draw(&mut pass, &self.globals_group);
         }
         record_cpu_phase(
             &mut cpu_phases,
