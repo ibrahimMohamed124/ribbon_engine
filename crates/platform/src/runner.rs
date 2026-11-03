@@ -1,8 +1,9 @@
 //! Winit event loop adapter for the engine's application runner contract.
 
 use crate::runtime::{
-    CursorGrabState, InputMouseButton, KeyboardEvent, MouseButtonEvent, MouseMotion, PendingInput,
-    PlatformConfig, PlatformEvent, WindowFrame, WindowResized,
+    CursorGrabState, DisplaySettings, InputMouseButton, KeyboardEvent, MouseButtonEvent,
+    MouseMotion, PendingInput, PlatformConfig, PlatformEvent, TextInputEvent, WindowFrame,
+    WindowMode, WindowResized,
 };
 use crate::{cursor, keyboard, window};
 use ribbon_app::{App, AppExit, LogBuffer, LogLevel, Runner, Time};
@@ -16,7 +17,6 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
 /// Desktop runner that pumps winit events and advances the app each frame.
@@ -56,6 +56,9 @@ struct DesktopDriver {
     requested_window_size: (u32, u32),
     applied_title: String,
     presentation_failed: bool,
+    applied_window_mode: Option<WindowMode>,
+    exclusive_mode_size_applied: Option<(u32, u32)>,
+    ime_enabled: bool,
 }
 
 impl DesktopDriver {
@@ -71,12 +74,24 @@ impl DesktopDriver {
             requested_window_size: (0, 0),
             applied_title: String::new(),
             presentation_failed: false,
+            applied_window_mode: None,
+            exclusive_mode_size_applied: None,
+            ime_enabled: false,
         }
     }
 
     fn queue(&mut self, event: PlatformEvent) {
         if let Some(app) = self.app.as_mut() {
             app.world.resource_mut::<PendingInput>().events.push(event);
+        }
+    }
+
+    fn queue_text(&mut self, event: TextInputEvent) {
+        if let Some(app) = self.app.as_mut() {
+            app.world
+                .resource_mut::<PendingInput>()
+                .text_events
+                .push(event);
         }
     }
 
@@ -268,14 +283,36 @@ impl ApplicationHandler for DesktopDriver {
             .and_then(|app| app.world.try_resource::<PlatformConfig>())
             .cloned()
             .unwrap_or_default();
+        let display = self
+            .app
+            .as_ref()
+            .and_then(|app| app.world.try_resource::<DisplaySettings>())
+            .copied()
+            .unwrap_or_default();
+        let requested_size = display
+            .resolution
+            .map(|resolution| (resolution.width.max(1), resolution.height.max(1)))
+            .unwrap_or((config.width.max(1), config.height.max(1)));
         let attributes = window::with_engine_icons(
             Window::default_attributes()
                 .with_title(config.title.clone())
-                .with_inner_size(PhysicalSize::new(config.width.max(1), config.height.max(1))),
+                .with_inner_size(PhysicalSize::new(requested_size.0, requested_size.1)),
         );
         match event_loop.create_window(attributes) {
             Ok(window) => {
+                window.set_ime_allowed(true);
                 let window = Arc::new(window);
+                let effective = apply_window_mode(&window, display.window_mode, requested_size);
+                if effective != display.window_mode {
+                    eprintln!(
+                        "[DISPLAY] requested {:?}; effective {:?}",
+                        display.window_mode, effective
+                    );
+                }
+                self.applied_window_mode = Some(display.window_mode);
+                self.exclusive_mode_size_applied = (display.window_mode
+                    == WindowMode::ExclusiveFullscreen)
+                    .then_some(requested_size);
                 self.window_id = Some(window.id());
                 if let Some(app) = self.app.as_mut() {
                     app.world
@@ -286,7 +323,7 @@ impl ApplicationHandler for DesktopDriver {
                         .events
                         .push(PlatformEvent::Focused(true));
                 }
-                self.requested_window_size = (config.width.max(1), config.height.max(1));
+                self.requested_window_size = requested_size;
                 self.applied_title = config.title.clone();
                 self.window = Some(window);
                 self.last_frame = Instant::now();
@@ -315,7 +352,13 @@ impl ApplicationHandler for DesktopDriver {
         match event {
             WindowEvent::RedrawRequested => self.present_frame(),
             WindowEvent::CloseRequested => self.queue(PlatformEvent::CloseRequested),
-            WindowEvent::Focused(focused) => self.queue(PlatformEvent::Focused(focused)),
+            WindowEvent::Focused(focused) => {
+                self.queue(PlatformEvent::Focused(focused));
+                if !focused {
+                    self.ime_enabled = false;
+                    self.queue_text(TextInputEvent::Disabled);
+                }
+            }
             WindowEvent::Resized(size) => {
                 self.queue(PlatformEvent::WindowResized(WindowResized {
                     width: size.width,
@@ -324,16 +367,39 @@ impl ApplicationHandler for DesktopDriver {
             }
             WindowEvent::CursorMoved { position, .. } => self.push_mouse_position(position),
             WindowEvent::KeyboardInput { event, .. } => {
-                if let PhysicalKey::Code(code) = event.physical_key {
-                    if let Some(key) = keyboard::from_winit(code) {
-                        self.queue(PlatformEvent::Keyboard(KeyboardEvent {
-                            key,
-                            pressed: event.state == ElementState::Pressed,
-                            repeat: event.repeat,
-                        }));
-                    }
+                let committed_text =
+                    if event.state == ElementState::Pressed && !event.repeat && !self.ime_enabled {
+                        event.text.as_ref().map(ToString::to_string)
+                    } else {
+                        None
+                    };
+                if let Some(key) = keyboard::from_winit_physical(event.physical_key) {
+                    self.queue(PlatformEvent::Keyboard(KeyboardEvent {
+                        key,
+                        pressed: event.state == ElementState::Pressed,
+                        repeat: event.repeat,
+                    }));
+                }
+                if let Some(text) = committed_text {
+                    self.queue_text(TextInputEvent::Commit(text));
                 }
             }
+            WindowEvent::Ime(ime) => match ime {
+                winit::event::Ime::Enabled => {
+                    self.ime_enabled = true;
+                    self.queue_text(TextInputEvent::Enabled);
+                }
+                winit::event::Ime::Preedit(text, cursor) => {
+                    self.queue_text(TextInputEvent::Preedit { text, cursor });
+                }
+                winit::event::Ime::Commit(text) => {
+                    self.queue_text(TextInputEvent::Commit(text));
+                }
+                winit::event::Ime::Disabled => {
+                    self.ime_enabled = false;
+                    self.queue_text(TextInputEvent::Disabled);
+                }
+            },
             WindowEvent::MouseInput { state, button, .. } => {
                 if let Some(button) = map_mouse_button(button) {
                     self.queue(PlatformEvent::MouseButton(MouseButtonEvent {
@@ -391,8 +457,32 @@ impl ApplicationHandler for DesktopDriver {
                 }
                 self.applied_title = config.title.clone();
             }
-            let requested_size = (config.width.max(1), config.height.max(1));
-            if requested_size != self.requested_window_size {
+            let display = app
+                .world
+                .try_resource::<DisplaySettings>()
+                .copied()
+                .unwrap_or_default();
+            let requested_size = display
+                .resolution
+                .map(|resolution| (resolution.width.max(1), resolution.height.max(1)))
+                .unwrap_or((config.width.max(1), config.height.max(1)));
+            let mode = display.window_mode;
+            if self.applied_window_mode != Some(mode)
+                || (mode == WindowMode::ExclusiveFullscreen
+                    && self.exclusive_mode_size_applied != Some(requested_size))
+            {
+                if let Some(window) = self.window.as_ref() {
+                    let effective = apply_window_mode(window, mode, requested_size);
+                    if effective != mode {
+                        eprintln!("[DISPLAY] requested {:?}; effective {:?}", mode, effective);
+                    }
+                    self.applied_window_mode = Some(mode);
+                    if mode == WindowMode::ExclusiveFullscreen {
+                        self.exclusive_mode_size_applied = Some(requested_size);
+                    }
+                }
+            }
+            if mode == WindowMode::Windowed && requested_size != self.requested_window_size {
                 if let Some(window) = self.window.as_ref() {
                     let _ = window
                         .request_inner_size(PhysicalSize::new(requested_size.0, requested_size.1));
@@ -434,6 +524,40 @@ impl ApplicationHandler for DesktopDriver {
         self.app = None;
         self.window = None;
         self.window_id = None;
+    }
+}
+
+fn apply_window_mode(window: &Window, requested: WindowMode, size: (u32, u32)) -> WindowMode {
+    use winit::window::Fullscreen;
+    match requested {
+        WindowMode::Windowed => {
+            window.set_fullscreen(None);
+            WindowMode::Windowed
+        }
+        WindowMode::BorderlessFullscreen => {
+            window.set_fullscreen(Some(Fullscreen::Borderless(window.current_monitor())));
+            WindowMode::BorderlessFullscreen
+        }
+        WindowMode::ExclusiveFullscreen => {
+            let monitor = window.current_monitor();
+            let mode = monitor.as_ref().and_then(|monitor| {
+                monitor
+                    .video_modes()
+                    .filter(|mode| mode.size() == PhysicalSize::new(size.0, size.1))
+                    .max_by_key(|mode| mode.refresh_rate_millihertz())
+            });
+            if let Some(mode) = mode {
+                window.set_fullscreen(Some(Fullscreen::Exclusive(mode)));
+                WindowMode::ExclusiveFullscreen
+            } else {
+                eprintln!(
+                    "[DISPLAY] exclusive fullscreen mode {}x{} unavailable; falling back to borderless fullscreen",
+                    size.0, size.1
+                );
+                window.set_fullscreen(Some(Fullscreen::Borderless(monitor)));
+                WindowMode::BorderlessFullscreen
+            }
+        }
     }
 }
 

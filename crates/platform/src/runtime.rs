@@ -170,6 +170,15 @@ impl WindowHandle {
         self.0.set_ime_cursor_area(position, size);
     }
 
+    /// Set the native IME candidate area using raw physical-pixel tuples.
+    /// This keeps downstream engine crates independent from the `winit` API.
+    pub fn set_ime_cursor_area_pixels(&self, position: (i32, i32), size: (u32, u32)) {
+        self.0.set_ime_cursor_area(
+            winit::dpi::PhysicalPosition::new(position.0, position.1),
+            winit::dpi::PhysicalSize::new(size.0, size.1),
+        );
+    }
+
     /// Enable or disable native input-method events for the application window.
     pub fn set_ime_allowed(&self, allowed: bool) {
         self.0.set_ime_allowed(allowed);

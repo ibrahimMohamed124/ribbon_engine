@@ -40,14 +40,22 @@ impl GamepadBackend {
         let (error_tx, errors) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
-        let join = std::thread::Builder::new()
+        let thread_error_tx = error_tx.clone();
+        let join = match std::thread::Builder::new()
             .name("ribbon-gamepad".into())
             .spawn(move || {
-                if let Err(error) = gamepad_thread(tx, rumble_rx, thread_stop) {
-                    let _ = error_tx.send(error);
+                if let Err(error) =
+                    gamepad_thread(tx, rumble_rx, thread_stop, thread_error_tx.clone())
+                {
+                    let _ = thread_error_tx.send(error);
                 }
-            })
-            .ok();
+            }) {
+            Ok(join) => Some(join),
+            Err(error) => {
+                let _ = error_tx.send(format!("polling thread could not start: {error}"));
+                None
+            }
+        };
         Self {
             receiver: Mutex::new(receiver),
             rumble,
@@ -182,6 +190,7 @@ fn gamepad_thread(
     tx: mpsc::Sender<RawGamepadEvent>,
     rumble_rx: mpsc::Receiver<RumbleCommand>,
     stop: Arc<AtomicBool>,
+    error_tx: mpsc::Sender<String>,
 ) -> Result<(), String> {
     use gilrs::{Button, EventType, Gilrs};
     use std::collections::HashMap;
@@ -194,6 +203,7 @@ fn gamepad_thread(
             let _ = tx.send(RawGamepadEvent::Connected { slot });
         }
     }
+    let mut rumble_error_reported = false;
     while !stop.load(Ordering::Acquire) {
         if let Some(event) = gilrs.next_event_blocking(Some(Duration::from_millis(4))) {
             let id = event.id;
@@ -259,7 +269,12 @@ fn gamepad_thread(
             }
         }
         while let Ok(command) = rumble_rx.try_recv() {
-            apply_rumble(&mut gilrs, &slots, command.0);
+            if let Err(error) = apply_rumble(&mut gilrs, &slots, command.0) {
+                if !rumble_error_reported {
+                    let _ = error_tx.send(format!("gamepad rumble unavailable: {error}"));
+                    rumble_error_reported = true;
+                }
+            }
         }
     }
     Ok(())
@@ -322,11 +337,14 @@ fn apply_rumble(
     gilrs: &mut gilrs::Gilrs,
     slots: &std::collections::HashMap<gilrs::GamepadId, u8>,
     request: GamepadRumbleRequest,
-) {
+) -> Result<(), String> {
     use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
     let Some((id, _)) = slots.iter().find(|(_, slot)| **slot == request.pad) else {
-        return;
+        return Ok(());
     };
+    if request.strong <= 0.0 && request.weak <= 0.0 {
+        return Ok(());
+    }
     let play_for = Ticks::from_ms(request.duration_ms);
     let mut builder = EffectBuilder::new();
     if request.strong > 0.0 {
@@ -353,7 +371,11 @@ fn apply_rumble(
             ..Default::default()
         });
     }
-    if let Ok(effect) = builder.gamepads(&[*id]).finish(gilrs) {
-        let _ = effect.play();
-    }
+    let effect = builder
+        .gamepads(&[*id])
+        .finish(gilrs)
+        .map_err(|error| format!("effect creation failed: {error:?}"))?;
+    effect
+        .play()
+        .map_err(|error| format!("effect playback failed: {error:?}"))
 }

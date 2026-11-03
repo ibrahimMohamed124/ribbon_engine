@@ -3,7 +3,7 @@
 mod transient;
 use crate::frame::Framebuffer;
 use crate::graph::RenderError;
-use ribbon_platform::Window;
+use ribbon_platform::{VSyncMode, Window};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 pub use transient::{
@@ -60,6 +60,43 @@ fn choose_present_mode(
     }
 }
 
+fn choose_vsync_present_mode(
+    requested: VSyncMode,
+    supported: &[wgpu::PresentMode],
+) -> (wgpu::PresentMode, bool) {
+    let has = |mode| supported.contains(&mode);
+    let (preferred, alternatives): (wgpu::PresentMode, &[wgpu::PresentMode]) = match requested {
+        VSyncMode::On => (wgpu::PresentMode::Fifo, &[]),
+        VSyncMode::Adaptive => (wgpu::PresentMode::FifoRelaxed, &[wgpu::PresentMode::Fifo]),
+        VSyncMode::Off => (
+            wgpu::PresentMode::Immediate,
+            &[wgpu::PresentMode::Mailbox, wgpu::PresentMode::Fifo],
+        ),
+    };
+    if has(preferred) {
+        return (preferred, false);
+    }
+    if let Some(mode) = alternatives.iter().copied().find(|mode| has(*mode)) {
+        return (mode, true);
+    }
+    supported
+        .first()
+        .copied()
+        .map(|mode| (mode, true))
+        .unwrap_or((wgpu::PresentMode::Fifo, true))
+}
+
+fn choose_configured_present_mode(
+    requested: Option<VSyncMode>,
+    environment_mode: Option<wgpu::PresentMode>,
+    supported: &[wgpu::PresentMode],
+) -> Option<(wgpu::PresentMode, bool)> {
+    match requested {
+        Some(mode) => Some(choose_vsync_present_mode(mode, supported)),
+        None => environment_mode.map(|mode| (mode, false)),
+    }
+}
+
 fn desired_frame_latency_from_env() -> (u32, bool) {
     match std::env::var("RIBBON_GPU_FRAME_LATENCY") {
         Err(_) => (1, false),
@@ -99,6 +136,9 @@ pub struct GpuContext {
     // crashes on exit (STATUS_ACCESS_VIOLATION on Windows).
     surface: Option<wgpu::Surface<'static>>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
+    surface_present_modes: Vec<wgpu::PresentMode>,
+    environment_present_mode: Option<wgpu::PresentMode>,
+    last_vsync_mode: Option<VSyncMode>,
     target: OffscreenTarget,
     // Synchronous readback is still part of the public contract, but reuse its staging buffer
     // instead of allocating a new GPU buffer for every call.
@@ -197,8 +237,10 @@ impl GpuContext {
                 Some(format!("{reason:?}: {message}"));
             lost_flag.store(true, Ordering::Release);
         });
+        let mut surface_present_modes = Vec::new();
         let surface_config = if let (Some(surface), Some(window)) = (&surface, &window) {
             let capabilities = surface.get_capabilities(&adapter);
+            surface_present_modes.extend(capabilities.present_modes.iter().copied());
             let format = capabilities
                 .formats
                 .iter()
@@ -250,6 +292,7 @@ impl GpuContext {
         } else {
             None
         };
+        let environment_present_mode = surface_config.as_ref().map(|config| config.present_mode);
         let target = create_target(&device, width, height);
         Ok(Self {
             _instance: instance,
@@ -258,6 +301,9 @@ impl GpuContext {
             queue,
             surface,
             surface_config,
+            surface_present_modes,
+            environment_present_mode,
+            last_vsync_mode: None,
             target,
             readback_buffer: Mutex::new(None),
             device_lost,
@@ -302,6 +348,32 @@ impl GpuContext {
     /// Borrow the surface configuration, when a surface exists.
     pub fn surface_config(&self) -> Option<&wgpu::SurfaceConfiguration> {
         self.surface_config.as_ref()
+    }
+
+    /// Apply a user-facing VSync policy to the active surface. The requested policy is remembered
+    /// so the capability negotiation and swapchain reconfiguration happen only when it changes.
+    /// Returns the selected backend mode and whether a fallback was needed.
+    pub fn configure_vsync(
+        &mut self,
+        requested: Option<VSyncMode>,
+    ) -> Option<(wgpu::PresentMode, bool)> {
+        if self.last_vsync_mode == requested {
+            return None;
+        }
+        self.last_vsync_mode = requested;
+        let (selected, fallback) = choose_configured_present_mode(
+            requested,
+            self.environment_present_mode,
+            &self.surface_present_modes,
+        )?;
+        let (Some(surface), Some(config)) = (&self.surface, &mut self.surface_config) else {
+            return Some((selected, fallback));
+        };
+        if config.present_mode != selected {
+            config.present_mode = selected;
+            surface.configure(&self.device, config);
+        }
+        Some((selected, fallback))
     }
 
     /// Borrow the offscreen target.
@@ -474,5 +546,57 @@ fn create_target(device: &wgpu::Device, width: u32, height: u32) -> OffscreenTar
         view,
         width,
         height,
+    }
+}
+
+#[cfg(test)]
+mod present_mode_tests {
+    use super::{choose_configured_present_mode, choose_vsync_present_mode};
+    use ribbon_platform::VSyncMode;
+
+    #[test]
+    fn vsync_policies_negotiate_only_supported_surface_modes() {
+        use wgpu::PresentMode as P;
+        let supported = [P::Fifo, P::Mailbox, P::Immediate];
+        assert_eq!(
+            choose_vsync_present_mode(VSyncMode::On, &supported),
+            (P::Fifo, false)
+        );
+        assert_eq!(
+            choose_vsync_present_mode(VSyncMode::Adaptive, &supported),
+            (P::Fifo, true)
+        );
+        assert_eq!(
+            choose_vsync_present_mode(VSyncMode::Off, &supported),
+            (P::Immediate, false)
+        );
+    }
+
+    #[test]
+    fn clearing_a_runtime_vsync_override_restores_the_environment_mode() {
+        use wgpu::PresentMode as P;
+        let supported = [P::Fifo, P::Mailbox, P::Immediate];
+        assert_eq!(
+            choose_configured_present_mode(Some(VSyncMode::On), Some(P::Mailbox), &supported),
+            Some((P::Fifo, false))
+        );
+        assert_eq!(
+            choose_configured_present_mode(None, Some(P::Mailbox), &supported),
+            Some((P::Mailbox, false))
+        );
+        assert_eq!(choose_configured_present_mode(None, None, &supported), None);
+    }
+
+    #[test]
+    fn no_vsync_falls_back_to_fifo_when_mailbox_and_immediate_are_unavailable() {
+        use wgpu::PresentMode as P;
+        assert_eq!(
+            choose_vsync_present_mode(VSyncMode::Off, &[P::Fifo]),
+            (P::Fifo, true)
+        );
+        assert_eq!(
+            choose_vsync_present_mode(VSyncMode::Off, &[P::Fifo, P::Mailbox]),
+            (P::Mailbox, true)
+        );
     }
 }

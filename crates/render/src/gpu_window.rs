@@ -8,7 +8,7 @@ use crate::gpu::{present_mode_label, GpuContext};
 use crate::graph::{RenderContext, RenderError, RenderGraph, RenderNode};
 use crate::profiling::{RenderDiagnostics, RenderGraphTiming};
 use ribbon_app::{App, LogBuffer, LogLevel, Stage, World};
-use ribbon_platform::WindowHandle;
+use ribbon_platform::{DisplaySettings, WindowHandle};
 use ribbon_plugins::Plugin;
 use std::time::Instant;
 
@@ -391,6 +391,17 @@ pub fn gpu_window_system(world: &mut World) {
         let Some(context) = context.as_mut() else {
             return;
         };
+        let vsync = world
+            .try_resource::<DisplaySettings>()
+            .copied()
+            .unwrap_or_default()
+            .vsync;
+        if let Some((selected, fallback)) = context.configure_vsync(vsync) {
+            eprintln!(
+                "[GPU SURFACE] vsync={vsync:?}; selected_mode={}; fallback={fallback}",
+                present_mode_label(selected)
+            );
+        }
         let stale = context
             .surface_config()
             .is_some_and(|c| c.width != size.width || c.height != size.height);

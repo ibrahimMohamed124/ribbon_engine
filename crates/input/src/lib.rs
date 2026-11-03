@@ -959,11 +959,16 @@ impl BindingSource {
         }
     }
     pub fn gamepad_axis(pad: u8, axis: GamepadAxis, positive: bool, threshold: f32) -> Self {
+        let threshold = if threshold.is_finite() {
+            threshold.clamp(0.001, 1.0)
+        } else {
+            0.5
+        };
         Self::GamepadAxis {
             pad,
             axis: axis.id(),
             positive,
-            threshold_milli: (threshold.clamp(0.001, 1.0) * 1000.0).round() as u16,
+            threshold_milli: (threshold * 1000.0).round() as u16,
         }
     }
 }

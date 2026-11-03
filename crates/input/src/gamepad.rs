@@ -215,23 +215,41 @@ impl GamepadSet {
             RawGamepadEvent::Axis { slot, axis, value } if (slot as usize) < MAX_GAMEPADS => {
                 let settings = self.settings;
                 if let Some(p) = self.pads[slot as usize].as_mut() {
+                    let axes = [
+                        GamepadAxis::LeftStickX,
+                        GamepadAxis::LeftStickY,
+                        GamepadAxis::RightStickX,
+                        GamepadAxis::RightStickY,
+                        GamepadAxis::LeftTrigger,
+                        GamepadAxis::RightTrigger,
+                    ];
+                    let previous = axes.map(|candidate| process_axis(p, candidate, settings));
                     p.raw[axis.id() as usize] =
                         finite(value).clamp(if axis as u8 >= 4 { 0.0 } else { -1.0 }, 1.0);
-                    let processed = process_axis(p, axis, settings);
-                    out.push(GamepadEvent::AxisChanged {
-                        pad: slot,
-                        axis,
-                        value: processed,
-                    });
-                    if axis == GamepadAxis::LeftTrigger || axis == GamepadAxis::RightTrigger {
-                        let button = if axis == GamepadAxis::LeftTrigger {
-                            GamepadButton::LeftTrigger
-                        } else {
-                            GamepadButton::RightTrigger
-                        };
+                    let mut trigger_values = [0.0; 2];
+                    for (index, candidate) in axes.into_iter().enumerate() {
+                        let processed = process_axis(p, candidate, settings);
+                        if (processed - previous[index]).abs() > 1.0e-6 {
+                            out.push(GamepadEvent::AxisChanged {
+                                pad: slot,
+                                axis: candidate,
+                                value: processed,
+                            });
+                        }
+                        if candidate == GamepadAxis::LeftTrigger {
+                            trigger_values[0] = processed;
+                        } else if candidate == GamepadAxis::RightTrigger {
+                            trigger_values[1] = processed;
+                        }
+                    }
+                    for (button, processed) in [
+                        (GamepadButton::LeftTrigger, trigger_values[0]),
+                        (GamepadButton::RightTrigger, trigger_values[1]),
+                    ] {
                         let was = p.down[button.id() as usize];
-                        let threshold =
-                            (settings.trigger_press_threshold - f32::from(was) * 0.05).max(0.0);
+                        let base_threshold =
+                            finite(settings.trigger_press_threshold).clamp(0.0, 1.0);
+                        let threshold = (base_threshold - f32::from(was) * 0.05).max(0.0);
                         set_button(p, slot, button, processed >= threshold, out);
                     }
                 }
@@ -435,6 +453,26 @@ mod tests {
         assert!(!s.button_down(0, GamepadButton::South));
     }
 
+    #[test]
+    fn invalid_trigger_threshold_is_sanitized() {
+        let settings = GamepadSettings {
+            trigger_press_threshold: f32::NAN,
+            ..GamepadSettings::default()
+        };
+        let mut set = GamepadSet::new(settings);
+        let mut events = Vec::new();
+        set.apply(RawGamepadEvent::Connected { slot: 0 }, &mut events);
+        set.apply(
+            RawGamepadEvent::Axis {
+                slot: 0,
+                axis: GamepadAxis::RightTrigger,
+                value: 0.6,
+            },
+            &mut events,
+        );
+        assert!(set.button_down(0, GamepadButton::RightTrigger));
+    }
+
     struct State(f32);
     impl KeyState for State {
         fn is_down(&self, _: Key) -> bool {
@@ -449,6 +487,30 @@ mod tests {
                 0.0
             }
         }
+    }
+
+    #[test]
+    fn unchanged_processed_axes_do_not_emit_duplicate_axis_events() {
+        let mut pads = GamepadSet::default();
+        let mut events = Vec::new();
+        pads.apply(RawGamepadEvent::Connected { slot: 0 }, &mut events);
+        events.clear();
+        let axis_event = RawGamepadEvent::Axis {
+            slot: 0,
+            axis: GamepadAxis::LeftStickX,
+            value: 0.8,
+        };
+        pads.apply(axis_event, &mut events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            GamepadEvent::AxisChanged {
+                axis: GamepadAxis::LeftStickX,
+                ..
+            }
+        )));
+        events.clear();
+        pads.apply(axis_event, &mut events);
+        assert!(events.is_empty());
     }
 
     #[test]
