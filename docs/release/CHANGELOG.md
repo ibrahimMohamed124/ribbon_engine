@@ -5,6 +5,10 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 
 ## Unreleased
 
+### Gamepad input
+
+- Added four-pad button/axis state processing, radial stick and trigger deadzones, trigger hysteresis, gamepad binding sources, threaded gilrs polling, event output, rumble requests, and a virtual raw-event injection path. Native device behavior remains unverified without hardware.
+
 ### Application states
 
 - Added typed `State<S>` / `NextState<S>` resources, deferred transitions, enter/exit hooks, transition events, and `in_state` run conditions. State requests made from hooks are applied on the following frame.

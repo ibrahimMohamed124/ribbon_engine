@@ -31,7 +31,7 @@ external = []
 
 [allowed."ribbon_platform"]
 workspace = ["ribbon_app", "ribbon_plugins", "ribbon_events", "ribbon_math", "ribbon_input"]
-external = ["winit", "softbuffer"]
+external = ["winit", "softbuffer", "gilrs"]
 
 [allowed."ribbon_assets"]
 workspace = ["ribbon_app", "ribbon_plugins", "ribbon_events"]

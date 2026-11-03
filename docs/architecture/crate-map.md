@@ -5,7 +5,7 @@
 ```text
 core: math / ecs / events / schedule / reflect / profiling / input
   -> app and plugin composition (typed app states)
-  -> platform / assets / scene / render contracts / render / commands
+  -> platform (native gamepad polling) / assets / scene / render contracts / render / commands
   -> editor and editor tools
   -> rendering, weather, physics, audio, animation, glTF plugins
   -> games and examples

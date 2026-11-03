@@ -11,3 +11,8 @@ ribbon_events = { path = "../events" }
 ribbon_math = { path = "../math" }
 winit = "0.30.13"
 softbuffer = "0.4.6"
+gilrs = { version = "0.11", optional = true }
+
+[features]
+default = ["gamepad"]
+gamepad = ["dep:gilrs"]

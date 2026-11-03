@@ -2,7 +2,9 @@
 
 use crate::config::MouseButtons;
 pub use crate::input::MouseButton as InputMouseButton;
-use crate::input::{ActionState, InputState, Key, KeyState, MouseInputState};
+use crate::input::{
+    ActionState, GamepadAxis, GamepadButton, GamepadSet, InputState, Key, KeyState, MouseInputState,
+};
 use ribbon_app::{App, AppExit};
 use ribbon_events::WorldEventsExt;
 use ribbon_plugins::Plugin;
@@ -16,6 +18,93 @@ pub struct KeyboardEvent {
     pub pressed: bool,
     /// Whether this press was a key repeat.
     pub repeat: bool,
+}
+
+/// Committed Unicode text and IME composition updates from the operating system.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TextInputEvent {
+    /// A committed text fragment; it may contain multiple Unicode scalar values.
+    Commit(String),
+    /// Current pre-edit composition text and byte-indexed selection/caret range.
+    Preedit {
+        text: String,
+        cursor: Option<(usize, usize)>,
+    },
+    /// The operating system enabled IME composition.
+    Enabled,
+    /// IME composition ended or was cancelled.
+    Disabled,
+}
+
+/// Frame-local text input snapshot plus the active IME pre-edit string.
+#[derive(Clone, Debug, Default)]
+pub struct TextInput {
+    committed: Vec<String>,
+    preedit: Option<String>,
+    preedit_cursor: Option<(usize, usize)>,
+    ime_enabled: bool,
+}
+
+impl TextInput {
+    /// Text fragments committed during the current frame, preserving event order.
+    pub fn committed(&self) -> &[String] {
+        &self.committed
+    }
+
+    /// Current IME pre-edit string, if composition is active and non-empty.
+    pub fn preedit(&self) -> Option<&str> {
+        self.preedit.as_deref()
+    }
+
+    /// Whether the platform currently reports an active IME session.
+    pub fn ime_enabled(&self) -> bool {
+        self.ime_enabled
+    }
+
+    /// Byte-indexed IME cursor/selection range within [`Self::preedit`].
+    pub fn preedit_cursor(&self) -> Option<(usize, usize)> {
+        self.preedit_cursor
+    }
+
+    fn begin_frame(&mut self) {
+        self.committed.clear();
+    }
+
+    fn apply(&mut self, event: &TextInputEvent) {
+        match event {
+            TextInputEvent::Commit(text) => {
+                if !text.is_empty() {
+                    self.committed.push(text.clone());
+                }
+                self.preedit = None;
+                self.preedit_cursor = None;
+            }
+            TextInputEvent::Preedit { text, cursor } => {
+                if text.is_empty() {
+                    self.preedit = None;
+                    self.preedit_cursor = None;
+                } else {
+                    self.preedit = Some(text.clone());
+                    self.preedit_cursor = cursor.map(|(start, end)| {
+                        let clamp_boundary = |offset: usize| {
+                            let mut offset = offset.min(text.len());
+                            while !text.is_char_boundary(offset) {
+                                offset -= 1;
+                            }
+                            offset
+                        };
+                        (clamp_boundary(start), clamp_boundary(end))
+                    });
+                }
+            }
+            TextInputEvent::Enabled => self.ime_enabled = true,
+            TextInputEvent::Disabled => {
+                self.ime_enabled = false;
+                self.preedit = None;
+                self.preedit_cursor = None;
+            }
+        }
+    }
 }
 
 /// Pointer movement in physical pixels and its latest window position, if available.
@@ -66,6 +155,20 @@ impl WindowHandle {
     /// Remove a custom icon from the window and its Windows taskbar button.
     pub fn clear_icon(&self) {
         crate::window::set_window_icon(&self.0, None);
+    }
+
+    /// Position the operating-system IME candidate/caret window relative to a text widget.
+    pub fn set_ime_cursor_area(
+        &self,
+        position: winit::dpi::PhysicalPosition<i32>,
+        size: winit::dpi::PhysicalSize<u32>,
+    ) {
+        self.0.set_ime_cursor_area(position, size);
+    }
+
+    /// Enable or disable native input-method events for the application window.
+    pub fn set_ime_allowed(&self, allowed: bool) {
+        self.0.set_ime_allowed(allowed);
     }
 }
 
@@ -140,6 +243,7 @@ pub enum CursorGrabState {
 pub struct Input {
     keyboard: InputState,
     mouse: MouseInputState,
+    gamepads: GamepadSet,
     /// Current physical pointer position in window coordinates.
     pub mouse_position: Option<(f32, f32)>,
     /// Pointer delta accumulated this frame.
@@ -155,6 +259,13 @@ pub struct Input {
 }
 
 impl Input {
+    /// Read processed gamepad button and axis state.
+    pub fn gamepads(&self) -> &GamepadSet {
+        &self.gamepads
+    }
+    pub(crate) fn gamepads_mut(&mut self) -> &mut GamepadSet {
+        &mut self.gamepads
+    }
     /// Check whether a physical key is held.
     pub fn is_down(&self, key: Key) -> bool {
         self.keyboard.is_down(key)
@@ -249,6 +360,12 @@ impl ActionState for Input {
     fn is_mouse_button_down(&self, button: InputMouseButton) -> bool {
         self.mouse_button_down(button)
     }
+    fn is_gamepad_button_down(&self, pad: u8, button: u16) -> bool {
+        GamepadButton::from_id(button).is_some_and(|button| self.gamepads.button_down(pad, button))
+    }
+    fn gamepad_axis_value(&self, pad: u8, axis: u8) -> f32 {
+        GamepadAxis::from_id(axis).map_or(0.0, |axis| self.gamepads.axis(pad, axis))
+    }
 }
 
 /// Scripted events consumed at the start of the next frame. The queue implementation lives in
@@ -258,6 +375,84 @@ pub type VirtualInput = crate::input::VirtualInput<PlatformEvent>;
 #[derive(Default)]
 pub(crate) struct PendingInput {
     pub events: Vec<PlatformEvent>,
+    pub text_events: Vec<TextInputEvent>,
+}
+
+/// Requested native window mode. Exclusive fullscreen gracefully falls back to borderless
+/// when the monitor does not expose the requested video mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowMode {
+    /// Resizable decorated window.
+    #[default]
+    Windowed,
+    /// Borderless fullscreen on the current monitor.
+    BorderlessFullscreen,
+    /// Exclusive fullscreen using a matching monitor video mode when available.
+    ExclusiveFullscreen,
+}
+
+/// User-facing vertical-sync policy, independent from wgpu's concrete present mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VSyncMode {
+    /// FIFO presentation; waits for the next refresh.
+    On,
+    /// Prefer FIFO Relaxed and fall back to FIFO.
+    Adaptive,
+    /// Prefer Immediate (no synchronization), then Mailbox, with FIFO as the universal fallback.
+    #[default]
+    Off,
+}
+
+/// A requested drawable resolution in physical pixels. Zero-sized modes are rejected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DisplayResolution {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl DisplayResolution {
+    pub const fn new(width: u32, height: u32) -> Option<Self> {
+        if width == 0 || height == 0 {
+            None
+        } else {
+            Some(Self { width, height })
+        }
+    }
+}
+
+/// Runtime display preferences. This is a separate resource so existing `PlatformConfig`
+/// struct literals and serialized/game-specific window configuration remain source-compatible.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DisplaySettings {
+    /// Requested native window mode.
+    pub window_mode: WindowMode,
+    /// Optional physical drawable resolution. Borderless mode uses the monitor's native size.
+    /// `None` follows the legacy `PlatformConfig` dimensions.
+    pub resolution: Option<DisplayResolution>,
+    /// User-facing VSync policy.
+    /// `None` preserves the existing environment/configuration-selected backend mode.
+    pub vsync: Option<VSyncMode>,
+}
+
+impl DisplaySettings {
+    /// Request a physical drawable resolution. Invalid zero dimensions leave the setting intact.
+    pub fn set_resolution(&mut self, width: u32, height: u32) -> bool {
+        let Some(resolution) = DisplayResolution::new(width, height) else {
+            return false;
+        };
+        self.resolution = Some(resolution);
+        true
+    }
+
+    /// Follow the legacy PlatformConfig dimensions again.
+    pub fn clear_resolution_override(&mut self) {
+        self.resolution = None;
+    }
+
+    /// Restore windowed mode, the legacy configured resolution, and backend/environment VSync.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
 }
 
 /// Window creation configuration inserted by [`PlatformPlugin`].
@@ -297,13 +492,19 @@ impl Plugin for PlatformPlugin {
         app.insert_resource(Input::default())
             .insert_resource(VirtualInput::default())
             .insert_resource(PendingInput::default())
-            .insert_resource(WindowFrame::default());
+            .insert_resource(WindowFrame::default())
+            .insert_resource(TextInput::default());
+        if app.world.try_resource::<DisplaySettings>().is_none() {
+            app.insert_resource(DisplaySettings::default());
+        }
         app.add_event::<KeyboardEvent>()
             .add_event::<MouseMotion>()
             .add_event::<MouseButtonEvent>()
             .add_event::<WindowResized>()
             .add_event::<CloseRequested>()
-            .add_event::<Focused>();
+            .add_event::<Focused>()
+            .add_event::<TextInputEvent>();
+        crate::gamepad::install(app);
         app.add_system(ribbon_app::Stage::First, update_input);
         app.set_runner(crate::WinitRunner);
     }
@@ -312,6 +513,7 @@ impl Plugin for PlatformPlugin {
 fn update_input(world: &mut ribbon_app::World) {
     let mut pending = std::mem::take(&mut world.resource_mut::<PendingInput>().events);
     pending.extend(world.resource_mut::<VirtualInput>().drain());
+    let pending_text = std::mem::take(&mut world.resource_mut::<PendingInput>().text_events);
     world.resource_scope::<Input, _>(|world, input| {
         input.begin_frame();
         for event in pending {
@@ -327,6 +529,13 @@ fn update_input(world: &mut ribbon_app::World) {
                     world.send_event(AppExit);
                 }
             }
+        }
+    });
+    world.resource_scope::<TextInput, _>(|world, text_input| {
+        text_input.begin_frame();
+        for event in pending_text {
+            text_input.apply(&event);
+            world.send_event(event);
         }
     });
 }
@@ -393,6 +602,80 @@ mod tests {
     }
 
     #[test]
+    fn text_input_preserves_unicode_commits_and_ime_composition_lifecycle() {
+        use super::{TextInput, TextInputEvent};
+
+        let mut text = TextInput::default();
+        text.begin_frame();
+        text.apply(&TextInputEvent::Enabled);
+        text.apply(&TextInputEvent::Preedit {
+            text: "にほん".to_owned(),
+            cursor: Some((3, 3)),
+        });
+        assert!(text.ime_enabled());
+        assert_eq!(text.preedit(), Some("にほん"));
+        assert_eq!(text.preedit_cursor(), Some((3, 3)));
+        // A malformed native selection may point into a UTF-8 continuation byte. Keep
+        // consumers safe by snapping each byte offset backward to a character boundary.
+        text.apply(&TextInputEvent::Preedit {
+            text: "é🙂".to_owned(),
+            cursor: Some((1, usize::MAX)),
+        });
+        assert_eq!(text.preedit_cursor(), Some((0, 6)));
+
+        text.apply(&TextInputEvent::Commit("日本語🙂".to_owned()));
+        assert_eq!(text.committed(), &["日本語🙂".to_owned()]);
+        assert_eq!(text.preedit(), None);
+
+        text.begin_frame();
+        assert!(text.committed().is_empty());
+        text.apply(&TextInputEvent::Preedit {
+            text: "compose".to_owned(),
+            cursor: Some((7, 7)),
+        });
+        text.apply(&TextInputEvent::Disabled);
+        assert!(!text.ime_enabled());
+        assert_eq!(text.preedit(), None);
+        assert_eq!(text.preedit_cursor(), None);
+    }
+
+    #[test]
+    fn display_settings_have_safe_windowed_defaults_and_are_independent_of_window_config() {
+        use super::{DisplaySettings, VSyncMode, WindowMode};
+
+        let mut settings = DisplaySettings::default();
+        assert_eq!(settings.window_mode, WindowMode::Windowed);
+        assert_eq!(settings.vsync, None);
+        settings.window_mode = WindowMode::BorderlessFullscreen;
+        settings.vsync = Some(VSyncMode::On);
+        settings.reset();
+        assert_eq!(settings, DisplaySettings::default());
+    }
+
+    #[test]
+    fn display_resolution_rejects_zero_and_supports_runtime_override_reset() {
+        use super::{DisplayResolution, DisplaySettings};
+
+        assert_eq!(
+            DisplayResolution::new(1920, 1080),
+            Some(DisplayResolution {
+                width: 1920,
+                height: 1080
+            })
+        );
+        assert_eq!(DisplayResolution::new(0, 1080), None);
+        assert_eq!(DisplayResolution::new(1920, 0), None);
+
+        let mut settings = DisplaySettings::default();
+        assert!(!settings.set_resolution(0, 720));
+        assert_eq!(settings.resolution, None);
+        assert!(settings.set_resolution(1920, 1080));
+        assert_eq!(settings.resolution, DisplayResolution::new(1920, 1080));
+        settings.clear_resolution_override();
+        assert_eq!(settings.resolution, None);
+    }
+
+    #[test]
     fn virtual_input_press_edge_lasts_exactly_one_frame() {
         let mut app = App::new();
         app.add_plugin(PlatformPlugin).unwrap();
@@ -410,5 +693,44 @@ mod tests {
         app.update();
         assert!(!app.world.resource::<Input>().just_pressed(Key::W));
         assert!(app.world.resource::<Input>().is_down(Key::W));
+    }
+
+    #[test]
+    fn injected_gamepad_axis_drives_bindings_and_survives_focus_loss() {
+        use crate::gamepad::inject_raw_gamepad_event;
+        use crate::input::{BindingSource, Bindings, GamepadAxis, RawGamepadEvent};
+        let mut app = App::new();
+        app.add_plugin(PlatformPlugin).unwrap();
+        let mut app = app.build().unwrap();
+        inject_raw_gamepad_event(&mut app.world, RawGamepadEvent::Connected { slot: 0 });
+        inject_raw_gamepad_event(
+            &mut app.world,
+            RawGamepadEvent::Axis {
+                slot: 0,
+                axis: GamepadAxis::LeftStickX,
+                value: 0.8,
+            },
+        );
+        let mut bindings = Bindings::new();
+        bindings.set_sources(
+            "move",
+            vec![BindingSource::gamepad_axis(
+                0,
+                GamepadAxis::LeftStickX,
+                true,
+                0.5,
+            )],
+        );
+        assert!(bindings.is_active(app.world.resource::<Input>(), "move"));
+        app.world
+            .resource_mut::<Input>()
+            .apply(super::PlatformEvent::Focused(false));
+        assert!(
+            app.world
+                .resource::<Input>()
+                .gamepads()
+                .axis(0, GamepadAxis::LeftStickX)
+                >= 0.5
+        );
     }
 }

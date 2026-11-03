@@ -16,3 +16,4 @@
 - [`0012-weather-render-contracts.md`](0012-weather-render-contracts.md) — reusable weather uses renderer-neutral data contracts.
 - [`0013-contract-reflection-ownership.md`](0013-contract-reflection-ownership.md) — reflection implementations live beside contract-owned types.
 - [`0014-app-states.md`](0014-app-states.md) — typed state resources, deferred transitions, and hooks.
+- [`0015-gamepad-backend.md`](0015-gamepad-backend.md) — threaded gilrs polling and backend-neutral gamepad processing.
