@@ -21,4 +21,7 @@ pub use input::{NavAction, UiInput};
 pub use layout::{Align, Padding, Rect, Vec2f};
 pub use plugin::UiPlugin;
 pub use style::{Color, Theme, WidgetStyle};
-pub use text::TextSystem;
+pub use text::{LaidOutText, PositionedGlyph, TextSystem};
+
+#[cfg(test)]
+mod tests;

@@ -11,25 +11,35 @@ enum Screen {
     Settings,
 }
 struct Spin;
+#[derive(Default)]
+struct ShowcaseSettings {
+    sound: bool,
+    volume: f32,
+    name: String,
+}
 
 fn update_showcase(world: &mut World) {
-    let settings = world.resource::<State<Screen>>().get() == Screen::Settings;
+    let settings_screen = world.resource::<State<Screen>>().get() == Screen::Settings;
     let progress = (world.resource::<Time>().elapsed.as_secs_f32() * 0.12).fract();
     let mut go_settings = false;
     let mut go_main = false;
     let mut quit = false;
+    let mut settings = world
+        .remove_resource::<ShowcaseSettings>()
+        .unwrap_or_else(|| ShowcaseSettings {
+            sound: true,
+            volume: 0.7,
+            name: "Player".into(),
+        });
     ui_scope(world, |ui| {
         ui.panel("Showcase", Anchor::Center, PanelSize::Width(460.0), |ui| {
-            if settings {
+            if settings_screen {
                 ui.heading("Settings");
                 ui.label("مرحبا بك في أثر");
                 ui.label("Player settings | إعدادات اللاعب");
-                let mut sound = true;
-                ui.checkbox(&mut sound, "Sound enabled");
-                let mut volume = 0.7;
-                ui.slider(&mut volume, 0.0..=1.0, "Volume");
-                let mut name = String::from("Player");
-                ui.text_input(&mut name, "Player name");
+                ui.checkbox(&mut settings.sound, "Sound enabled");
+                ui.slider(&mut settings.volume, 0.0..=1.0, "Volume");
+                ui.text_input(&mut settings.name, "Player name");
                 go_main = ui.button("Back").clicked;
             } else {
                 ui.heading("Ribbon UI");
@@ -41,6 +51,7 @@ fn update_showcase(world: &mut World) {
             }
         });
     });
+    world.insert_resource(settings);
     if go_settings {
         world
             .resource_mut::<NextState<Screen>>()
@@ -70,6 +81,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.add_plugin(ribbon_plugin_render3d::Render3dPlugin)?;
     app.add_plugin(UiPlugin::new())?;
     app.init_state::<Screen>(Screen::Main);
+    app.insert_resource(ShowcaseSettings {
+        sound: true,
+        volume: 0.7,
+        name: "Player".into(),
+    });
     app.world.spawn((
         Transform3D::looking_at(
             ribbon_plugin_render3d::glam::Vec3::new(3.5, 2.5, 5.0),

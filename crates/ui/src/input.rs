@@ -17,7 +17,10 @@ pub struct UiInput {
     pub mouse_pressed: bool,
     pub mouse_released: bool,
     pub scroll: f32,
+    /// Navigation actions fired on an input edge.
     pub nav: Vec<NavAction>,
+    /// Directional actions currently held (keyboard/gamepad); `UiContext` rate-limits repeats.
+    pub nav_held: Vec<NavAction>,
     pub committed_text: Vec<String>,
     pub preedit: Option<String>,
     pub left: bool,
