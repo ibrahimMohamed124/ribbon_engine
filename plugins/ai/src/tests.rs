@@ -120,8 +120,10 @@ enum Mode {
 }
 #[test]
 fn state_machine_applies_requested_state_and_emits_event() {
+    use ribbon_app::{EventCursor, WorldEventsExt};
     let mut app = App::new();
     register_state_machine::<Mode>(&mut app);
+    let mut events = EventCursor::<StateChanged<Mode>>::default();
     let entity = app.world.spawn((StateMachine::new(Mode::Idle),));
     app.world
         .get_mut::<StateMachine<Mode>>(entity)
@@ -136,6 +138,29 @@ fn state_machine_applies_requested_state_and_emits_event() {
             .current(),
         Mode::Run
     );
+    let event = events
+        .read(app.world.events::<StateChanged<Mode>>())
+        .next()
+        .copied()
+        .expect("state transition event");
+    assert_eq!(
+        event,
+        StateChanged {
+            entity,
+            from: Mode::Idle,
+            to: Mode::Run
+        }
+    );
+
+    app.world
+        .get_mut::<StateMachine<Mode>>(entity)
+        .expect("machine")
+        .request(Mode::Run);
+    app.update();
+    assert!(events
+        .read(app.world.events::<StateChanged<Mode>>())
+        .next()
+        .is_none());
 }
 
 #[test]
@@ -281,4 +306,204 @@ fn nav_agent_applies_velocity_and_path_budget_rotates_fairly() {
         app.world.get::<NavSteering>(a).map(|s| s.status),
         Some(NavStatus::Arrived)
     );
+}
+
+#[test]
+fn physics_bake_marks_overhead_box_cell_unwalkable() {
+    use ribbon_plugin_physics::{Collider, PhysicsPlugin};
+    use ribbon_plugins::AppPluginExt;
+    use ribbon_scene::{ScenePlugin, Transform3D};
+    use std::time::Duration;
+
+    let mut app = App::new();
+    app.add_plugin(ScenePlugin).expect("scene");
+    app.add_plugin(PhysicsPlugin).expect("physics");
+    app.world.spawn((
+        Transform3D::from_translation(Vec3::new(0.0, -0.5, 0.0)),
+        Collider::cuboid(Vec3::new(4.0, 0.5, 4.0)),
+    ));
+    app.world.spawn((
+        Transform3D::from_translation(Vec3::new(0.5, 0.5, 0.5)),
+        Collider::cuboid(Vec3::new(0.4, 0.5, 0.4)),
+    ));
+    app.world.resource_mut::<Time>().delta = Duration::from_millis(16);
+    app.update();
+
+    let cfg = NavBakeConfig {
+        min: Vec3::new(-2.0, -1.0, -2.0),
+        max: Vec3::new(2.0, 2.0, 2.0),
+        cell_size: 1.0,
+        agent_radius: 0.0,
+        agent_height: 0.75,
+        max_step_height: 0.3,
+        max_slope_deg: 45.0,
+        probe_height_above_ground: 2.0,
+    };
+    let grid = bake_nav_grid(&app.world, &cfg);
+    assert!(grid.cell(2, 2).is_some_and(|cell| !cell.walkable));
+    assert!(grid.cell(0, 0).is_some_and(|cell| cell.walkable));
+}
+
+#[test]
+fn physics_bake_rejects_surface_steeper_than_agent_limit() {
+    use glam::Quat;
+    use ribbon_plugin_physics::{Collider, PhysicsPlugin};
+    use ribbon_plugins::AppPluginExt;
+    use ribbon_scene::{ScenePlugin, Transform3D};
+    use std::time::Duration;
+
+    let mut app = App::new();
+    app.add_plugin(ScenePlugin).expect("scene");
+    app.add_plugin(PhysicsPlugin).expect("physics");
+    app.world.spawn((
+        Transform3D {
+            translation: Vec3::new(0.0, 0.0, 0.0),
+            rotation: Quat::from_rotation_z(35.0_f32.to_radians()),
+            ..Transform3D::default()
+        },
+        Collider::cuboid(Vec3::new(3.0, 0.15, 3.0)),
+    ));
+    app.world.resource_mut::<Time>().delta = Duration::from_millis(16);
+    app.update();
+
+    let cfg = NavBakeConfig {
+        min: Vec3::new(-1.0, -3.0, -1.0),
+        max: Vec3::new(1.0, 3.0, 1.0),
+        cell_size: 1.0,
+        agent_radius: 0.0,
+        agent_height: 0.5,
+        max_step_height: 0.3,
+        max_slope_deg: 20.0,
+        probe_height_above_ground: 3.0,
+    };
+    let grid = bake_nav_grid(&app.world, &cfg);
+    assert!(grid.cells.iter().all(|cell| !cell.walkable));
+}
+
+#[test]
+fn supercover_line_of_walk_rejects_blocked_corner_touch_cells() {
+    let mut grid = NavGrid::new(Vec2::ZERO, 1.0, 2, 2);
+    grid.set_walkable(1, 0, false);
+    assert!(!grid.line_of_walk(Vec3::new(0.5, 0.0, 0.5), Vec3::new(1.5, 0.0, 1.5),));
+    grid.set_walkable(1, 0, true);
+    grid.set_walkable(0, 1, false);
+    assert!(!grid.line_of_walk(Vec3::new(0.5, 0.0, 0.5), Vec3::new(1.5, 0.0, 1.5),));
+}
+
+#[test]
+fn supercover_uses_continuous_endpoints_not_only_cell_indices() {
+    let mut grid = NavGrid::new(Vec2::ZERO, 1.0, 2, 2);
+    // This segment enters row 1 before it crosses the vertical boundary. It never
+    // touches (1, 0), although a cell-index-only diagonal traversal would test it.
+    grid.set_walkable(1, 0, false);
+    assert!(grid.line_of_walk(Vec3::new(0.9, 0.0, 0.9), Vec3::new(1.1, 0.0, 1.9),));
+    grid.set_walkable(0, 1, false);
+    assert!(!grid.line_of_walk(Vec3::new(0.9, 0.0, 0.9), Vec3::new(1.1, 0.0, 1.9),));
+}
+
+#[test]
+fn supercover_checks_cells_touched_at_grid_line_endpoints() {
+    let mut grid = NavGrid::new(Vec2::ZERO, 1.0, 3, 2);
+    grid.set_walkable(0, 0, false);
+    assert!(!grid.line_of_walk(Vec3::new(1.0, 0.0, 0.5), Vec3::new(1.5, 0.0, 0.5),));
+}
+
+#[test]
+fn perception_budget_counts_observer_target_pairs_and_resumes_round_robin() {
+    use ribbon_scene::Transform3D;
+    let mut app = App::new();
+    let observer = app.world.spawn((
+        Sight {
+            range: 20.0,
+            fov_deg: 180.0,
+            eye_offset: Vec3::ZERO,
+            target_layers: Default::default(),
+        },
+        Transform3D::default(),
+    ));
+    for z in [-2.0, -3.0, -4.0, -5.0, -6.0] {
+        app.world.spawn((
+            SightTarget,
+            Transform3D::from_translation(Vec3::new(0.0, 0.0, z)),
+        ));
+    }
+    app.world.insert_resource(AiSettings {
+        max_sight_checks_per_update: 2,
+    });
+    app.world.insert_resource(SightCursor::default());
+
+    perception_system(&mut app.world);
+    assert!(app.world.get::<Perceived>(observer).is_none());
+    assert_eq!(app.world.resource::<SightCursor>().target, 2);
+
+    perception_system(&mut app.world);
+    assert!(app.world.get::<Perceived>(observer).is_none());
+    assert_eq!(app.world.resource::<SightCursor>().target, 4);
+
+    perception_system(&mut app.world);
+    let visible = app
+        .world
+        .get::<Perceived>(observer)
+        .expect("completed perception");
+    assert_eq!(visible.visible.len(), 5);
+}
+
+#[test]
+fn perception_discards_partial_results_when_target_set_changes() {
+    use ribbon_scene::Transform3D;
+    let mut app = App::new();
+    let observer = app.world.spawn((
+        Sight {
+            range: 20.0,
+            fov_deg: 180.0,
+            eye_offset: Vec3::ZERO,
+            target_layers: Default::default(),
+        },
+        Transform3D::default(),
+    ));
+    let removed_target = app.world.spawn((
+        SightTarget,
+        Transform3D::from_translation(Vec3::new(0.0, 0.0, -2.0)),
+    ));
+    let current_target = app.world.spawn((
+        SightTarget,
+        Transform3D::from_translation(Vec3::new(0.0, 0.0, -3.0)),
+    ));
+    app.world.insert_resource(AiSettings {
+        max_sight_checks_per_update: 1,
+    });
+    app.world.insert_resource(SightCursor::default());
+
+    perception_system(&mut app.world);
+    assert_eq!(app.world.resource::<SightCursor>().target, 1);
+    let _ = app.world.remove::<SightTarget>(removed_target);
+
+    perception_system(&mut app.world);
+    let visible = app
+        .world
+        .get::<Perceived>(observer)
+        .expect("completed new target pass");
+    assert_eq!(visible.visible, vec![current_target]);
+    assert!(!visible.visible.contains(&removed_target));
+}
+
+#[test]
+fn supercover_line_of_walk_checks_both_sides_of_boundary_aligned_segments() {
+    let mut vertical = NavGrid::new(Vec2::ZERO, 1.0, 3, 2);
+    vertical.set_walkable(0, 0, false);
+    assert!(!vertical.line_of_walk(Vec3::new(1.0, 0.0, 0.1), Vec3::new(1.0, 0.0, 1.9),));
+
+    let mut horizontal = NavGrid::new(Vec2::ZERO, 1.0, 3, 2);
+    horizontal.set_walkable(1, 0, false);
+    assert!(!horizontal.line_of_walk(Vec3::new(0.1, 0.0, 1.0), Vec3::new(2.9, 0.0, 1.0),));
+
+    horizontal.set_walkable(1, 0, true);
+    assert!(horizontal.line_of_walk(Vec3::new(0.1, 0.0, 1.0), Vec3::new(2.9, 0.0, 1.0),));
+}
+
+#[test]
+fn supercover_allows_segments_along_the_outer_grid_border() {
+    let grid = NavGrid::new(Vec2::ZERO, 1.0, 3, 2);
+    assert!(grid.line_of_walk(Vec3::new(0.0, 0.0, 0.1), Vec3::new(0.0, 0.0, 1.9),));
+    assert!(grid.line_of_walk(Vec3::new(0.1, 0.0, 0.0), Vec3::new(2.9, 0.0, 0.0),));
 }

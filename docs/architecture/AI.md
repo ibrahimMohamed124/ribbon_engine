@@ -2,7 +2,9 @@
 
 `ribbon_plugin_ai` contains generic ECS state machines and behavior trees, a typed blackboard, and a
 single-layer XZ navigation grid. Grid paths use 8-neighbor A*, prevent diagonal corner cutting, honor
-cell costs, cap expansions, and greedily smooth visible segments. `bake_nav_grid` samples physics
+cell costs, cap expansions, and greedily smooth segments only when a supercover traversal confirms
+that every touched cell is walkable. Sight work is budgeted and resumed round-robin per observer/target
+pair, including candidates rejected by range/FOV before raycasting. `bake_nav_grid` samples physics
 ground and clearance rays, then erodes walkable cells by agent radius.
 
 `NavAgent` writes `NavSteering` each update. It never moves the entity; the game applies the desired
