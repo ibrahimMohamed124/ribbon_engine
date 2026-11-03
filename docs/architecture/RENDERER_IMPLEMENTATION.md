@@ -19,8 +19,8 @@ confusing integrated capabilities with features that remain in the roadmap.
    keeping the material upload API explicit without an oversized argument list.
 3. **HDR and tone mapping.** Mesh color renders to `Rgba16Float`, then a fullscreen
    Reinhard tone mapper writes the acquired surface image. The post pass includes basic bloom,
-   optional GPU-adapted exposure, display color grading, FXAA, vignette, animated film grain
-   and chromatic aberration.
+   optional GPU-adapted exposure, display color grading, FXAA, vignette, animated film grain,
+   chromatic aberration and an optional depth-reconstructed spatial GTAO-style pass.
 4. **Directional and spotlight shadows.** Depth-only passes create one camera-frustum-fitted,
    texel-snapped directional shadow map and one selected perspective spotlight shadow map.
    Both are sampled with depth-comparison PCF. Cascades, multiple spotlight casters, point-light
@@ -67,6 +67,27 @@ Set `AntiAliasingSettings` before the first renderer-owned GPU upload (including
 
 The FXAA shader and sample-count negotiation have CPU/WGSL regression tests. An ignored GPU integration test exercises the MSAA HDR resolve followed by the FXAA tone-mapping pass on an adapter that supports the required formats. Passing headless tests alone does not establish visual edge quality; compare the graphics showcase on the target GPU.
 
+## Screen-space ambient occlusion
+
+`AmbientOcclusionSettings` is an optional ECS resource installed with the renderer. It is disabled
+by default and exposes bounded radius, intensity, bias, power and Low/Medium/High sampling presets.
+The compute pass reconstructs world positions from the main `Depth32Float` attachment and the
+active inverse view-projection matrix, estimates a local normal from depth-continuous neighbors,
+and samples a deterministic screen-space horizon kernel. Separate compute pipelines read
+single-sample and multisampled depth textures; the latter uses the nearest depth among the color
+pass samples. A full-resolution `Rgba8Unorm` visibility target is sampled by the fullscreen display
+pass, where it multiplies the scene HDR contribution before bloom is added.
+
+This is a spatial GTAO-style approximation, not a complete production GTAO implementation. It has
+no temporal reprojection/history denoising and no G-buffer geometric-normal input. Because the
+current forward renderer does not separate ambient illumination from direct lighting in an
+intermediate buffer, the visibility factor affects the scene HDR contribution as a whole rather
+than ambient light alone. The full-resolution visibility target and compute pipelines are retained
+by the tone mapper while AO is disabled; only the compute dispatch is skipped. Current post-process
+GPU timestamp queries do not isolate this compute pass; CPU profiling reports command-encoding time,
+not GPU execution duration. Use the ignored single-sample and MSAA GPU tests plus visual comparison
+on the target adapter before treating the effect as validated on a platform.
+
 ## PBR renderer test expectations
 
 The low-level GPU tests read the mesh pass before the production HDR tone-mapping and
@@ -101,4 +122,4 @@ The current material path preserves glTF `alphaMode`, `alphaCutoff`, and `double
 
 `ColorGradingSettings` offers exposure compensation in EV, contrast, saturation, temperature and tint. `VignetteSettings`, `FilmGrainSettings` and `ChromaticAberrationSettings` independently configure radial darkening, animated monochrome noise and radial RGB channel offsets. Inputs are sanitized and clamped before uniform upload to avoid NaN/Inf shader values or unbounded effect strength. Defaults are neutral apart from the pre-existing 1.15 manual exposure and tone-map/bloom behavior. `PostProcessingSettings::cinematic()` provides a restrained example preset.
 
-The exposure reduction currently uses deterministic 16x16 spatial sampling rather than a luminance histogram. It is a low-cost adaptive baseline, not a physically calibrated camera model; histogram percentiles, local exposure, HDR output/display metadata, SSAO/GTAO and temporal AA remain future work.
+The exposure reduction currently uses deterministic 16x16 spatial sampling rather than a luminance histogram. It is a low-cost adaptive baseline, not a physically calibrated camera model; histogram percentiles, local exposure, HDR output/display metadata, temporal AO reprojection/denoising and temporal AA remain future work.

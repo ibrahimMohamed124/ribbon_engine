@@ -102,13 +102,18 @@ pub fn extract_scene_3d(world: &mut World) {
         .copied()
         .unwrap_or_default();
 
-    let particles = if world.try_resource::<ParticleRenderData>().is_some() {
-        world.resource_scope::<ParticleRenderData, _>(|_, data| std::mem::take(&mut data.batches))
-    } else {
-        Vec::new()
-    };
     world.resource_scope::<ExtractedScene3D, _>(|world, extracted| {
-        extracted.particles = particles;
+        // Exchange the just-simulated batches with the previous frame's snapshot.
+        // The previous snapshot has already been rendered by this point, so its Vec
+        // allocations can safely return to ParticleRenderData for the next Update.
+        // This avoids discarding per-batch instance capacity every frame.
+        if world.try_resource::<ParticleRenderData>().is_some() {
+            world.resource_scope::<ParticleRenderData, _>(|_, data| {
+                std::mem::swap(&mut data.batches, &mut extracted.particles);
+            });
+        } else {
+            extracted.particles.clear();
+        }
         extracted.camera = world
             .query::<(&GlobalTransform3D, &Camera3D, Option<&StagedRender>)>()
             .iter()

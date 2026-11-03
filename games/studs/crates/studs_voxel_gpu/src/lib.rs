@@ -337,6 +337,7 @@ impl OffscreenVoxelRenderer {
                 let scene = Scene {
                     view_proj: projection * view,
                     camera_position: camera.position,
+                    camera_rotation: view.inverse().to_scale_rotation_translation().1,
                     sun: &sun,
                     spot_lights: &[],
                     point_lights: &[],

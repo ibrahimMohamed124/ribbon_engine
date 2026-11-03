@@ -13,7 +13,7 @@ struct Out { @builtin(position) clip: vec4<f32>, @location(0) local: vec2<f32>, 
  var corners = array<vec2<f32>,6>(vec2<f32>(-1.0,-1.0),vec2<f32>(1.0,-1.0),vec2<f32>(1.0,1.0),vec2<f32>(-1.0,-1.0),vec2<f32>(1.0,1.0),vec2<f32>(-1.0,1.0));
  let c=corners[vertex]; let right=normalize(camera.right.xyz); let up=normalize(camera.up.xyz);
  var angle=input.rotation; var width=input.size.x; var height=input.size.y;
- if input.shape_billboard.y>=0.0 { let speed=length(input.velocity); height=height+speed*input.shape_billboard.y; let projected=right*dot(input.velocity,right)+up*dot(input.velocity,up); if length(projected)>0.00001 { angle=atan2(dot(projected,up),dot(projected,right)); } }
+ if input.shape_billboard.y>=0.0 { let speed=length(input.velocity); height=height+speed*input.shape_billboard.y; let projected=right*dot(input.velocity,right)+up*dot(input.velocity,up); if length(projected)>0.00001 { angle=atan2(-dot(projected,right),dot(projected,up)); } }
  let ca=cos(angle); let sa=sin(angle); let r=right*ca+up*sa; let u=up*ca-right*sa;
  let world=input.position+r*(c.x*width*0.5)+u*(c.y*height*0.5);
  var out:Out; out.clip=globals.view_proj*vec4<f32>(world,1.0);out.local=c;out.color=input.color;out.shape=input.shape_billboard.x;out.emissive=input.emissive;return out;

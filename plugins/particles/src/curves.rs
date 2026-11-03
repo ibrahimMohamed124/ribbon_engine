@@ -11,15 +11,18 @@ impl Gradient {
         }
     }
     pub fn validate(&mut self) -> Result<(), ParticleError> {
-        if self.stops.len() > 8 {
-            return Err(ParticleError::TooManyStops);
-        }
         if self
             .stops
             .iter()
             .any(|(t, c)| !t.is_finite() || c.iter().any(|v| !v.is_finite()))
         {
             return Err(ParticleError::NonFinite);
+        }
+        // Bound the authored curve without rejecting otherwise usable emitters.
+        // Values outside the normalized lifetime range are clamped before sorting.
+        self.stops.truncate(8);
+        for (time, _) in &mut self.stops {
+            *time = time.clamp(0.0, 1.0);
         }
         self.stops.sort_by(|a, b| a.0.total_cmp(&b.0));
         Ok(())
@@ -43,15 +46,16 @@ impl Curve {
         }
     }
     pub fn validate(&mut self) -> Result<(), ParticleError> {
-        if self.points.len() > 8 {
-            return Err(ParticleError::TooManyStops);
-        }
         if self
             .points
             .iter()
             .any(|(t, v)| !t.is_finite() || !v.is_finite())
         {
             return Err(ParticleError::NonFinite);
+        }
+        self.points.truncate(8);
+        for (time, _) in &mut self.points {
+            *time = time.clamp(0.0, 1.0);
         }
         self.points.sort_by(|a, b| a.0.total_cmp(&b.0));
         Ok(())

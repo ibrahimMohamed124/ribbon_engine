@@ -29,6 +29,13 @@ impl Plugin for Render3dPlugin {
         if app.world.try_resource::<PostProcessingSettings>().is_none() {
             app.insert_resource(PostProcessingSettings::default());
         }
+        if app
+            .world
+            .try_resource::<AmbientOcclusionSettings>()
+            .is_none()
+        {
+            app.insert_resource(AmbientOcclusionSettings::default());
+        }
         if app.world.try_resource::<ModelWarmup>().is_none() {
             app.insert_resource(ModelWarmup::default());
         }

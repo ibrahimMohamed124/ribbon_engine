@@ -10,10 +10,11 @@ struct ToneMapParams {
     exposure_and_color: vec4<f32>, // manual exposure, contrast, saturation, FXAA enabled
     look: vec4<f32>,               // temperature, tint, vignette intensity, vignette radius
     effects: vec4<f32>,            // vignette softness, grain intensity, chromatic px, time
-    flags: vec4<f32>,              // auto exposure enabled, explicit sRGB output, reserved, reserved
+    flags: vec4<f32>,              // auto exposure enabled, explicit sRGB output, AO enabled, reserved
 }
 
 @group(0) @binding(4) var<uniform> params: ToneMapParams;
+@group(0) @binding(5) var ao_texture: texture_2d<f32>;
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
@@ -56,7 +57,13 @@ fn grade_color(input_color: vec3<f32>) -> vec3<f32> {
 
 fn display_color(uv_in: vec2<f32>) -> vec3<f32> {
     let uv = clamp_uv(uv_in);
-    let scene = textureSample(hdr_scene, hdr_sampler, uv).rgb;
+    var scene = textureSample(hdr_scene, hdr_sampler, uv).rgb;
+    if params.flags.z > 0.5 {
+        // Screen-space AO is applied to scene lighting; bloom remains unoccluded so bright
+        // emissive highlights do not acquire dark halos around depth discontinuities.
+        let visibility = textureSample(ao_texture, hdr_sampler, uv).r;
+        scene *= visibility;
+    }
     let bloom = textureSample(bloom_texture, hdr_sampler, uv).rgb * 0.42;
     let automatic_exposure = select(1.0, exposure_state, params.flags.x > 0.5);
     let hdr = max((scene * 1.15 + bloom) * params.exposure_and_color.x * automatic_exposure, vec3<f32>(0.0));

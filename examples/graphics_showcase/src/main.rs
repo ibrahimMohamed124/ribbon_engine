@@ -12,8 +12,9 @@ use ribbon_platform::{Input, PlatformConfig, PlatformPlugin};
 use ribbon_plugin_gltf::{GltfLoader, ModelAsset};
 use ribbon_plugin_render3d::glam::{Quat, Vec3};
 use ribbon_plugin_render3d::{
-    AntiAliasingMode, AntiAliasingSettings, BuiltinMesh, Camera3D, ExtractedScene3D, MeshInstance,
-    ModelInstance, PostProcessingSettings, Render3dPlugin, SunLight, Transform3D,
+    AmbientOcclusionQuality, AmbientOcclusionSettings, AntiAliasingMode, AntiAliasingSettings,
+    BuiltinMesh, Camera3D, ExtractedScene3D, MeshInstance, ModelInstance, PostProcessingSettings,
+    Render3dPlugin, SunLight, Transform3D,
 };
 use ribbon_plugins::AppPluginExt;
 use ribbon_render::gpu_window::{ClearColor, GpuWindowPlugin};
@@ -95,6 +96,31 @@ fn parse_anti_aliasing_mode(value: &str) -> Result<AntiAliasingMode, String> {
     }
 }
 
+fn parse_ambient_occlusion_preset(value: &str) -> Result<AmbientOcclusionSettings, String> {
+    let mut settings = AmbientOcclusionSettings::default();
+    match value.to_ascii_lowercase().as_str() {
+        "off" | "none" => Ok(settings),
+        "low" => {
+            settings.enabled = true;
+            settings.quality = AmbientOcclusionQuality::Low;
+            Ok(settings)
+        }
+        "medium" => {
+            settings.enabled = true;
+            settings.quality = AmbientOcclusionQuality::Medium;
+            Ok(settings)
+        }
+        "high" => {
+            settings.enabled = true;
+            settings.quality = AmbientOcclusionQuality::High;
+            Ok(settings)
+        }
+        _ => Err(format!(
+            "unknown ambient-occlusion preset `{value}`; expected off, low, medium, or high"
+        )),
+    }
+}
+
 fn parse_post_processing_preset(value: &str) -> Result<PostProcessingSettings, String> {
     match value.to_ascii_lowercase().as_str() {
         "neutral" | "none" => Ok(PostProcessingSettings::default()),
@@ -117,6 +143,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut anti_aliasing_mode = AntiAliasingMode::None;
     let mut post_processing_settings = PostProcessingSettings::default();
     let mut post_processing_preset = "neutral".to_owned();
+    let mut ao_settings = AmbientOcclusionSettings::default();
+    let mut ao_preset = "off".to_owned();
     let mut profile_csv: Option<String> = None;
     let mut profile_warmup = 120_u64;
     let mut stress_grid_side = 0_usize;
@@ -142,6 +170,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             "--post-preset" => {
                 post_processing_preset = args.next().ok_or("--post-preset expects a preset")?;
                 post_processing_settings = parse_post_processing_preset(&post_processing_preset)?;
+            }
+            "--ao" => {
+                ao_preset = args.next().ok_or("--ao expects a preset")?;
+                ao_settings = parse_ambient_occlusion_preset(&ao_preset)?;
             }
             "--profile-csv" => {
                 profile_csv = Some(args.next().ok_or("--profile-csv expects a path")?);
@@ -187,7 +219,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             "--help" | "-h" => {
                 println!(
-                    "graphics_showcase\n\nOptions:\n  --frames N                  Exit after N frames\n  --aa MODE                   none | msaa2 | msaa4 | msaa8 | fxaa (default: none)\n  --post-preset PRESET        neutral | cinematic (default: neutral)\n  --profile-csv PATH          Write a render profile CSV at shutdown\n  --profile-warmup N          Frames excluded before capture (default: 120)\n  --profile-static-scene      Keep stress-scene camera fixed during capture\n  --stress-grid SIDE          Render SIDE x SIDE stress placements (0 disables; max 128)\n  --stress-cycle-frames N     Despawn/reload the active stress scene every N frames\n  --stress-multi-asset-count N Use N distinct generated GLB assets in the active scene (max 128)\n  --stress-cache-prefetch-count N Request N extra low-priority, unleased assets (max 128)\n  --asset-memory-budget-mib N Set the soft decoded-CPU cache budget for unpinned assets\n  -h, --help                  Show this help\n\nStress examples:\n  --stress-grid 32 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/large-scene.csv\n  --stress-grid 48 --stress-multi-asset-count 32 --stress-cache-prefetch-count 32 --asset-memory-budget-mib 1 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/multi-asset.csv\n  --stress-grid 24 --stress-multi-asset-count 16 --stress-cache-prefetch-count 48 --asset-memory-budget-mib 1 --stress-cycle-frames 300 --frames 1950 --profile-warmup 60 --profile-csv target/profiles/multi-asset-lifecycle.csv"
+                    "graphics_showcase\n\nOptions:\n  --frames N                  Exit after N frames\n  --aa MODE                   none | msaa2 | msaa4 | msaa8 | fxaa (default: none)\n  --post-preset PRESET        neutral | cinematic (default: neutral)\n  --ao PRESET                 off | low | medium | high (default: off)\n  --profile-csv PATH          Write a render profile CSV at shutdown\n  --profile-warmup N          Frames excluded before capture (default: 120)\n  --profile-static-scene      Keep stress-scene camera fixed during capture\n  --stress-grid SIDE          Render SIDE x SIDE stress placements (0 disables; max 128)\n  --stress-cycle-frames N     Despawn/reload the active stress scene every N frames\n  --stress-multi-asset-count N Use N distinct generated GLB assets in the active scene (max 128)\n  --stress-cache-prefetch-count N Request N extra low-priority, unleased assets (max 128)\n  --asset-memory-budget-mib N Set the soft decoded-CPU cache budget for unpinned assets\n  -h, --help                  Show this help\n\nStress examples:\n  --stress-grid 32 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/large-scene.csv\n  --stress-grid 48 --stress-multi-asset-count 32 --stress-cache-prefetch-count 32 --asset-memory-budget-mib 1 --frames 1800 --profile-warmup 60 --profile-csv target/profiles/multi-asset.csv\n  --stress-grid 24 --stress-multi-asset-count 16 --stress-cache-prefetch-count 48 --asset-memory-budget-mib 1 --stress-cycle-frames 300 --frames 1950 --profile-warmup 60 --profile-csv target/profiles/multi-asset-lifecycle.csv"
                 );
                 return Ok(());
             }
@@ -373,8 +405,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         mode: anti_aliasing_mode,
     });
     app.insert_resource(post_processing_settings);
+    app.insert_resource(ao_settings);
     println!("[RENDER3D AA] requested mode: {anti_aliasing_mode:?}");
     println!("[RENDER3D POST] preset: {post_processing_preset}");
+    println!("[RENDER3D AO] requested preset: {ao_preset}");
     app.insert_resource(ShowcaseState {
         orbit_angle: 0.35,
         orbit_speed: if profile_static_scene { 0.0 } else { 0.24 },
@@ -484,7 +518,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "Controls: Space pause/resume, Left/Right orbit speed, Up/Down camera height, R reset."
     );
-    println!("Remaining: cascaded/soft shadows, multiple local-light shadows, SSAO/GTAO, IBL, probes, lightmaps, and GPU culling.");
+    println!("Remaining: cascaded/soft shadows, multiple local-light shadows, IBL, probes, lightmaps, and GPU culling.");
     println!(
         "Run `cargo run -p voxel_mesh_showcase` to view greedy voxels on the same mesh pipeline."
     );
@@ -495,8 +529,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 #[cfg(test)]
 mod anti_aliasing_cli_tests {
-    use super::{parse_anti_aliasing_mode, parse_post_processing_preset};
-    use ribbon_plugin_render3d::AntiAliasingMode;
+    use super::{
+        parse_ambient_occlusion_preset, parse_anti_aliasing_mode, parse_post_processing_preset,
+    };
+    use ribbon_plugin_render3d::{AmbientOcclusionQuality, AntiAliasingMode};
 
     #[test]
     fn parses_supported_anti_aliasing_modes_and_aliases() {
@@ -518,6 +554,28 @@ mod anti_aliasing_cli_tests {
         assert!(parse_anti_aliasing_mode("taa").is_err());
         assert!(parse_anti_aliasing_mode("msaa16").is_err());
     }
+    #[test]
+    fn parses_supported_ambient_occlusion_presets() {
+        assert!(!parse_ambient_occlusion_preset("off").unwrap().enabled);
+        assert_eq!(
+            parse_ambient_occlusion_preset("low").unwrap().quality,
+            AmbientOcclusionQuality::Low
+        );
+        assert_eq!(
+            parse_ambient_occlusion_preset("MEDIUM").unwrap().quality,
+            AmbientOcclusionQuality::Medium
+        );
+        assert_eq!(
+            parse_ambient_occlusion_preset("high").unwrap().quality,
+            AmbientOcclusionQuality::High
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_ambient_occlusion_presets() {
+        assert!(parse_ambient_occlusion_preset("ultra").is_err());
+    }
+
     #[test]
     fn parses_supported_post_processing_presets() {
         let neutral = parse_post_processing_preset("neutral").unwrap();

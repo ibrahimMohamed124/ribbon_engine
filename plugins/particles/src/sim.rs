@@ -1,7 +1,7 @@
 //! CPU simulation and render-batch extraction.
 use crate::rng::Pcg32;
 use crate::{
-    Burst, EmitterShape, GroundResponse, ParticleBudget, ParticleDiagnostics, ParticleEmitter,
+    EmitterShape, GroundResponse, ParticleBudget, ParticleDiagnostics, ParticleEmitter,
     SimulationSpace,
 };
 use glam::{Quat, Vec3};
@@ -29,6 +29,8 @@ pub struct ParticleEmitterState {
     seed: u64,
     max_particles: u32,
     prewarmed: bool,
+    validated: bool,
+    validation_failed: bool,
 }
 impl ParticleEmitterState {
     fn new(seed: u64, max: u32) -> Self {
@@ -49,6 +51,8 @@ impl ParticleEmitterState {
             seed,
             max_particles: max,
             prewarmed: false,
+            validated: false,
+            validation_failed: false,
         }
     }
     fn len(&self) -> usize {
@@ -80,6 +84,18 @@ pub fn particle_update_system(world: &mut World) {
         .iter()
         .map(|(e, _)| e)
         .collect::<Vec<_>>();
+    let live_emitters = ids
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    let orphaned_states = world
+        .query::<&ParticleEmitterState>()
+        .iter()
+        .filter_map(|(entity, _)| (!live_emitters.contains(&entity)).then_some(entity))
+        .collect::<Vec<_>>();
+    for entity in orphaned_states {
+        let _ = world.remove::<ParticleEmitterState>(entity);
+    }
     let mut poses = HashMap::with_capacity(ids.len());
     for e in &ids {
         let pose = world
@@ -121,11 +137,21 @@ pub fn particle_update_system(world: &mut World) {
             .query_mut::<(&mut ParticleEmitter, &mut ParticleEmitterState)>()
             .into_iter()
         {
-            if emitter.validate().is_err() {
-                continue;
-            }
             if state.seed != emitter.seed || state.max_particles != emitter.max_particles {
                 state.clear(emitter.seed, emitter.max_particles);
+            }
+            if !state.validated {
+                // Validation is deliberately attempted once for this emitter
+                // generation. A later seed/max-particle change resets the state
+                // and permits one fresh validation attempt.
+                let validation = emitter.validate();
+                state.seed = emitter.seed;
+                state.max_particles = emitter.max_particles;
+                state.validated = true;
+                state.validation_failed = validation.is_err();
+            }
+            if state.validation_failed {
+                continue;
             }
             let pose = poses.get(&entity).copied().unwrap_or(Pose {
                 position: Vec3::ZERO,
@@ -201,7 +227,12 @@ pub fn particle_update_system(world: &mut World) {
                 batch_index += 1;
             }
         }
-        render.batches.truncate(batch_index);
+        // Keep inactive trailing batches in the pool with empty instance vectors.
+        // The renderer skips empty batches, while future emitters can reuse their
+        // allocations instead of reallocating when an effect becomes active again.
+        for batch in render.batches.iter_mut().skip(batch_index) {
+            batch.instances.clear();
+        }
     });
     diagnostics.update_time_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
     if let Some(d) = world.try_resource::<ParticleDiagnostics>() {
@@ -222,23 +253,71 @@ fn simulate_emitter(
     remaining_budget: usize,
     d: &mut ParticleDiagnostics,
 ) {
-    if e.enabled {
-        if e.duration > 0.0 {
-            s.elapsed += dt;
-            if e.looping && s.elapsed >= e.duration {
-                s.elapsed %= e.duration;
-                s.burst_index = 0;
-            } else if !e.looping && s.elapsed >= e.duration {
+    if e.enabled && !s.finished {
+        let mut continuous_dt = dt;
+        if e.duration > f32::EPSILON && !e.looping {
+            // A non-looping emitter may cross its end during this frame. Only
+            // the portion before the end contributes continuous emissions.
+            continuous_dt = dt.min((e.duration - s.elapsed).max(0.0));
+            s.elapsed += continuous_dt;
+            while s.burst_index < e.bursts.len()
+                && e.bursts[s.burst_index].time <= s.elapsed
+                && e.bursts[s.burst_index].time <= e.duration
+            {
+                let burst = e.bursts[s.burst_index];
+                s.burst_index += 1;
+                spawn_n(s, e, pose, burst.count as usize, remaining_budget, d);
+            }
+            if s.elapsed >= e.duration {
                 s.finished = true;
             }
+        } else if e.duration > f32::EPSILON && e.looping {
+            // Process every loop boundary crossed by dt, including bursts at
+            // time zero in a new cycle when a short duration wraps mid-frame.
+            while s.burst_index < e.bursts.len()
+                && e.bursts[s.burst_index].time <= s.elapsed
+                && e.bursts[s.burst_index].time <= e.duration
+            {
+                let burst = e.bursts[s.burst_index];
+                s.burst_index += 1;
+                spawn_n(s, e, pose, burst.count as usize, remaining_budget, d);
+            }
+            let mut remaining_dt = dt;
+            while remaining_dt > 0.0 {
+                let until_boundary = (e.duration - s.elapsed).max(0.0);
+                if until_boundary <= f32::EPSILON {
+                    s.elapsed = 0.0;
+                    s.burst_index = 0;
+                    continue;
+                }
+                let step = remaining_dt.min(until_boundary);
+                s.elapsed += step;
+                remaining_dt -= step;
+                while s.burst_index < e.bursts.len()
+                    && e.bursts[s.burst_index].time <= s.elapsed
+                    && e.bursts[s.burst_index].time <= e.duration
+                {
+                    let burst = e.bursts[s.burst_index];
+                    s.burst_index += 1;
+                    spawn_n(s, e, pose, burst.count as usize, remaining_budget, d);
+                }
+                if s.elapsed >= e.duration {
+                    s.elapsed = 0.0;
+                    s.burst_index = 0;
+                }
+            }
+        } else {
+            // Duration zero means an unbounded emitter; bursts still use the
+            // elapsed clock and fire once at their authored times.
+            s.elapsed += dt;
+            while s.burst_index < e.bursts.len() && e.bursts[s.burst_index].time <= s.elapsed {
+                let burst = e.bursts[s.burst_index];
+                s.burst_index += 1;
+                spawn_n(s, e, pose, burst.count as usize, remaining_budget, d);
+            }
         }
-        while s.burst_index < e.bursts.len() && e.bursts[s.burst_index].time <= s.elapsed {
-            let b = e.bursts[s.burst_index];
-            s.burst_index += 1;
-            spawn_n(s, e, pose, b.count as usize, remaining_budget, d);
-        }
-        if !s.finished {
-            s.spawn_accumulator += e.rate_per_second * dt;
+        if continuous_dt > 0.0 {
+            s.spawn_accumulator += e.rate_per_second * continuous_dt;
             let n = s.spawn_accumulator.floor() as usize;
             s.spawn_accumulator -= n as f32;
             spawn_n(s, e, pose, n, remaining_budget, d);
@@ -247,7 +326,16 @@ fn simulate_emitter(
     let mut i = 0;
     while i < s.len() {
         let mut vel = s.vel[i];
-        vel += (e.gravity * e.gravity_scale + e.wind) * dt;
+        // Gravity and wind are authored in world space. Local-space particles
+        // store velocity in emitter-local coordinates, so rotate acceleration
+        // into that coordinate frame before integration.
+        let world_acceleration = e.gravity * e.gravity_scale + e.wind;
+        let acceleration = if e.space == SimulationSpace::Local {
+            pose.rotation.inverse() * world_acceleration
+        } else {
+            world_acceleration
+        };
+        vel += acceleration * dt;
         vel /= 1.0 + e.drag * dt;
         let mut pos = s.pos[i] + vel * dt;
         let mut dead = false;
@@ -384,7 +472,6 @@ fn spread(r: &mut Pcg32, base: Vec3, angle: f32) -> Vec3 {
     (axis * cos + tangent * (sin * phi.cos()) + bitangent * (sin * phi.sin())).normalize_or_zero()
 }
 fn remove_particle(s: &mut ParticleEmitterState, i: usize) {
-    let last = s.len() - 1;
     s.pos.swap_remove(i);
     s.vel.swap_remove(i);
     s.age.swap_remove(i);
@@ -393,7 +480,4 @@ fn remove_particle(s: &mut ParticleEmitterState, i: usize) {
     s.ang_vel.swap_remove(i);
     s.size.swap_remove(i);
     s.color0.swap_remove(i);
-    let _ = last;
 }
-#[allow(dead_code)]
-fn _burst_type(_: Burst) {}

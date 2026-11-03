@@ -606,6 +606,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a working wgpu adapter; validates model GPU upload and rendering"]
     fn model_upload_does_not_allocate_gpu_meshes_for_unplaced_primitives() {
         let context = match pollster::block_on(GpuContext::new_offscreen(8, 8)) {
             Ok(context) => context,
@@ -629,6 +630,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a working wgpu adapter; validates textured glTF rendering"]
     fn textured_gltf_cube_renders_with_its_checker_pattern() {
         let context = match pollster::block_on(GpuContext::new_offscreen(64, 64)) {
             Ok(context) => context,
@@ -665,11 +667,13 @@ mod tests {
             &Scene {
                 view_proj: Camera3D::default().projection(1.0) * view,
                 camera_position: eye.translation,
+                camera_rotation: glam::Quat::IDENTITY,
                 sun: &SunLight::default(),
                 spot_lights: &[],
                 point_lights: &[],
                 fog: crate::FogSettings::default(),
                 draws: &draws,
+                particles: &[],
             },
         );
         let pixels = context.readback().expect("readback").pixels;

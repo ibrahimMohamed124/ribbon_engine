@@ -45,7 +45,7 @@ and reason and can be explicitly retried near the open doorway; errors are not c
 The existing render graph's window clear still runs every frame, even when the mesh draw list is empty.
 The transition avoids deliberately entering a scene before its models are ready; it does not claim that
 an in-game black pixel/surface failure was visually observed or ruled out without a runtime capture.
-The weather plug-in also exposes a one-time `RainDiagnostics` batch timing: the existing 220-particle
+The engine particle plugin also exposes per-frame particle counts and update timing. Its rain preset
 activation is synchronous in `Update`, so the timing is needed to determine whether it contributes a
 visible hitch on target hardware rather than assuming model uploads are the only cause.
 
@@ -83,8 +83,8 @@ asynchronous and their CSV sample may correspond to work submitted in an earlier
 
 - Village placements and collider descriptors are still spawned synchronously in one `Update` after
   readiness. `spawn_village` logs elapsed time and its exact model/collider/entity counts. The first
-  following physics pass logs reconcile and fixed-step CPU time; the weather plug-in logs its initial
-  synchronous rain allocation batch. These timings are instrumentation, not measurements obtained in
+  following physics pass logs reconcile and fixed-step CPU time; the particle plugin reports its update
+  duration and particle counts. These timings are instrumentation, not measurements obtained in
   this environment. No batching/streaming system is added without a measured frame spike; if values are
   significant on target hardware, use the capture to justify bounded collider activation or scene
   batching as a separate change.

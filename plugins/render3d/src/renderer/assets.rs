@@ -237,6 +237,8 @@ impl MeshRenderer {
         let mut stats = MeshRendererResourceStats {
             visible_mesh_instances: self.last_visible_mesh_instances,
             visible_draw_calls: self.last_visible_draw_calls,
+            particle_instances_drawn: self.last_particle_instances_drawn,
+            particle_batches_drawn: self.last_particle_batches_drawn,
             shadow_draw_calls: self.last_shadow_draw_calls,
             skinned_draws_after_palette_budget: self.last_skinned_draws_after_palette_budget,
             skinned_draws_rejected_palette_capacity: self

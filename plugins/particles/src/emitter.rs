@@ -159,7 +159,10 @@ impl ParticleEmitter {
         if self.bursts.iter().any(|b| !b.time.is_finite()) {
             bad = true;
         }
-        if self.ground.is_some_and(|g| !g.y.is_finite()) {
+        if self.ground.is_some_and(|g| {
+            !g.y.is_finite()
+                || matches!(g.response, GroundResponse::Bounce { restitution } if !restitution.is_finite())
+        }) {
             bad = true;
         }
         for v in [
@@ -181,18 +184,40 @@ impl ParticleEmitter {
         self.max_particles = self.max_particles.clamp(1, 100_000);
         self.bursts
             .iter_mut()
-            .for_each(|b| b.time = b.time.max(0.0));
+            .for_each(|burst| burst.time = burst.time.max(0.0));
         self.direction = if self.direction.length_squared() > 1e-8 {
             self.direction.normalize()
         } else {
             Vec3::Y
         };
         self.rate_per_second = self.rate_per_second.max(0.0);
+        self.duration = self.duration.max(0.0);
+        self.direction_spread_deg = self.direction_spread_deg.clamp(0.0, 180.0);
         self.lifetime.0 = self.lifetime.0.max(0.001);
+        self.lifetime.1 = self.lifetime.1.max(self.lifetime.0);
+        self.start_speed.0 = self.start_speed.0.max(0.0);
+        self.start_speed.1 = self.start_speed.1.max(self.start_speed.0);
         self.start_size.0 = self.start_size.0.max(0.0);
+        self.start_size.1 = self.start_size.1.max(self.start_size.0);
         self.aspect = self.aspect.max(0.001);
         self.drag = self.drag.max(0.0);
         self.emissive = self.emissive.max(0.0);
+        match &mut self.shape {
+            EmitterShape::Sphere { radius, .. } => *radius = radius.max(0.0),
+            EmitterShape::Box { half_extents } => *half_extents = half_extents.abs(),
+            EmitterShape::Cone { angle_deg, radius } => {
+                *angle_deg = angle_deg.clamp(0.0, 180.0);
+                *radius = radius.max(0.0);
+            }
+            EmitterShape::Point => {}
+        }
+        if let Some(GroundPlane {
+            response: GroundResponse::Bounce { restitution },
+            ..
+        }) = &mut self.ground
+        {
+            *restitution = restitution.clamp(0.0, 1.0);
+        }
         self.bursts.truncate(64);
         self.bursts.sort_by(|a, b| a.time.total_cmp(&b.time));
         self.color_over_life.validate()?;

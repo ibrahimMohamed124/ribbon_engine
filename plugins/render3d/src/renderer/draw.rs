@@ -241,7 +241,7 @@ impl MeshRenderer {
             queue,
             scene.particles,
             scene.camera_position,
-            scene.view_proj,
+            scene.camera_rotation,
         );
         self.last_particle_instances_drawn = particle_instances;
         self.last_particle_batches_drawn = particle_batches;
@@ -594,7 +594,6 @@ impl MeshRenderer {
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
                 start = end;
             }
-            self.particles.draw(&mut pass, &self.globals_group);
         }
         record_cpu_phase(
             &mut cpu_phases,
@@ -666,6 +665,9 @@ impl MeshRenderer {
                 pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
                 start = end;
             }
+            // Particle pipelines target the same HDR/MSAA color format as this pass. Keep
+            // them out of the depth-only shadow passes, whose color attachment list is empty.
+            self.particles.draw(&mut pass, &self.globals_group);
         }
         record_cpu_phase(
             &mut cpu_phases,

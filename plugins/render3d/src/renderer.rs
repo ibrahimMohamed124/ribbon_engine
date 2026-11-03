@@ -4,7 +4,7 @@ use crate::components::{FogSettings, PointLight, SpotLight, SunLight};
 use crate::mesh::{self, Vertex};
 use crate::profiling::{GpuCompletedSample, GpuTimestampProfiler, GpuTimingSnapshot};
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use ribbon_plugin_gltf::AlphaMode;
 use ribbon_render::profiling::RenderPassTiming;
 use std::collections::hash_map::DefaultHasher;
@@ -220,6 +220,8 @@ pub struct Scene<'a> {
     pub view_proj: Mat4,
     /// Camera world position used by view-dependent BRDF terms.
     pub camera_position: Vec3,
+    /// Camera world rotation used to orient camera-facing particle billboards.
+    pub camera_rotation: Quat,
     /// Directional light and ambient term.
     pub sun: &'a SunLight,
     /// World-space spot lights. The renderer uses at most one shadow-casting light.

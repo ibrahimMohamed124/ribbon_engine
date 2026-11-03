@@ -84,7 +84,7 @@ impl MeshRenderer {
             sample_count,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         self.depth = Some(DepthTarget {
@@ -233,11 +233,13 @@ mod tests {
         let scene = Scene {
             view_proj,
             camera_position: eye,
+            camera_rotation: glam::Quat::IDENTITY,
             sun: &sun,
             spot_lights: &[],
             point_lights: &[],
             fog: FogSettings::default(),
             draws: &[],
+            particles: &[],
         };
         let matrix = MeshRenderer::directional_shadow_matrix(&scene);
         assert!(matrix.to_cols_array().iter().all(|value| value.is_finite()));
@@ -285,20 +287,24 @@ mod tests {
         let base_scene = Scene {
             view_proj: base_view_proj,
             camera_position: eye,
+            camera_rotation: glam::Quat::IDENTITY,
             sun: &sun,
             spot_lights: &[],
             point_lights: &[],
             fog: FogSettings::default(),
             draws: &[],
+            particles: &[],
         };
         let moved_scene = Scene {
             view_proj: moved_view_proj,
             camera_position: eye + shift,
+            camera_rotation: glam::Quat::IDENTITY,
             sun: &sun,
             spot_lights: &[],
             point_lights: &[],
             fog: FogSettings::default(),
             draws: &[],
+            particles: &[],
         };
         let a = MeshRenderer::directional_shadow_matrix(&base_scene);
         let b = MeshRenderer::directional_shadow_matrix(&moved_scene);
@@ -320,11 +326,13 @@ mod tests {
         let scene = Scene {
             view_proj: Mat4::ZERO,
             camera_position: Vec3::ZERO,
+            camera_rotation: glam::Quat::IDENTITY,
             sun: &sun,
             spot_lights: &[],
             point_lights: &[],
             fog: FogSettings::default(),
             draws: &[],
+            particles: &[],
         };
         let matrix = MeshRenderer::directional_shadow_matrix(&scene);
         assert!(matrix.to_cols_array().iter().all(|value| value.is_finite()));

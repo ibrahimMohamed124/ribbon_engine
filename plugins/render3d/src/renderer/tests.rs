@@ -7,6 +7,9 @@ use glam::{Mat4, Vec3};
 use ribbon_plugin_gltf::AlphaMode;
 use ribbon_render::gpu::GpuContext;
 use ribbon_render::gpu_window::clear_view;
+use ribbon_render_contracts::{
+    ParticleBatch, ParticleBillboard, ParticleBlendMode, ParticleInstance, ParticleShape,
+};
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -52,6 +55,7 @@ impl Harness {
             &Scene {
                 view_proj: Camera3D::default().projection(1.0) * view,
                 camera_position: eye.translation,
+                camera_rotation: glam::Quat::IDENTITY,
                 sun: &SunLight::default(),
                 spot_lights: &[],
                 point_lights: &[],
@@ -106,6 +110,73 @@ fn vertex_attributes_match_the_interleaved_joint_and_weight_storage_layout() {
     assert_eq!(
         offset(6),
         (offset_of!(Vertex, weights) + size_of::<[f32; 4]>()) as u64
+    );
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter; validates particles beside a spotlight shadow pass"]
+fn particles_are_drawn_in_the_color_pass_when_a_shadow_caster_is_active() {
+    let Some(mut harness) = harness() else {
+        eprintln!("skipping particle color-pass regression test: no wgpu adapter available");
+        return;
+    };
+
+    let eye = Transform3D::looking_at(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, Vec3::Y);
+    let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
+    let sun = SunLight::default();
+    // This specifically exercises the shadow-caster branch that previously attempted to
+    // bind the color-target particle pipeline inside a depth-only spotlight pass.
+    let spotlight = SpotLight::default();
+    let particles = [ParticleBatch {
+        blend: ParticleBlendMode::Alpha,
+        shape: ParticleShape::Square,
+        billboard: ParticleBillboard::Camera,
+        sort_back_to_front: false,
+        instances: vec![ParticleInstance {
+            position: [0.0, 0.0, 0.0],
+            size: [1.5, 1.5],
+            color: [1.0, 0.0, 0.0, 1.0],
+            ..ParticleInstance::default()
+        }],
+    }];
+
+    clear_view(
+        harness.context.device(),
+        harness.context.queue(),
+        harness.context.target().view(),
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    harness.renderer.render(
+        harness.context.device(),
+        harness.context.queue(),
+        harness.context.target().view(),
+        (SIZE, SIZE),
+        &Scene {
+            view_proj: Camera3D::default().projection(1.0) * view,
+            camera_position: eye.translation,
+            camera_rotation: glam::Quat::IDENTITY,
+            sun: &sun,
+            spot_lights: std::slice::from_ref(&spotlight),
+            point_lights: &[],
+            fog: FogSettings::default(),
+            draws: &[],
+            particles: &particles,
+        },
+    );
+
+    let pixels = harness
+        .context
+        .readback()
+        .expect("particle readback")
+        .pixels;
+    assert!(
+        pixels.iter().any(|pixel| {
+            let red = (pixel >> 16) & 0xff;
+            let green = (pixel >> 8) & 0xff;
+            let blue = pixel & 0xff;
+            red > 32 && red > green.saturating_add(16) && red > blue.saturating_add(16)
+        }),
+        "the alpha particle should contribute visible red pixels to the color target"
     );
 }
 
@@ -192,6 +263,7 @@ fn skinned_vertex_palette_moves_geometry_in_the_color_pass_on_gpu() {
     let scene = Scene {
         view_proj: Camera3D::default().projection(1.0) * view,
         camera_position: eye.translation,
+        camera_rotation: glam::Quat::IDENTITY,
         sun: &SunLight::default(),
         spot_lights: &[],
         point_lights: &[],
@@ -554,6 +626,7 @@ fn spotlight_only_corridor_writes_a_headless_png() {
                 .projection(WIDTH as f32 / HEIGHT as f32)
                     * view,
                 camera_position: camera.translation,
+                camera_rotation: glam::Quat::IDENTITY,
                 sun: &SunLight {
                     direction: Vec3::NEG_Y,
                     color: Vec3::ZERO,
@@ -923,6 +996,7 @@ fn gtao_single_sample_depth_compute_runs_on_gpu() {
     let scene = Scene {
         view_proj: camera.projection(1.0) * view,
         camera_position: eye.translation,
+        camera_rotation: glam::Quat::IDENTITY,
         sun: &sun,
         spot_lights: &[],
         point_lights: &[],
@@ -979,7 +1053,7 @@ fn gtao_single_sample_depth_compute_runs_on_gpu() {
 #[test]
 #[ignore = "requires a real GPU adapter with an MSAA resolve-capable HDR/depth format pair"]
 fn multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu() {
-    use crate::post::{negotiate_msaa_sample_count, HdrTarget, ToneMapper, HDR_FORMAT};
+    use crate::post::{HdrTarget, ToneMapper, HDR_FORMAT};
 
     let context = pollster::block_on(GpuContext::new_offscreen(SIZE, SIZE))
         .expect("MSAA/FXAA GPU test requires a working wgpu adapter");
@@ -1007,11 +1081,11 @@ fn multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu() {
                     && depth_features.flags.sample_count_supported(*count))
         })
         .collect();
-    let sample_count = negotiate_msaa_sample_count(4, &supported);
     assert!(
-        sample_count > 1,
-        "test adapter does not expose a usable HDR/depth MSAA pair: {supported:?}"
+        supported.contains(&4),
+        "test adapter does not expose a usable 4x HDR/depth MSAA pair: {supported:?}"
     );
+    let sample_count = 4;
 
     let msaa_texture = context.device().create_texture(&wgpu::TextureDescriptor {
         label: Some("MSAA regression HDR color target"),
@@ -1046,15 +1120,34 @@ fn multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu() {
     let eye = Transform3D::looking_at(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, Vec3::Y);
     let view = Mat4::from_rotation_translation(eye.rotation, eye.translation).inverse();
     let sun = SunLight::default();
+    let particles = [ParticleBatch {
+        blend: ParticleBlendMode::Alpha,
+        shape: ParticleShape::Square,
+        billboard: ParticleBillboard::Camera,
+        sort_back_to_front: false,
+        instances: vec![ParticleInstance {
+            position: [0.0, 0.0, 0.0],
+            size: [1.5, 1.5],
+            color: [1.0, 0.0, 0.0, 1.0],
+            ..ParticleInstance::default()
+        }],
+    }];
+    // Keep the original mesh-rendering coverage in this MSAA regression test;
+    // the particle draw is additive coverage, not a replacement for the cube.
+    let draws = [cube(
+        Mat4::from_translation(Vec3::new(1.2, 0.0, 0.0)),
+        [0.9, 0.65, 0.3],
+    )];
     let scene = Scene {
         view_proj: Camera3D::default().projection(1.0) * view,
         camera_position: eye.translation,
+        camera_rotation: glam::Quat::IDENTITY,
         sun: &sun,
         spot_lights: &[],
         point_lights: &[],
         fog: FogSettings::default(),
-        draws: &[cube(Mat4::IDENTITY, [1.0, 0.35, 0.2])],
-        particles: &[],
+        draws: &draws,
+        particles: &particles,
     };
     renderer.render_with_skinning_resolve(
         RenderTarget {
@@ -1106,8 +1199,33 @@ fn multisampled_hdr_resolves_then_fxaa_tonemaps_on_gpu() {
         .pixels;
     assert!(
         pixels.iter().any(|pixel| {
-            ((pixel >> 16) & 0xff) > 1 || ((pixel >> 8) & 0xff) > 1 || (pixel & 0xff) > 1
+            let red = (pixel >> 16) & 0xff;
+            let green = (pixel >> 8) & 0xff;
+            let blue = pixel & 0xff;
+            (red > 1) || (green > 1) || (blue > 1)
         }),
-        "MSAA resolve followed by adaptive exposure, GTAO, FXAA and display effects produced an all-black RGB image"
+        "MSAA resolve followed by FXAA and display effects produced an all-black RGB image"
+    );
+    assert!(
+        pixels.iter().any(|pixel| {
+            let red = (pixel >> 16) & 0xff;
+            let green = (pixel >> 8) & 0xff;
+            let blue = pixel & 0xff;
+            red > 24 && red > green.saturating_add(12) && red > blue.saturating_add(12)
+        }),
+        "the alpha particle should remain visible after the 4x MSAA resolve and display effects"
+    );
+    let mesh_region_has_color = (24..44).any(|y| {
+        (42..62).any(|x| {
+            let pixel = pixels[(y * SIZE + x) as usize];
+            let red = (pixel >> 16) & 0xff;
+            let green = (pixel >> 8) & 0xff;
+            let blue = pixel & 0xff;
+            red > 20 && green > 12 && red > blue.saturating_add(4)
+        })
+    });
+    assert!(
+        mesh_region_has_color,
+        "the original offset mesh draw should remain visible in the same 4x MSAA scene"
     );
 }

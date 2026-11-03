@@ -1484,114 +1484,130 @@ impl MeshPass {
                 .unwrap_or_default()
                 .normalized(),
         };
-        world.resource_scope::<AssetServer, _>(|world, server| {
-            let cpu_ready_warmup_exists = warmup_snapshots.iter().any(|request| {
-                !matches!(&request.status, ModelWarmupStatus::Failed(_))
-                    && server.get(request.handle).is_some()
-            });
-            if !extracted.models.is_empty() || cpu_ready_warmup_exists {
-                self.ensure_renderer(world, target);
-            }
+        if world.try_resource::<AssetServer>().is_some() {
+            world.resource_scope::<AssetServer, _>(|world, server| {
+                let cpu_ready_warmup_exists = warmup_snapshots.iter().any(|request| {
+                    !matches!(&request.status, ModelWarmupStatus::Failed(_))
+                        && server.get(request.handle).is_some()
+                });
+                if !extracted.models.is_empty() || cpu_ready_warmup_exists {
+                    self.ensure_renderer(world, target);
+                }
 
-            // Existing visible scene placements have priority over background warmups. Both paths
-            // share the same bounded per-frame upload budget and exact generation/revision cache.
-            for placement in &extracted.models {
-                let handle = placement.model;
-                let key = model_key(handle);
-                let Some(revision) = server.revision(handle) else {
-                    continue;
-                };
-                let revision_key = (key, revision);
-                if !self.models.contains_key(&key)
-                    && !self.failed_model_uploads.contains_key(&revision_key)
-                {
-                    let _ = self.queue_model_upload(
-                        world,
-                        server,
-                        target,
-                        handle,
-                        warmup_snapshots
-                            .iter()
-                            .find(|request| model_key(request.handle) == key)
-                            .map(|request| request.path.clone()),
-                        &mut upload_frame_budget,
-                    );
-                }
-                if self.model_upload_pending(revision_key)
-                    || self.failed_model_uploads.contains_key(&revision_key)
-                {
-                    continue;
-                }
-                let Some(parts) = self.models.get(&key) else {
-                    continue;
-                };
-                for part in parts {
-                    let animated_node_transform = placement
-                        .skeletal_pose
-                        .as_ref()
-                        .and_then(|pose| pose.node_global_transforms.get(part.node_index))
-                        .copied()
-                        .unwrap_or(part.transform);
-                    let draw = Draw {
-                        mesh: part.mesh,
-                        material: part.material,
-                        model: placement.transform * animated_node_transform,
-                        tint: [1.0; 3],
+                // Existing visible scene placements have priority over background warmups. Both paths
+                // share the same bounded per-frame upload budget and exact generation/revision cache.
+                for placement in &extracted.models {
+                    let handle = placement.model;
+                    let key = model_key(handle);
+                    let Some(revision) = server.revision(handle) else {
+                        continue;
                     };
-                    if part.skin.is_some() {
-                        let animated_palette = placement
+                    let revision_key = (key, revision);
+                    if !self.models.contains_key(&key)
+                        && !self.failed_model_uploads.contains_key(&revision_key)
+                    {
+                        let _ = self.queue_model_upload(
+                            world,
+                            server,
+                            target,
+                            handle,
+                            warmup_snapshots
+                                .iter()
+                                .find(|request| model_key(request.handle) == key)
+                                .map(|request| request.path.clone()),
+                            &mut upload_frame_budget,
+                        );
+                    }
+                    if self.model_upload_pending(revision_key)
+                        || self.failed_model_uploads.contains_key(&revision_key)
+                    {
+                        continue;
+                    }
+                    let Some(parts) = self.models.get(&key) else {
+                        continue;
+                    };
+                    for part in parts {
+                        let animated_node_transform = placement
                             .skeletal_pose
                             .as_ref()
-                            .and_then(|pose| pose.node_palettes.get(part.placement_index))
-                            .and_then(Option::as_ref);
-                        let palette = animated_palette.or(part.bind_pose_palette.as_ref());
-                        if let Some(palette) = palette {
-                            skinned_draws.push(SkinnedDraw {
-                                draw,
-                                joint_matrices: Arc::clone(palette),
-                            });
+                            .and_then(|pose| pose.node_global_transforms.get(part.node_index))
+                            .copied()
+                            .unwrap_or(part.transform);
+                        let draw = Draw {
+                            mesh: part.mesh,
+                            material: part.material,
+                            model: placement.transform * animated_node_transform,
+                            tint: [1.0; 3],
+                        };
+                        if part.skin.is_some() {
+                            let animated_palette = placement
+                                .skeletal_pose
+                                .as_ref()
+                                .and_then(|pose| pose.node_palettes.get(part.placement_index))
+                                .and_then(Option::as_ref);
+                            let palette = animated_palette.or(part.bind_pose_palette.as_ref());
+                            if let Some(palette) = palette {
+                                skinned_draws.push(SkinnedDraw {
+                                    draw,
+                                    joint_matrices: Arc::clone(palette),
+                                });
+                            }
+                            // Do not draw weighted geometry as a static mesh if even its validated
+                            // bind-pose palette was unavailable.
+                        } else {
+                            draws.push(draw);
                         }
-                        // Do not draw weighted geometry as a static mesh if even its validated
-                        // bind-pose palette was unavailable.
-                    } else {
-                        draws.push(draw);
                     }
                 }
-            }
 
-            // Standalone meshes/materials use the same count/byte admission budget as model
-            // uploads. Visible placements above remain the highest-priority work in this pass.
-            self.process_generic_gpu_warmups(world, target, &mut upload_frame_budget, profile_cpu);
+                // Standalone meshes/materials use the same count/byte admission budget as model
+                // uploads. Visible placements above remain the highest-priority work in this pass.
+                self.process_generic_gpu_warmups(
+                    world,
+                    target,
+                    &mut upload_frame_budget,
+                    profile_cpu,
+                );
 
-            for request in &warmup_snapshots {
-                if matches!(&request.status, ModelWarmupStatus::Failed(_)) {
-                    continue;
-                }
-                let load_state = server.state::<ribbon_plugin_gltf::ModelAsset>(&request.path);
-                match load_state {
-                    Some(LoadState::Failed(error)) => {
-                        let message =
-                            format!("CPU asset `{}` failed to load: {error}", request.path);
-                        Self::set_warmup_status(
-                            world,
-                            request.handle,
-                            ModelWarmupStatus::Failed(message),
-                        );
+                for request in &warmup_snapshots {
+                    if matches!(&request.status, ModelWarmupStatus::Failed(_)) {
                         continue;
                     }
-                    Some(LoadState::Unloaded) | None => {
-                        let message = format!(
-                            "CPU asset `{}` has no active asynchronous load request",
-                            request.path
-                        );
-                        Self::set_warmup_status(
-                            world,
-                            request.handle,
-                            ModelWarmupStatus::Failed(message),
-                        );
-                        continue;
+                    let load_state = server.state::<ribbon_plugin_gltf::ModelAsset>(&request.path);
+                    match load_state {
+                        Some(LoadState::Failed(error)) => {
+                            let message =
+                                format!("CPU asset `{}` failed to load: {error}", request.path);
+                            Self::set_warmup_status(
+                                world,
+                                request.handle,
+                                ModelWarmupStatus::Failed(message),
+                            );
+                            continue;
+                        }
+                        Some(LoadState::Unloaded) | None => {
+                            let message = format!(
+                                "CPU asset `{}` has no active asynchronous load request",
+                                request.path
+                            );
+                            Self::set_warmup_status(
+                                world,
+                                request.handle,
+                                ModelWarmupStatus::Failed(message),
+                            );
+                            continue;
+                        }
+                        Some(LoadState::Loading) => {
+                            Self::set_warmup_status(
+                                world,
+                                request.handle,
+                                ModelWarmupStatus::WaitingForCpu,
+                            );
+                            continue;
+                        }
+                        Some(LoadState::Loaded) => {}
                     }
-                    Some(LoadState::Loading) => {
+                    if server.get(request.handle).is_none() {
                         Self::set_warmup_status(
                             world,
                             request.handle,
@@ -1599,60 +1615,63 @@ impl MeshPass {
                         );
                         continue;
                     }
-                    Some(LoadState::Loaded) => {}
-                }
-                if server.get(request.handle).is_none() {
-                    Self::set_warmup_status(
-                        world,
-                        request.handle,
-                        ModelWarmupStatus::WaitingForCpu,
-                    );
-                    continue;
-                }
-                let Some(revision) = server.revision(request.handle) else {
-                    Self::set_warmup_status(
-                        world,
-                        request.handle,
-                        ModelWarmupStatus::WaitingForCpu,
-                    );
-                    continue;
-                };
-                let key = model_key(request.handle);
-                let revision_key = (key, revision);
-                if let Some(error) = self.failed_model_uploads.get(&revision_key) {
-                    Self::set_warmup_status(
-                        world,
-                        request.handle,
-                        ModelWarmupStatus::Failed(format!(
-                            "model `{}` failed GPU warmup: {error}",
-                            request.path
-                        )),
-                    );
-                    continue;
-                }
-                if self.models.contains_key(&key) {
-                    if self.model_upload_pending(revision_key) {
+                    let Some(revision) = server.revision(request.handle) else {
                         Self::set_warmup_status(
                             world,
                             request.handle,
-                            ModelWarmupStatus::WaitingForGpu,
+                            ModelWarmupStatus::WaitingForCpu,
                         );
-                    } else {
-                        Self::set_warmup_status(world, request.handle, ModelWarmupStatus::Ready);
+                        continue;
+                    };
+                    let key = model_key(request.handle);
+                    let revision_key = (key, revision);
+                    if let Some(error) = self.failed_model_uploads.get(&revision_key) {
+                        Self::set_warmup_status(
+                            world,
+                            request.handle,
+                            ModelWarmupStatus::Failed(format!(
+                                "model `{}` failed GPU warmup: {error}",
+                                request.path
+                            )),
+                        );
+                        continue;
                     }
-                    continue;
+                    if self.models.contains_key(&key) {
+                        if self.model_upload_pending(revision_key) {
+                            Self::set_warmup_status(
+                                world,
+                                request.handle,
+                                ModelWarmupStatus::WaitingForGpu,
+                            );
+                        } else {
+                            Self::set_warmup_status(
+                                world,
+                                request.handle,
+                                ModelWarmupStatus::Ready,
+                            );
+                        }
+                        continue;
+                    }
+                    Self::set_warmup_status(
+                        world,
+                        request.handle,
+                        ModelWarmupStatus::WaitingForGpu,
+                    );
+                    let _ = self.queue_model_upload(
+                        world,
+                        server,
+                        target,
+                        request.handle,
+                        Some(request.path.clone()),
+                        &mut upload_frame_budget,
+                    );
                 }
-                Self::set_warmup_status(world, request.handle, ModelWarmupStatus::WaitingForGpu);
-                let _ = self.queue_model_upload(
-                    world,
-                    server,
-                    target,
-                    request.handle,
-                    Some(request.path.clone()),
-                    &mut upload_frame_budget,
-                );
-            }
-        });
+            });
+        } else {
+            // Built-in and dynamic meshes do not require AssetServer. Keep standalone
+            // GPU resource warmups working when an app does not install AssetPlugin.
+            self.process_generic_gpu_warmups(world, target, &mut upload_frame_budget, profile_cpu);
+        }
         self.model_gpu_uploads_this_frame = upload_frame_budget
             .uploads
             .saturating_sub(self.generic_gpu_uploads_this_frame);
@@ -1666,7 +1685,7 @@ impl MeshPass {
             asset_resolution_started,
         );
 
-        if draws.is_empty() && skinned_draws.is_empty() {
+        if draws.is_empty() && skinned_draws.is_empty() && extracted.particles.is_empty() {
             if let Some(renderer) = self.renderer.as_mut() {
                 renderer.maintain_instance_buffers(target.device, 0);
             }
@@ -1770,6 +1789,7 @@ impl MeshPass {
             let scene = Scene {
                 view_proj,
                 camera_position: camera.transform.translation,
+                camera_rotation: camera.transform.rotation,
                 sun: &extracted.sun,
                 spot_lights: &extracted.spot_lights,
                 point_lights: &extracted.point_lights,

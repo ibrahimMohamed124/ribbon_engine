@@ -12,7 +12,9 @@ cargo run -p graphics_showcase -- --aa none
 cargo run -p graphics_showcase -- --aa msaa4
 cargo run -p graphics_showcase -- --aa fxaa
 cargo run -p graphics_showcase -- --post-preset cinematic
-cargo run -p graphics_showcase -- --aa msaa4 --post-preset cinematic
+cargo run -p graphics_showcase -- --ao low
+cargo run -p graphics_showcase -- --ao medium
+cargo run -p graphics_showcase -- --aa msaa4 --ao high --post-preset cinematic
 ```
 
 ## Controls
@@ -32,6 +34,7 @@ cargo run -p graphics_showcase -- --aa msaa4 --post-preset cinematic
 - A single directional shadow map, an `Rgba16Float` HDR scene target, Reinhard tone mapping and basic bloom.
 - GPU average-log-luminance auto exposure with asymmetric temporal adaptation, plus configurable exposure compensation, contrast, saturation, temperature and tint.
 - Optional vignette, animated film grain and pixel-scaled chromatic aberration in the final display pass.
+- Optional depth-reconstructed GTAO-style ambient occlusion with Low/Medium/High sample presets; the same feature runs against single-sample and MSAA depth buffers.
 - Thin grid lines and continuously moving/rotating objects for visual comparison of no AA, MSAA, and FXAA.
 - CPU frustum culling for the main color pass while retaining off-screen objects for shadows.
 - Per-frame transforms, camera orbit, and frame-limit shutdown for capture workflows.
@@ -42,8 +45,8 @@ cargo run -p graphics_showcase -- --aa msaa4 --post-preset cinematic
 This is a first PBR/rendering vertical slice, not a complete modern renderer. The renderer now
 supports normal/occlusion/emissive maps, glTF OPAQUE/MASK/BLEND, per-material double-sided
 pipelines, one frustum-fitted directional shadow map, one selected spotlight shadow map, up to
-eight unshadowed point lights, basic bloom and fog. Cascaded/soft shadows, point-light shadowing,
-SSAO, IBL, GPU culling and order-independent transparency remain future work. See
+eight unshadowed point lights, basic bloom and fog. Cascaded/soft shadows, point-light shadowing, temporal AO reprojection/denoising,
+IBL, GPU culling and order-independent transparency remain future work. See
 [`../../docs/architecture/RENDERER_PLAN.md`](../../docs/architecture/RENDERER_PLAN.md).
 
 ## Render profiling capture
@@ -119,3 +122,7 @@ cargo run --locked -p graphics_showcase -- --aa msaa4 --post-preset cinematic
 ```
 
 The example preset is intended for visual verification, not as a mandatory game look. The effects are independently configurable through `AutoExposureSettings`, `ColorGradingSettings`, `VignetteSettings`, `FilmGrainSettings` and `ChromaticAberrationSettings`.
+
+## Screen-space ambient occlusion
+
+`--ao off|low|medium|high` selects the optional depth-based ambient-occlusion pass. The default is `off`; Medium is a balanced six-direction/three-step kernel, while High uses eight directions/four steps. The pass reconstructs world positions and approximate normals from the active camera inverse view-projection and main depth texture, then applies visibility to the scene HDR contribution before bloom and tone mapping. It is a spatial screen-space approximation: without a G-buffer it cannot isolate ambient illumination from direct lighting, and it does not use temporal reprojection or history denoising. Its full-resolution Rgba8 visibility target is retained with the tone mapper even when disabled; compute dispatch is skipped while off. Combine it with MSAA to exercise the multisampled depth-load path.

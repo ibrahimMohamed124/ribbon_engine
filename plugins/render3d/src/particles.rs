@@ -1,7 +1,7 @@
 //! GPU upload and draw path for renderer-neutral particle batches.
 use super::DEPTH_FORMAT;
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use glam::{Quat, Vec3};
 use ribbon_render_contracts::{
     ParticleBatch, ParticleBillboard, ParticleBlendMode, ParticleInstance, ParticleShape,
 };
@@ -156,10 +156,14 @@ impl ParticleGpu {
         queue: &wgpu::Queue,
         batches: &[ParticleBatch],
         camera: Vec3,
-        view_proj: Mat4,
+        camera_rotation: Quat,
     ) -> (usize, usize) {
-        let inverse = view_proj.inverse();
-        let basis = [inverse.x_axis.to_array(), inverse.y_axis.to_array()];
+        // Derive an orthonormal world-space camera basis from the actual camera pose.
+        // Inverting view-projection incorrectly mixes projection scale into billboard axes.
+        let [right, up] = camera_basis(camera_rotation);
+        // WGSL stores each basis vector as vec4 (16-byte alignment). Upload
+        // explicit padding instead of tightly packed vec3 arrays (24 bytes).
+        let basis = [right.extend(0.0).to_array(), up.extend(0.0).to_array()];
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&basis));
         self.packed.clear();
         self.batches.clear();
@@ -226,6 +230,28 @@ impl ParticleGpu {
         }
     }
 }
+
+/// Returns an orthonormal world-space billboard basis from the camera's world rotation.
+fn camera_basis(camera_rotation: Quat) -> [Vec3; 2] {
+    let rotation = if camera_rotation.is_finite() && camera_rotation.length_squared() > 1.0e-12 {
+        camera_rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    };
+    [
+        (rotation * Vec3::X).normalize_or_zero(),
+        (rotation * Vec3::Y).normalize_or_zero(),
+    ]
+}
+
+/// CPU mirror of the WGSL formula, used to test all projected velocity directions.
+#[cfg(test)]
+fn velocity_stretch_rotation(projected_velocity: Vec3, right: Vec3, up: Vec3) -> Option<f32> {
+    let x = projected_velocity.dot(right);
+    let y = projected_velocity.dot(up);
+    (x.is_finite() && y.is_finite() && x * x + y * y > 1.0e-10).then(|| (-x).atan2(y))
+}
+
 fn distance_sq(p: &ParticleInstance, camera: Vec3) -> f32 {
     let p = Vec3::from_array(p.position);
     (p - camera).length_squared()
@@ -258,6 +284,58 @@ mod tests {
     fn packed_particle_is_64_bytes() {
         assert_eq!(std::mem::size_of::<GpuParticle>(), 64)
     }
+    #[test]
+    fn camera_uniform_matches_wgsl_vec4_alignment() {
+        let [right, up] = camera_basis(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
+        let uniform = [right.extend(0.0).to_array(), up.extend(0.0).to_array()];
+        assert_eq!(std::mem::size_of_val(&uniform), 32);
+        assert_eq!(uniform[0][3], 0.0);
+        assert_eq!(uniform[1][3], 0.0);
+        assert!(uniform[0][0].abs() < 1.0e-6);
+        assert!((uniform[1][0] + 1.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn camera_billboard_basis_uses_camera_rotation_not_projection() {
+        let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let [right, up] = camera_basis(rotation);
+        assert!(right.abs_diff_eq(Vec3::NEG_Z, 1.0e-6));
+        assert!(up.abs_diff_eq(Vec3::Y, 1.0e-6));
+        assert!((right.length() - 1.0).abs() < 1.0e-6);
+        assert!((up.length() - 1.0).abs() < 1.0e-6);
+        assert!(right.dot(up).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn velocity_stretched_rotation_aligns_the_long_axis_with_screen_velocity() {
+        let right = Vec3::X;
+        let up = Vec3::Y;
+        let cases = [
+            (Vec3::X, -std::f32::consts::FRAC_PI_2),
+            (Vec3::NEG_X, std::f32::consts::FRAC_PI_2),
+            (Vec3::Y, 0.0),
+            (Vec3::NEG_Y, std::f32::consts::PI),
+        ];
+        for (velocity, expected_angle) in cases {
+            let angle = velocity_stretch_rotation(velocity, right, up)
+                .expect("nonzero projected velocity has a stretch rotation");
+            let long_axis = up * angle.cos() - right * angle.sin();
+            assert!(long_axis.dot(velocity.normalize()) > 1.0 - 1.0e-6);
+            assert!(
+                (angle - expected_angle).abs() < 1.0e-6
+                    || (angle - expected_angle).abs() > std::f32::consts::TAU - 1.0e-6
+            );
+        }
+        assert_eq!(velocity_stretch_rotation(Vec3::Z, right, up), None);
+    }
+
+    #[test]
+    fn invalid_camera_rotation_uses_finite_identity_basis() {
+        let [right, up] = camera_basis(Quat::from_xyzw(f32::NAN, 0.0, 0.0, 1.0));
+        assert_eq!(right, Vec3::X);
+        assert_eq!(up, Vec3::Y);
+    }
+
     #[test]
     fn alpha_sort_is_back_to_front() {
         let camera = Vec3::ZERO;
