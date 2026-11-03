@@ -5,6 +5,10 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 
 ## Unreleased
 
+### Application states
+
+- Added typed `State<S>` / `NextState<S>` resources, deferred transitions, enter/exit hooks, transition events, and `in_state` run conditions. State requests made from hooks are applied on the following frame.
+
 ### Audio / ATHAR runtime and packaging
 
 - The modern audio ECS transform path now reads `GlobalTransform3D` and derives listener orientation from the world quaternion using Y-up / local -Z-forward. Legacy `AudioListener` remains a separate compatibility path; `ribbon_math` and STUDS coordinate conventions are unchanged.
@@ -22,7 +26,8 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 
 - Added a public `PostProcessingSettings` resource with bounded runtime controls for GPU auto exposure, exposure compensation, contrast, saturation, temperature/tint, vignette, animated film grain and chromatic aberration. Defaults retain the existing fixed-exposure image; a restrained cinematic preset exercises the complete feature set in `graphics_showcase`.
 - Auto exposure uses a GPU compute pass to sample a deterministic 16x16 HDR luminance grid, calculate average log luminance and adapt a persistent GPU exposure value with separate brighten/darken rates. The path performs no pixel readback to the CPU and is ordered before tone mapping in the same command buffer.
-- Unified FXAA and post-processing in one fullscreen display shader. Runtime setting changes update uniform buffers rather than rebuilding pipelines; FXAA can be toggled without resetting the auto-exposure history. Added CPU sanitization tests, WGSL parse/validation coverage and extended the ignored GPU test to execute the cinematic post stack on hardware. SSAO/GTAO, IBL, probes, TAA and cascaded/soft shadow improvements remain deferred.
+- Unified FXAA and post-processing in one fullscreen display shader. Runtime setting changes update uniform buffers rather than rebuilding pipelines; FXAA can be toggled without resetting the auto-exposure history. Added CPU sanitization tests, WGSL parse/validation coverage and extended the ignored GPU test to execute the cinematic post stack on hardware. Temporal AO reprojection/denoising, G-buffer normal AO, IBL, probes, TAA and cascaded/soft shadow improvements remain deferred.
+- Added optional depth-reconstructed GTAO-style ambient occlusion with deterministic Low/Medium/High horizon sampling. The pass reads the main `Depth32Float` attachment, supports both single-sample and MSAA depth textures, writes a visibility target on GPU, and composites it into HDR scene lighting before bloom/tone mapping. It is disabled by default and intentionally does not claim temporal reprojection, history denoising or a G-buffer normal path.
 
 ### Rendering anti-aliasing
 
@@ -30,6 +35,13 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 - The main 3D color pass now uses matching multisampled HDR color/depth attachments and resolves into the single-sample HDR scene target before bloom and tone mapping. Resize recreates size-dependent MSAA targets. MSAA sample count is latched when renderer GPU resources are first created; runtime sample-count reconfiguration is deferred to preserve live GPU handles. FXAA can be toggled at runtime in the fullscreen post-tone-map pass.
 - Added sample-count negotiation/capability tests, FXAA WGSL validation, and an ignored GPU integration test for MSAA resolve followed by FXAA. The showcase's remaining-feature list no longer reports MSAA/FXAA as missing.
 - `ribbon_render::gpu_window::FrameTarget` now exposes the selected `wgpu::Adapter` so render passes can query format/sample-count capabilities before allocating optional multisampled targets; downstream code constructing `FrameTarget` literals must provide this adapter reference.
+
+### Platform display and input foundation
+
+- Expanded physical keyboard mapping from the original small subset to all 194 standard `winit 0.30.13` `KeyCode` variants, including international/language, media/browser/system and F1-F35 keys. Added exhaustive unique key-name and mapping coverage tests; left/right modifiers remain distinct.
+- Added frame-local Unicode text commits and IME pre-edit/lifecycle events, safe UTF-8 byte-boundary normalization for native composition cursor offsets, and a `WindowHandle` hook to position the operating-system IME candidate window. Text input remains separate from physical gameplay bindings. Unidentified native physical scan codes are now preserved for local rebinding (not portable serialized bindings).
+- Added runtime `DisplaySettings` for Windowed/Borderless/Exclusive fullscreen, optional validated physical-resolution overrides, exact-size exclusive mode lookup with borderless fallback, and capability-negotiated VSync (`On`, `Adaptive`, `Off`). Clearing a resolution override follows `PlatformConfig`; clearing a VSync override restores the environment-selected present mode.
+- The native gamepad backend, editor text-widget focus/surrounding-text integration and display-settings persistence/HDR metadata remain deferred.
 
 ### Rendering API / migration
 

@@ -3,6 +3,7 @@
 //! The app preserves serial legacy systems and may dispatch compatible access-declared systems
 //! in parallel. Window and rendering integrations live in other crates.
 
+pub mod state;
 pub mod time;
 
 use ribbon_events::{EventCursor, Events, WorldEventsExt};
@@ -11,6 +12,7 @@ use std::time::Duration;
 
 pub use ribbon_ecs::{SyncResource, World};
 pub use ribbon_schedule::{ScheduleError, ScheduleStats, Stage, SystemConfig};
+pub use state::{in_state, NextState, State, StateTransition, States};
 pub use time::{FixedTime, LogBuffer, LogLevel, Time};
 
 /// Event emitted to ask the active runner to stop.
