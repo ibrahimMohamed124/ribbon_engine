@@ -83,13 +83,13 @@ pub fn particle_update_system(world: &mut World) {
     let mut poses = HashMap::with_capacity(ids.len());
     for e in &ids {
         let pose = world
-            .get::<&GlobalTransform3D>(*e)
+            .get::<GlobalTransform3D>(*e)
             .map(|t| Pose {
                 position: t.translation,
                 rotation: t.rotation,
             })
             .or_else(|| {
-                world.get::<&Transform3D>(*e).map(|t| Pose {
+                world.get::<Transform3D>(*e).map(|t| Pose {
                     position: t.translation,
                     rotation: t.rotation,
                 })
@@ -99,10 +99,10 @@ pub fn particle_update_system(world: &mut World) {
                 rotation: Quat::IDENTITY,
             });
         poses.insert(*e, pose);
-        if world.get::<&ParticleEmitterState>(*e).is_none() {
-            let seed = world.get::<&ParticleEmitter>(*e).map_or(0, |x| x.seed);
+        if world.get::<ParticleEmitterState>(*e).is_none() {
+            let seed = world.get::<ParticleEmitter>(*e).map_or(0, |x| x.seed);
             let max = world
-                .get::<&ParticleEmitter>(*e)
+                .get::<ParticleEmitter>(*e)
                 .map_or(1, |x| x.max_particles);
             let _ = world.insert(*e, ParticleEmitterState::new(seed, max));
         }

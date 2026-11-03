@@ -25,7 +25,7 @@ impl SaveSection for AtharProgress {
     fn capture(world: &ribbon_ecs::World) -> Self {
         let state = world.resource::<AdventureState>();
         let position = world
-            .get::<&SceneTransform3D>(state.camera_entity)
+            .get::<SceneTransform3D>(state.camera_entity)
             .map_or([0.0, 0.0, 0.0], |t| t.translation.to_array());
         Self {
             phase_is_village: state.phase == GamePhase::Village,

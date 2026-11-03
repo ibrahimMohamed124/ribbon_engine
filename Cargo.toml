@@ -27,6 +27,7 @@ members = [
   "plugins/editor_tools",
   "plugins/render3d",
   "plugins/particles",
+  "plugins/ai",
   "plugins/gltf",
   "examples/hello_ecs",
   "games/studs/showcases/voxel_room",

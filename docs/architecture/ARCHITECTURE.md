@@ -47,6 +47,7 @@ graph TD
   streaming[ribbon_plugin_streaming] --> app & assets & ecs & plugins & scene & render & gltf & render3d & physics
   particles[ribbon_plugin_particles] --> app & ecs & plugins & scene & render_contracts & glam
   save[ribbon_save] --> app & ecs & plugins & serde & ron & directories & crc32fast
+  ai[ribbon_plugin_ai] --> app & ecs & plugins & scene & physics & glam & pathfinding & serde & ron
 ```
 
 ## Which rendering crate is which
@@ -60,6 +61,7 @@ The names are close, so for the record:
 | `ribbon_render_contracts` | Renderer-neutral camera, transform, mesh-instance, light, fog, particle-batch, and extraction data shared by rendering-related plugins. |
 | `ribbon_plugin_particles` | Deterministic CPU emitter simulation and renderer-neutral particle batch production; depends on render contracts and does not own GPU pipelines. |
 | `ribbon_save` | Versioned, CRC-checked slot files with atomic replacement, backups, registered game-owned sections, and migration hooks. |
+| `ribbon_plugin_ai` | ECS state machines and behavior trees, single-layer grid A*, physics-baked navigation, steering output, and budgeted sight perception. |
 | `ribbon_plugin_render3d` | Native-surface indexed/instanced mesh renderer with ECS extraction, depth buffering, metallic-roughness PBR, HDR tone mapping, one camera-frustum-fitted, texel-snapped directional and one selected spotlight shadow map (3x3 PCF), up to eight deterministically importance-ranked unshadowed point lights, glTF base/normal/material-AO/emissive maps, OPAQUE/MASK/BLEND material paths, per-material double-sided pipeline variants, exponential fog, a quarter-resolution bloom pass, GPU average-log-luminance auto exposure, runtime display color grading, vignette, animated film grain, chromatic aberration, optional depth-reconstructed GTAO-style ambient occlusion, frustum culling, and managed mesh/model GPU lifetimes. Cascades, point-light shadows, temporal AO reprojection/denoising, IBL, TAA and order-independent transparency remain deferred; configurable 2x/4x/8x MSAA and post-tone-map FXAA are implemented with adapter negotiation and fallback. |
 
 ## Layers and responsibilities
@@ -69,7 +71,7 @@ The names are close, so for the record:
 | Foundations | `ribbon_math`, `ribbon_ecs`, `ribbon_events`, `ribbon_schedule` | Platform I/O, rendering, or gameplay |
 | Runtime | `ribbon_app`, `ribbon_plugins`, `ribbon_platform`, `ribbon_assets` | Game-specific rules or GPU scene extraction |
 | Scene and rendering contracts | `ribbon_reflect`, `ribbon_scene`, `ribbon_render_contracts`, `ribbon_render`, `ribbon_commands`, `ribbon_editor` | Game assets, gameplay, or automatic parallelism |
-| Engine plugins | `ribbon_plugin_physics`, `ribbon_plugin_animation`, `ribbon_plugin_audio`, `ribbon_plugin_editor_tools`, `ribbon_plugin_gltf`, `ribbon_plugin_render3d`, `ribbon_plugin_streaming`, `ribbon_plugin_particles` | Owning the app loop or game state |
+| Engine plugins | `ribbon_plugin_physics`, `ribbon_plugin_animation`, `ribbon_plugin_audio`, `ribbon_plugin_editor_tools`, `ribbon_plugin_gltf`, `ribbon_plugin_render3d`, `ribbon_plugin_streaming`, `ribbon_plugin_particles`, `ribbon_plugin_ai` | Owning the app loop or game state |
 | Game-owned support | `games/studs/crates/*`, `games/studs/showcases/*` | Being dependencies of engine crates or other games |
 | Applications | `examples/*`, `games/*` | Being dependencies of engine crates |
 
@@ -126,6 +128,7 @@ workspace.
 - `ribbon_platform` maps all 194 standard winit 0.30.13 physical `KeyCode` variants, exposes committed Unicode text and IME pre-edit/lifecycle events, and provides runtime Windowed/Borderless/Exclusive mode plus surface-capability-negotiated VSync settings. Its optional-by-feature, default-enabled gilrs backend polls gamepads on a dedicated thread and feeds backend-neutral button/axis state. Native device behavior remains hardware-dependent and is not verified here. The editor still has no text-editing widget/focus and surrounding-text integration, and is compiled only with its `editor` feature in debug builds. The glyph table limits available UI characters.
 - `ribbon_plugin_particles` simulates deterministic CPU emitters and writes renderer-neutral `ParticleRenderData`; the native 3D renderer draws the batches in its mesh pass. It currently has no textured/flipbook sprites, soft depth fade, GPU simulation, sub-emitters, trails, physics collision, or particle lighting/fog. GPU visual output and ATHAR rain remain to be manually checked on a supported adapter.
 - `ribbon_save` writes CRC-checked RON envelopes with backup recovery, atomic replacement, game IDs, slot listing, and typed section migrations. It performs synchronous main-thread I/O; games own their section contents and entity-level snapshots are not provided. Cloud sync, encryption, compression, and thumbnails are out of scope.
+- `ribbon_plugin_ai` provides FSMs, resumable behavior trees, grid A* with smoothing, physics-raycast baking, steering output, and budgeted line-of-sight. Navigation is single-layer 2.5D; navmesh/Recast, multi-floor routing, dynamic avoidance, hearing/memory, and utility AI/GOAP are not implemented.
 - Local 2D transforms and 3D quaternion transforms share the same entity hierarchy. `ribbon_scene` snapshots local transforms and parent links, invalidates changed branches plus descendants, reuses cached globals for clean ancestors, and only writes changed global components. Public mutable fields mean detection still requires an O(N) snapshot scan each `PostUpdate`; this is an incremental-composition milestone, not a claim of sublinear update cost. See `docs/architecture/TRANSFORM_INVALIDATION.md` and `docs/architecture/SCALABILITY_ROADMAP.md`. `ribbon_plugin_render3d` consumes `GlobalTransform3D`.
 - `examples/scene_hierarchy_3d` demonstrates this `Transform3D` parent-child composition in the GPU mesh renderer and reports runtime diagnostics for global transform propagation.
 - STUDS uses `ribbon_app::App`, `WinitRunner`, and the platform/scene/rendering/audio/game

@@ -1,0 +1,15 @@
+[package]
+name = "ribbon_plugin_ai"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ribbon_app = { path = "../../crates/app" }
+ribbon_ecs = { path = "../../crates/ecs" }
+ribbon_plugins = { path = "../../crates/plugins" }
+ribbon_scene = { path = "../../crates/scene" }
+ribbon_plugin_physics = { path = "../physics" }
+glam = "0.30"
+pathfinding = "4"
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.10"

@@ -157,6 +157,10 @@ external = ["glam"]
 workspace = ["ribbon_app", "ribbon_ecs", "ribbon_plugins"]
 external = ["serde", "ron", "directories", "crc32fast", "tempfile"]
 
+[allowed."ribbon_plugin_ai"]
+workspace = ["ribbon_app", "ribbon_ecs", "ribbon_plugins", "ribbon_scene", "ribbon_plugin_physics"]
+external = ["glam", "pathfinding", "serde", "ron"]
+
 [allowed."studs_voxel_gpu"]
 workspace = ["ribbon_plugin_render3d", "studs_voxel"]
 external = []

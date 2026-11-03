@@ -5,6 +5,10 @@ version tag. The workspace is currently pre-1.0; this file does not imply a rele
 
 ## Unreleased
 
+### Gameplay AI
+
+- Added generic ECS state machines, resumable behavior trees, grid A* navigation with smoothing and physics baking, steering output, and budgeted line-of-sight perception. Navmesh and multi-floor navigation remain out of scope.
+
 ### Save/load
 
 - Added versioned save sections, CRC-checked RON slot files, atomic replacement with backup recovery, section migrations, and ATHAR autosave/continue support. Save I/O remains synchronous; village restoration is limited.
