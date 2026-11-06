@@ -1,9 +1,9 @@
 //! Uploads CPU-side glTF models to the GPU as meshes and materials.
 
-use crate::mesh::Vertex;
+use crate::mesh::{SkinnedVertex, StaticVertex};
 use crate::renderer::{
-    MaterialId, MeshId, MeshRenderer, PbrMaterialDesc, PbrMaterialMipmaps,
-    PbrMaterialRenderOptions, TextureData,
+    MaterialId, MaterialTextureCoordinates, MeshId, MeshRenderer, PbrMaterialDesc,
+    PbrMaterialMipmaps, PbrMaterialRenderOptions, TextureData,
 };
 use glam::Mat4;
 use ribbon_plugin_gltf::ModelAsset;
@@ -136,7 +136,7 @@ pub(crate) fn upload_validated_model(
                 rgba8: &image.rgba8,
             });
             Some(
-                renderer.upload_pbr_material_with_precomputed_mips_and_options(
+                renderer.upload_pbr_material_with_precomputed_mips_options_and_uvs(
                     device,
                     queue,
                     PbrMaterialDesc {
@@ -164,46 +164,83 @@ pub(crate) fn upload_validated_model(
                         alpha_cutoff: material.alpha_cutoff,
                         double_sided: material.double_sided,
                     },
+                    MaterialTextureCoordinates {
+                        base_color: material.base_color_tex_coord,
+                        metallic_roughness: material.metallic_roughness_tex_coord,
+                        normal: material.normal_tex_coord,
+                        occlusion: material.occlusion_tex_coord,
+                        emissive: material.emissive_tex_coord,
+                    },
                 ),
             )
         })
         .collect();
-    // Only upload primitive geometry referenced by a placed node. Keeping unused primitive
-    // uploads here would create MeshIds that never enter the returned cache entry and therefore
-    // could not be released when a warmup or active scene use ends.
-    let used_primitives: HashSet<usize> = model.nodes.iter().map(|node| node.primitive).collect();
-    let meshes: Vec<Option<MeshId>> = model
-        .primitives
-        .iter()
-        .enumerate()
-        .map(|(index, primitive)| {
-            if !used_primitives.contains(&index) {
-                return None;
-            }
-            let vertices: Vec<Vertex> = primitive
+    // Upload only referenced primitives. Static placements use a 56-byte stream; skinned
+    // placements use a 104-byte stream retaining all eight influences. A primitive referenced
+    // by both kinds of node receives one upload per required layout.
+    let mut static_primitive_used = vec![false; model.primitives.len()];
+    let mut skinned_primitive_used = vec![false; model.primitives.len()];
+    for node in &model.nodes {
+        if node.skin.is_some() {
+            skinned_primitive_used[node.primitive] = true;
+        } else {
+            static_primitive_used[node.primitive] = true;
+        }
+    }
+    let mut static_meshes = vec![None; model.primitives.len()];
+    let mut skinned_meshes = vec![None; model.primitives.len()];
+    for (index, primitive) in model.primitives.iter().enumerate() {
+        if static_primitive_used[index] {
+            let vertices: Vec<StaticVertex> = primitive
                 .positions
                 .iter()
                 .zip(&primitive.normals)
                 .zip(&primitive.uvs)
                 .enumerate()
-                .map(|(vertex_index, ((position, normal), uv))| Vertex {
+                .map(|(vertex_index, ((position, normal), uv))| StaticVertex {
                     position: *position,
                     normal: *normal,
                     uv: *uv,
+                    tangent: primitive.tangents[vertex_index],
+                    uv1: primitive.uv1s[vertex_index],
+                })
+                .collect();
+            static_meshes[index] =
+                Some(renderer.upload_static_mesh(device, &vertices, &primitive.indices));
+        }
+        if skinned_primitive_used[index] {
+            let vertices: Vec<SkinnedVertex> = primitive
+                .positions
+                .iter()
+                .zip(&primitive.normals)
+                .zip(&primitive.uvs)
+                .enumerate()
+                .map(|(vertex_index, ((position, normal), uv))| SkinnedVertex {
+                    position: *position,
+                    normal: *normal,
+                    uv: *uv,
+                    tangent: primitive.tangents[vertex_index],
+                    uv1: primitive.uv1s[vertex_index],
                     joints: primitive.joints[vertex_index],
                     weights: primitive.weights[vertex_index],
                 })
                 .collect();
-            Some(renderer.upload_mesh(device, &vertices, &primitive.indices))
-        })
-        .collect();
+            skinned_meshes[index] =
+                Some(renderer.upload_skinned_mesh(device, &vertices, &primitive.indices));
+        }
+    }
     model
         .nodes
         .iter()
         .enumerate()
         .map(|(placement_index, node)| GpuModelPart {
-            mesh: meshes[node.primitive]
-                .expect("validated node references a primitive that was uploaded"),
+            mesh: if node.skin.is_some() {
+                skinned_meshes[node.primitive]
+                    .expect("validated skinned node references an uploaded skinned primitive")
+            } else {
+                static_meshes[node.primitive]
+                    .expect("validated static node references an uploaded static primitive")
+            },
             material: model.primitives[node.primitive]
                 .material
                 .and_then(|index| materials.get(index).copied().flatten())
@@ -231,11 +268,13 @@ pub fn validate_model_for_upload(model: &ModelAsset) -> Result<(), String> {
         }
         if primitive.positions.len() != primitive.normals.len()
             || primitive.positions.len() != primitive.uvs.len()
+            || primitive.positions.len() != primitive.uv1s.len()
+            || primitive.positions.len() != primitive.tangents.len()
             || primitive.positions.len() != primitive.joints.len()
             || primitive.positions.len() != primitive.weights.len()
         {
             return Err(format!(
-                "primitive {index} has mismatched position/normal/UV/skinning attribute counts"
+                "primitive {index} has mismatched position/normal/UV/tangent/skinning attribute counts"
             ));
         }
         for (vertex, weights) in primitive.weights.iter().enumerate() {
@@ -282,6 +321,16 @@ pub fn validate_model_for_upload(model: &ModelAsset) -> Result<(), String> {
                 .any(|value| !value.is_finite())
             || primitive
                 .uvs
+                .iter()
+                .flatten()
+                .any(|value| !value.is_finite())
+            || primitive
+                .uv1s
+                .iter()
+                .flatten()
+                .any(|value| !value.is_finite())
+            || primitive
+                .tangents
                 .iter()
                 .flatten()
                 .any(|value| !value.is_finite())
@@ -497,6 +546,8 @@ mod tests {
                 positions: vec![[0.0, 0.0, 0.0]; 3],
                 normals: vec![[0.0, 0.0, 1.0]; 3],
                 uvs: vec![[0.0, 0.0]; 3],
+                uv1s: vec![[0.0, 0.0]; 3],
+                tangents: vec![[1.0, 0.0, 0.0, 1.0]; 3],
                 indices: vec![0, 1, 2],
                 material: None,
                 joints: vec![[joint_index, 0, 0, 0, 0, 0, 0, 0]; 3],

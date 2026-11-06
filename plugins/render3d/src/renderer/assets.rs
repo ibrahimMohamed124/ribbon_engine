@@ -1,5 +1,76 @@
 use super::draw::texture_mip_bytes;
 use super::*;
+use crate::mesh::Vertex;
+use std::collections::BTreeMap;
+
+/// Precomputed per-joint and unweighted local bounds used to conservatively enclose the
+/// production shader's eight-influence linear-blend skinning path.
+fn build_skinned_caster_metadata(
+    vertices: &[crate::mesh::SkinnedVertex],
+    has_finite_mesh_bounds: bool,
+) -> (Vec<(u16, Aabb3)>, Option<Aabb3>, f32, f32, bool) {
+    let mut joint_bounds = BTreeMap::<u16, Aabb3>::new();
+    let mut unweighted_bounds: Option<Aabb3> = None;
+    let mut min_skin_weight_sum = f32::INFINITY;
+    let mut max_skin_weight_sum = 0.0_f32;
+    let mut skin_bounds_valid = has_finite_mesh_bounds;
+    for vertex in vertices {
+        let position = Vec3::from(vertex.position);
+        if !position.is_finite() {
+            skin_bounds_valid = false;
+            continue;
+        }
+        let mut weight_sum = 0.0_f32;
+        for weight in vertex.weights {
+            if !weight.is_finite() || weight < 0.0 {
+                skin_bounds_valid = false;
+            }
+            weight_sum += weight;
+        }
+        if !weight_sum.is_finite() || weight_sum < 0.0 {
+            skin_bounds_valid = false;
+            continue;
+        }
+        // Match the production WGSL threshold and the glTF model-upload validation.
+        if weight_sum > 1.0e-6 {
+            if (weight_sum - 1.0).abs() > 1.0e-3 {
+                skin_bounds_valid = false;
+            }
+            min_skin_weight_sum = min_skin_weight_sum.min(weight_sum);
+            max_skin_weight_sum = max_skin_weight_sum.max(weight_sum);
+            for influence in 0..8 {
+                if vertex.weights[influence] <= 0.0 {
+                    continue;
+                }
+                let joint_index = vertex.joints[influence];
+                joint_bounds
+                    .entry(joint_index)
+                    .and_modify(|bounds| bounds.include_point(position))
+                    .or_insert(Aabb3 {
+                        min: position,
+                        max: position,
+                    });
+            }
+        } else if let Some(bounds) = &mut unweighted_bounds {
+            bounds.include_point(position);
+        } else {
+            unweighted_bounds = Some(Aabb3 {
+                min: position,
+                max: position,
+            });
+        }
+    }
+    if min_skin_weight_sum == f32::INFINITY {
+        min_skin_weight_sum = 1.0;
+    }
+    (
+        joint_bounds.into_iter().collect(),
+        unweighted_bounds,
+        max_skin_weight_sum,
+        min_skin_weight_sum,
+        skin_bounds_valid,
+    )
+}
 
 impl MeshRenderer {
     pub fn upload_mesh(
@@ -8,45 +79,167 @@ impl MeshRenderer {
         vertices: &[Vertex],
         indices: &[u32],
     ) -> MeshId {
+        // Compatibility adapter for existing procedural callers. Zero-weight legacy meshes are
+        // static and use the compact GPU stream; weighted inputs retain the full eight-influence
+        // skinned stream. Both paths generate a stable tangent frame and alias UV1 to UV0.
+        let positions: Vec<[f32; 3]> = vertices.iter().map(|vertex| vertex.position).collect();
+        let normals: Vec<[f32; 3]> = vertices.iter().map(|vertex| vertex.normal).collect();
+        let uv0: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.uv).collect();
+        let tangents = crate::mesh::generate_tangents(&positions, &normals, &uv0, indices);
+        if crate::mesh::legacy_vertices_require_skinning(vertices) {
+            let skinned: Vec<crate::mesh::SkinnedVertex> = vertices
+                .iter()
+                .enumerate()
+                .map(|(index, vertex)| crate::mesh::SkinnedVertex {
+                    position: vertex.position,
+                    normal: vertex.normal,
+                    uv: vertex.uv,
+                    tangent: tangents.get(index).copied().unwrap_or([1.0, 0.0, 0.0, 1.0]),
+                    uv1: vertex.uv,
+                    joints: vertex.joints,
+                    weights: vertex.weights,
+                })
+                .collect();
+            self.upload_skinned_mesh(device, &skinned, indices)
+        } else {
+            let static_vertices: Vec<crate::mesh::StaticVertex> = vertices
+                .iter()
+                .enumerate()
+                .map(|(index, vertex)| crate::mesh::StaticVertex {
+                    position: vertex.position,
+                    normal: vertex.normal,
+                    uv: vertex.uv,
+                    tangent: tangents.get(index).copied().unwrap_or([1.0, 0.0, 0.0, 1.0]),
+                    uv1: vertex.uv,
+                })
+                .collect();
+            self.upload_static_mesh(device, &static_vertices, indices)
+        }
+    }
+
+    /// Upload eight-influence skinned geometry with tangent and UV0/UV1 streams (104 bytes per vertex).
+    pub fn upload_skinned_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        vertices: &[crate::mesh::SkinnedVertex],
+        indices: &[u32],
+    ) -> MeshId {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh vertices"),
+            label: Some("skinned mesh vertices"),
             contents: bytemuck::cast_slice(vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh indices"),
+            label: Some("skinned mesh indices"),
             contents: bytemuck::cast_slice(indices),
             usage: wgpu::BufferUsages::INDEX,
         });
-        let mut bounds_min = Vec3::splat(f32::INFINITY);
-        let mut bounds_max = Vec3::splat(f32::NEG_INFINITY);
-        for vertex in vertices {
-            let position = Vec3::from(vertex.position);
-            bounds_min = bounds_min.min(position);
-            bounds_max = bounds_max.max(position);
-        }
-        let bounds_center = if vertices.is_empty() {
-            Vec3::ZERO
-        } else {
-            (bounds_min + bounds_max) * 0.5
-        };
-        let bounds_radius = vertices
-            .iter()
-            .map(|vertex| (Vec3::from(vertex.position) - bounds_center).length())
-            .fold(0.0_f32, f32::max);
+        let local_bounds =
+            Aabb3::from_points(vertices.iter().map(|vertex| Vec3::from(vertex.position)));
+        let bounds_center = local_bounds
+            .map(|bounds| (bounds.min + bounds.max) * 0.5)
+            .unwrap_or(Vec3::ZERO);
+        let bounds_radius = local_bounds
+            .map(|_| {
+                vertices
+                    .iter()
+                    .map(|vertex| (Vec3::from(vertex.position) - bounds_center).length())
+                    .fold(0.0_f32, f32::max)
+            })
+            .unwrap_or(if vertices.is_empty() {
+                0.0
+            } else {
+                f32::INFINITY
+            });
+
+        let (
+            joint_influence_bounds,
+            unweighted_bounds,
+            max_skin_weight_sum,
+            min_skin_weight_sum,
+            skin_bounds_valid,
+        ) = build_skinned_caster_metadata(vertices, local_bounds.is_some());
         let estimated_bytes = (vertices.len() as u64)
-            .saturating_mul(std::mem::size_of::<Vertex>() as u64)
+            .saturating_mul(std::mem::size_of::<crate::mesh::SkinnedVertex>() as u64)
             .saturating_add(
                 (indices.len() as u64).saturating_mul(std::mem::size_of::<u32>() as u64),
             );
-        let mesh = GpuMesh {
+        self.insert_gpu_mesh(GpuMesh {
             vertices: vertex_buffer,
+            vertex_layout: MeshVertexLayout::Skinned,
             indices: index_buffer,
             index_count: indices.len() as u32,
             bounds_center,
             bounds_radius,
+            local_bounds,
+            joint_influence_bounds,
+            unweighted_bounds,
+            max_skin_weight_sum,
+            min_skin_weight_sum,
+            skin_bounds_valid,
             estimated_bytes,
-        };
+        })
+    }
+
+    /// Upload a compact non-skinned mesh (56 bytes per vertex: position, normal, UV0, tangent, UV1).
+    /// The legacy [`Self::upload_mesh`] and [`Self::upload_skinned_mesh`] remain available for
+    /// existing callers; new unskinned glTF primitives use this format.
+    pub fn upload_static_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        vertices: &[crate::mesh::StaticVertex],
+        indices: &[u32],
+    ) -> MeshId {
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("static mesh vertices"),
+            contents: bytemuck::cast_slice(vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("static mesh indices"),
+            contents: bytemuck::cast_slice(indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let local_bounds =
+            Aabb3::from_points(vertices.iter().map(|vertex| Vec3::from(vertex.position)));
+        let bounds_center = local_bounds
+            .map(|bounds| (bounds.min + bounds.max) * 0.5)
+            .unwrap_or(Vec3::ZERO);
+        let bounds_radius = local_bounds
+            .map(|_| {
+                vertices
+                    .iter()
+                    .map(|vertex| (Vec3::from(vertex.position) - bounds_center).length())
+                    .fold(0.0_f32, f32::max)
+            })
+            .unwrap_or(if vertices.is_empty() {
+                0.0
+            } else {
+                f32::INFINITY
+            });
+        let estimated_bytes = (vertices.len() as u64)
+            .saturating_mul(std::mem::size_of::<crate::mesh::StaticVertex>() as u64)
+            .saturating_add(
+                (indices.len() as u64).saturating_mul(std::mem::size_of::<u32>() as u64),
+            );
+        self.insert_gpu_mesh(GpuMesh {
+            vertices: vertex_buffer,
+            vertex_layout: MeshVertexLayout::Static,
+            indices: index_buffer,
+            index_count: indices.len() as u32,
+            bounds_center,
+            bounds_radius,
+            local_bounds,
+            joint_influence_bounds: Vec::new(),
+            unweighted_bounds: None,
+            max_skin_weight_sum: 0.0,
+            min_skin_weight_sum: 1.0,
+            skin_bounds_valid: true,
+            estimated_bytes,
+        })
+    }
+
+    fn insert_gpu_mesh(&mut self, mesh: GpuMesh) -> MeshId {
         let id = if let Some(index) = self.free_mesh_slots.pop() {
             let slot = &mut self.meshes[index];
             slot.generation = slot.generation.wrapping_add(1).max(1);
@@ -307,7 +500,11 @@ impl MeshRenderer {
         stats.instance_buffer_grows_cumulative = self.instance_buffer_grows_cumulative;
         stats.instance_buffer_shrinks_cumulative = self.instance_buffer_shrinks_cumulative;
         stats.buffer_bytes_estimate = (std::mem::size_of::<Globals>() as u64)
-            .saturating_add(2_u64.saturating_mul(std::mem::size_of::<ShadowGlobals>() as u64))
+            .saturating_add(std::mem::size_of::<ShadowDepthDebugUniform>() as u64)
+            .saturating_add(
+                (super::shadows::DIRECTIONAL_CASCADE_COUNT as u64 + 1)
+                    .saturating_mul(std::mem::size_of::<ShadowGlobals>() as u64),
+            )
             .saturating_add(
                 (MAX_SKIN_MATRICES_PER_FRAME as u64)
                     .saturating_mul(std::mem::size_of::<[[f32; 4]; 4]>() as u64),
@@ -324,11 +521,11 @@ impl MeshRenderer {
                     .unwrap_or(0),
             );
         stats.instance_capacity = self.instance_capacity;
-        // Two 1024x1024 Depth32Float shadow targets are fixed for this renderer.
-        stats.depth_target_bytes_estimate = 2_u64
-            .saturating_mul(1024)
-            .saturating_mul(1024)
-            .saturating_mul(4);
+        // Four 1024x1024 directional cascade layers plus one spotlight map.
+        stats.depth_target_bytes_estimate = (super::shadows::DIRECTIONAL_CASCADE_COUNT as u64 + 1)
+            .saturating_mul(super::shadows::DIRECTIONAL_SHADOW_RESOLUTION as u64)
+            .saturating_mul(super::shadows::DIRECTIONAL_SHADOW_RESOLUTION as u64)
+            .saturating_mul(std::mem::size_of::<f32>() as u64);
         if let Some(depth) = &self.depth {
             stats.depth_target_bytes_estimate = stats.depth_target_bytes_estimate.saturating_add(
                 u64::from(depth.size.0)
@@ -503,6 +700,25 @@ impl MeshRenderer {
         mipmaps: PbrMaterialMipmaps<'_>,
         options: PbrMaterialRenderOptions,
     ) -> MaterialId {
+        self.upload_pbr_material_with_precomputed_mips_options_and_uvs(
+            device,
+            queue,
+            material,
+            mipmaps,
+            options,
+            MaterialTextureCoordinates::default(),
+        )
+    }
+
+    pub(crate) fn upload_pbr_material_with_precomputed_mips_options_and_uvs(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        material: PbrMaterialDesc<'_>,
+        mipmaps: PbrMaterialMipmaps<'_>,
+        options: PbrMaterialRenderOptions,
+        texture_uvs: MaterialTextureCoordinates,
+    ) -> MaterialId {
         let PbrMaterialDesc {
             base_color,
             metallic,
@@ -571,6 +787,8 @@ impl MeshRenderer {
             true,
             mipmaps.emissive,
         );
+        let (texture_uv_sets, texture_uv_sets_extra) =
+            crate::renderer::encode_material_texture_coordinates(texture_uvs);
         let factors = MaterialUniform {
             base_color,
             surface: [
@@ -599,6 +817,8 @@ impl MeshRenderer {
                 0.0,
                 0.0,
             ],
+            texture_uv_sets,
+            texture_uv_sets_extra,
         };
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("PBR material factors"),
@@ -672,5 +892,77 @@ impl MeshRenderer {
         };
         self.update_peak_resource_estimate();
         id
+    }
+}
+
+#[cfg(test)]
+mod caster_bounds_tests {
+    use super::build_skinned_caster_metadata;
+    use crate::mesh::SkinnedVertex;
+    use crate::renderer::Aabb3;
+    use glam::Vec3;
+
+    fn vertex(joints: [u16; 8], weights: [f32; 8], position: [f32; 3]) -> SkinnedVertex {
+        SkinnedVertex {
+            position,
+            normal: [0.0, 1.0, 0.0],
+            uv: [0.0; 2],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            uv1: [0.0; 2],
+            joints,
+            weights,
+        }
+    }
+
+    #[test]
+    fn all_eight_positive_joint_influences_are_recorded() {
+        let joints = [0, 1, 2, 3, 4, 5, 6, 7];
+        let weights = [0.125; 8];
+        let vertices = [vertex(joints, weights, [1.0, 2.0, 3.0])];
+        let (joint_bounds, unweighted, max_sum, min_sum, valid) =
+            build_skinned_caster_metadata(&vertices, true);
+        assert!(valid);
+        assert_eq!(joint_bounds.len(), 8);
+        assert!(unweighted.is_none());
+        assert!((max_sum - 1.0).abs() < 1.0e-6);
+        assert!((min_sum - 1.0).abs() < 1.0e-6);
+        for (joint, bounds) in joint_bounds {
+            assert!(usize::from(joint) < 8);
+            assert_eq!(bounds.min, Vec3::new(1.0, 2.0, 3.0));
+            assert_eq!(bounds.max, Vec3::new(1.0, 2.0, 3.0));
+        }
+    }
+
+    #[test]
+    fn zero_weight_joint_indices_are_ignored_and_vertex_uses_unweighted_bounds() {
+        let vertices = [vertex([u16::MAX; 8], [0.0; 8], [4.0, -2.0, 1.0])];
+        let (joint_bounds, unweighted, max_sum, min_sum, valid) =
+            build_skinned_caster_metadata(&vertices, true);
+        assert!(valid);
+        assert!(joint_bounds.is_empty());
+        assert_eq!(
+            unweighted.unwrap(),
+            Aabb3 {
+                min: Vec3::new(4.0, -2.0, 1.0),
+                max: Vec3::new(4.0, -2.0, 1.0),
+            }
+        );
+        assert_eq!(max_sum, 0.0);
+        assert_eq!(min_sum, 1.0);
+    }
+
+    #[test]
+    fn invalid_positive_weight_data_disables_skinned_caster_bounds() {
+        let invalid_sum = [vertex([9; 8], [0.2; 8], [0.0, 0.0, 0.0])];
+        let (_, _, _, _, valid) = build_skinned_caster_metadata(&invalid_sum, true);
+        assert!(!valid);
+
+        let invalid_weight = [vertex(
+            [0; 8],
+            [f32::NAN, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0; 3],
+        )];
+        let (_, _, _, _, valid) = build_skinned_caster_metadata(&invalid_weight, true);
+        assert!(!valid);
     }
 }

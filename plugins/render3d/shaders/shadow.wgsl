@@ -11,6 +11,8 @@ struct Material {
     surface: vec4<f32>,
     emissive: vec4<f32>,
     render: vec4<f32>,
+    texture_uv_sets: vec4<u32>,
+    texture_uv_sets_extra: vec4<u32>,
 }
 @group(1) @binding(0) var<uniform> material: Material;
 @group(1) @binding(1) var base_texture: texture_2d<f32>;
@@ -18,35 +20,33 @@ struct Material {
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) uv: vec2<f32>,
-    @location(3) joints0: vec4<u32>,
-    @location(4) weights0: vec4<f32>,
-    @location(5) joints1: vec4<u32>,
-    @location(6) weights1: vec4<f32>,
-    @location(7) model0: vec4<f32>,
-    @location(8) model1: vec4<f32>,
-    @location(9) model2: vec4<f32>,
-    @location(10) model3: vec4<f32>,
-    @location(11) tint: vec4<f32>,
-    @location(12) bone_offset: u32,
+    @location(2) uv0: vec2<f32>,
+    @location(4) uv1: vec2<f32>,
+    @location(5) joints0: vec4<u32>,
+    @location(6) joints1: vec4<u32>,
+    @location(7) weights0: vec4<f32>,
+    @location(8) weights1: vec4<f32>,
+    @location(9) model0: vec4<f32>,
+    @location(10) model1: vec4<f32>,
+    @location(11) model2: vec4<f32>,
+    @location(12) model3: vec4<f32>,
+    @location(13) tint: vec4<f32>,
+    @location(14) bone_offset: u32,
 }
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) uv: vec2<f32>,
+    @location(0) uv0: vec2<f32>,
+    @location(1) uv1: vec2<f32>,
 }
 
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     let model = mat4x4<f32>(in.model0, in.model1, in.model2, in.model3);
     var local_position = in.position;
-    let weight_sum = dot(in.weights0, vec4<f32>(1.0))
-        + dot(in.weights1, vec4<f32>(1.0));
+    let weight_sum = dot(in.weights0, vec4<f32>(1.0)) + dot(in.weights1, vec4<f32>(1.0));
     if weight_sum > 0.000001 {
-        var skin = mat4x4<f32>(
-            vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0)
-        );
+        var skin = mat4x4<f32>(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
         if in.weights0.x > 0.0 { skin += joint_matrices[in.bone_offset + in.joints0.x] * in.weights0.x; }
         if in.weights0.y > 0.0 { skin += joint_matrices[in.bone_offset + in.joints0.y] * in.weights0.y; }
         if in.weights0.z > 0.0 { skin += joint_matrices[in.bone_offset + in.joints0.z] * in.weights0.z; }
@@ -59,7 +59,8 @@ fn vs_main(in: VertexIn) -> VertexOut {
     }
     var out: VertexOut;
     out.clip = globals.light_view_proj * model * vec4<f32>(local_position, 1.0);
-    out.uv = in.uv;
+    out.uv0 = in.uv0;
+    out.uv1 = in.uv1;
     return out;
 }
 
@@ -67,7 +68,8 @@ fn vs_main(in: VertexIn) -> VertexOut {
 fn fs_shadow(in: VertexOut) {
     // MASK materials must discard the same texels in the shadow map as in the color pass.
     if material.render.x > 0.5 && material.render.x < 1.5 {
-        let alpha = material.base_color.a * textureSample(base_texture, base_sampler, in.uv).a;
+        let uv = select(in.uv0, in.uv1, material.texture_uv_sets.x == 1u);
+        let alpha = material.base_color.a * textureSample(base_texture, base_sampler, uv).a;
         if alpha < material.render.y {
             discard;
         }

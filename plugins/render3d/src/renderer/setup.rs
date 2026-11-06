@@ -1,4 +1,112 @@
 use super::*;
+use crate::mesh::{generate_tangents, SkinnedVertex, StaticVertex};
+
+fn create_shadow_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    vertex_layout: MeshVertexLayout,
+    label: &'static str,
+    cull_mode: Option<wgpu::Face>,
+    bias: wgpu::DepthBiasState,
+) -> wgpu::RenderPipeline {
+    let (array_stride, attributes) = match vertex_layout {
+        MeshVertexLayout::Static => (
+            std::mem::size_of::<StaticVertex>() as u64,
+            &STATIC_VERTEX_ATTRIBUTES[..],
+        ),
+        MeshVertexLayout::Skinned => (
+            std::mem::size_of::<SkinnedVertex>() as u64,
+            &VERTEX_ATTRIBUTES[..],
+        ),
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes,
+                },
+                wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<RawInstance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &INSTANCE_ATTRIBUTES,
+                },
+            ],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode,
+            ..wgpu::PrimitiveState::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias,
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_shadow"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[],
+        }),
+        multiview: None,
+        cache: None,
+    })
+}
+
+fn create_shadow_depth_debug_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("directional shadow depth-layer debug pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_fullscreen"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            ..wgpu::PrimitiveState::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_depth_layer"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview: None,
+        cache: None,
+    })
+}
 
 impl MeshRenderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
@@ -23,13 +131,29 @@ impl MeshRenderer {
             label: Some("directional shadow shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/shadow.wgsl").into()),
         });
+        let static_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("static mesh shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/mesh_static.wgsl").into()),
+        });
+        let static_shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("static mesh shadow shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/shadow_static.wgsl").into(),
+            ),
+        });
+        let shadow_depth_debug_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("directional shadow depth-layer debug shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/shadow_debug.wgsl").into(),
+            ),
+        });
         let shadow_size = super::shadows::DIRECTIONAL_SHADOW_RESOLUTION;
         let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("directional shadow map"),
+            label: Some("cascaded directional shadow map array"),
             size: wgpu::Extent3d {
                 width: shadow_size,
                 height: shadow_size,
-                depth_or_array_layers: 1,
+                depth_or_array_layers: super::shadows::DIRECTIONAL_CASCADE_COUNT as u32,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -38,7 +162,22 @@ impl MeshRenderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let shadow_sample_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("cascaded directional shadow sampling view"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            base_array_layer: 0,
+            array_layer_count: Some(super::shadows::DIRECTIONAL_CASCADE_COUNT as u32),
+            ..wgpu::TextureViewDescriptor::default()
+        });
+        let shadow_layer_views = std::array::from_fn(|cascade_index| {
+            shadow_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("directional shadow cascade depth view"),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: cascade_index as u32,
+                array_layer_count: Some(1),
+                ..wgpu::TextureViewDescriptor::default()
+            })
+        });
         let spot_shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("spotlight perspective shadow map"),
             size: wgpu::Extent3d {
@@ -66,14 +205,74 @@ impl MeshRenderer {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..wgpu::SamplerDescriptor::default()
         });
-        let shadow_target = ShadowTarget {
+        let shadow_target = DirectionalShadowTarget {
             _texture: shadow_texture,
-            view: shadow_view,
+            sample_view: shadow_sample_view,
+            layer_views: shadow_layer_views,
         };
         let spot_shadow_target = ShadowTarget {
             _texture: spot_shadow_texture,
             view: spot_shadow_view,
         };
+        let shadow_depth_debug_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("directional shadow depth-layer debug layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let shadow_depth_debug_params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("directional shadow depth-layer debug parameters"),
+            size: std::mem::size_of::<ShadowDepthDebugUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let shadow_depth_debug_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("directional shadow depth-layer debug bind group"),
+            layout: &shadow_depth_debug_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: shadow_depth_debug_params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&shadow_target.sample_view),
+                },
+            ],
+        });
+        let shadow_depth_debug_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("directional shadow depth-layer debug pipeline layout"),
+                bind_group_layouts: &[&shadow_depth_debug_layout],
+                push_constant_ranges: &[],
+            });
+        let shadow_depth_debug_pipeline = create_shadow_depth_debug_pipeline(
+            device,
+            &shadow_depth_debug_shader,
+            &shadow_depth_debug_pipeline_layout,
+            format,
+            sample_count,
+        );
         let skin_matrices = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("per-frame skeletal joint matrices"),
             size: (MAX_SKIN_MATRICES_PER_FRAME * std::mem::size_of::<[[f32; 4]; 4]>()) as u64,
@@ -98,7 +297,7 @@ impl MeshRenderer {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
@@ -254,7 +453,7 @@ impl MeshRenderer {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[
                     wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        array_stride: std::mem::size_of::<SkinnedVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &VERTEX_ATTRIBUTES,
                     },
@@ -304,7 +503,7 @@ impl MeshRenderer {
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &[
                         wgpu::VertexBufferLayout {
-                            array_stride: std::mem::size_of::<Vertex>() as u64,
+                            array_stride: std::mem::size_of::<SkinnedVertex>() as u64,
                             step_mode: wgpu::VertexStepMode::Vertex,
                             attributes: &VERTEX_ATTRIBUTES,
                         },
@@ -354,7 +553,7 @@ impl MeshRenderer {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[
                     wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        array_stride: std::mem::size_of::<SkinnedVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &VERTEX_ATTRIBUTES,
                     },
@@ -398,6 +597,7 @@ impl MeshRenderer {
                 blended: false,
                 double_sided: false,
                 sample_count,
+                vertex_layout: MeshVertexLayout::Skinned,
             },
         );
         let double_sided_pipeline = create_color_pipeline(
@@ -410,6 +610,7 @@ impl MeshRenderer {
                 blended: false,
                 double_sided: true,
                 sample_count,
+                vertex_layout: MeshVertexLayout::Skinned,
             },
         );
         let blend_pipeline = create_color_pipeline(
@@ -422,6 +623,7 @@ impl MeshRenderer {
                 blended: true,
                 double_sided: false,
                 sample_count,
+                vertex_layout: MeshVertexLayout::Skinned,
             },
         );
         let blend_double_sided_pipeline = create_color_pipeline(
@@ -434,6 +636,59 @@ impl MeshRenderer {
                 blended: true,
                 double_sided: true,
                 sample_count,
+                vertex_layout: MeshVertexLayout::Skinned,
+            },
+        );
+        let static_pipeline = create_color_pipeline(
+            device,
+            &static_shader,
+            &pipeline_layout,
+            ColorPipelineOptions {
+                format,
+                label: "static opaque mesh pipeline",
+                blended: false,
+                double_sided: false,
+                sample_count,
+                vertex_layout: MeshVertexLayout::Static,
+            },
+        );
+        let static_double_sided_pipeline = create_color_pipeline(
+            device,
+            &static_shader,
+            &pipeline_layout,
+            ColorPipelineOptions {
+                format,
+                label: "static opaque double-sided mesh pipeline",
+                blended: false,
+                double_sided: true,
+                sample_count,
+                vertex_layout: MeshVertexLayout::Static,
+            },
+        );
+        let static_blend_pipeline = create_color_pipeline(
+            device,
+            &static_shader,
+            &pipeline_layout,
+            ColorPipelineOptions {
+                format,
+                label: "static transparent mesh pipeline",
+                blended: true,
+                double_sided: false,
+                sample_count,
+                vertex_layout: MeshVertexLayout::Static,
+            },
+        );
+        let static_blend_double_sided_pipeline = create_color_pipeline(
+            device,
+            &static_shader,
+            &pipeline_layout,
+            ColorPipelineOptions {
+                format,
+                label: "static transparent double-sided mesh pipeline",
+                blended: true,
+                double_sided: true,
+                sample_count,
+                vertex_layout: MeshVertexLayout::Static,
             },
         );
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
@@ -452,7 +707,7 @@ impl MeshRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&shadow_target.view),
+                    resource: wgpu::BindingResource::TextureView(&shadow_target.sample_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -472,25 +727,29 @@ impl MeshRenderer {
                 },
             ],
         });
-        let shadow_globals = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("directional shadow globals"),
-            size: std::mem::size_of::<ShadowGlobals>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+        let directional_shadow_globals = std::array::from_fn(|_cascade_index| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("directional cascade shadow globals"),
+                size: std::mem::size_of::<ShadowGlobals>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
         });
-        let shadow_globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("directional shadow globals bind group"),
-            layout: &shadow_globals_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: shadow_globals.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: skin_matrices.as_entire_binding(),
-                },
-            ],
+        let directional_shadow_globals_groups = std::array::from_fn(|cascade_index| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("directional cascade shadow globals bind group"),
+                layout: &shadow_globals_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: directional_shadow_globals[cascade_index].as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: skin_matrices.as_entire_binding(),
+                    },
+                ],
+            })
         });
         let spot_shadow_globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("spotlight shadow globals"),
@@ -512,6 +771,38 @@ impl MeshRenderer {
                 },
             ],
         });
+        let shadow_bias = wgpu::DepthBiasState {
+            constant: 2,
+            slope_scale: 2.0,
+            clamp: 0.0,
+        };
+        let static_shadow_pipeline = create_shadow_pipeline(
+            device,
+            &static_shadow_shader,
+            &shadow_pipeline_layout,
+            MeshVertexLayout::Static,
+            "static directional shadow pipeline",
+            Some(wgpu::Face::Back),
+            shadow_bias,
+        );
+        let static_shadow_double_sided_pipeline = create_shadow_pipeline(
+            device,
+            &static_shadow_shader,
+            &shadow_pipeline_layout,
+            MeshVertexLayout::Static,
+            "static double-sided directional shadow pipeline",
+            None,
+            shadow_bias,
+        );
+        let static_spot_shadow_pipeline = create_shadow_pipeline(
+            device,
+            &static_shadow_shader,
+            &shadow_pipeline_layout,
+            MeshVertexLayout::Static,
+            "static spotlight shadow pipeline",
+            None,
+            wgpu::DepthBiasState::default(),
+        );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("mesh sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -529,19 +820,33 @@ impl MeshRenderer {
             double_sided_pipeline,
             blend_pipeline,
             blend_double_sided_pipeline,
+            static_pipeline,
+            static_double_sided_pipeline,
+            static_blend_pipeline,
+            static_blend_double_sided_pipeline,
             shadow_pipeline,
             shadow_double_sided_pipeline,
+            static_shadow_pipeline,
+            static_shadow_double_sided_pipeline,
             spot_shadow_pipeline,
+            static_spot_shadow_pipeline,
             globals,
             globals_group,
-            shadow_globals,
-            shadow_globals_group,
+            directional_shadow_globals,
+            directional_shadow_globals_groups,
             skin_matrices,
             spot_shadow_globals,
             spot_shadow_globals_group,
             shadow_target,
             spot_shadow_target,
             _shadow_sampler: shadow_sampler,
+            shadow_depth_debug_pipeline,
+            shadow_depth_debug_params,
+            shadow_depth_debug_group,
+            directional_shadow_debug: Default::default(),
+            directional_shadow_caster_extrusion_distance:
+                super::DEFAULT_DIRECTIONAL_SHADOW_CASTER_EXTRUSION_DISTANCE,
+            directional_shadow_caster_bounds_scratch: Vec::new(),
             material_layout,
             sampler,
             meshes: Vec::new(),
@@ -575,7 +880,26 @@ impl MeshRenderer {
             depth: None,
         };
         let cube = mesh::cube();
-        let cube_id = renderer.upload_mesh(device, &cube.vertices, &cube.indices);
+        let cube_positions: Vec<[f32; 3]> =
+            cube.vertices.iter().map(|vertex| vertex.position).collect();
+        let cube_normals: Vec<[f32; 3]> =
+            cube.vertices.iter().map(|vertex| vertex.normal).collect();
+        let cube_uvs: Vec<[f32; 2]> = cube.vertices.iter().map(|vertex| vertex.uv).collect();
+        let cube_tangents =
+            generate_tangents(&cube_positions, &cube_normals, &cube_uvs, &cube.indices);
+        let static_cube_vertices: Vec<StaticVertex> = cube
+            .vertices
+            .iter()
+            .enumerate()
+            .map(|(index, vertex)| StaticVertex {
+                position: vertex.position,
+                normal: vertex.normal,
+                uv: vertex.uv,
+                tangent: cube_tangents[index],
+                uv1: vertex.uv,
+            })
+            .collect();
+        let cube_id = renderer.upload_static_mesh(device, &static_cube_vertices, &cube.indices);
         debug_assert_eq!(cube_id, Self::CUBE);
         let white = renderer.upload_material(device, queue, [1.0; 4], None);
         debug_assert_eq!(white, Self::WHITE);
@@ -590,6 +914,7 @@ struct ColorPipelineOptions {
     blended: bool,
     double_sided: bool,
     sample_count: u32,
+    vertex_layout: MeshVertexLayout,
 }
 
 fn create_color_pipeline(
@@ -604,7 +929,18 @@ fn create_color_pipeline(
         blended,
         double_sided,
         sample_count,
+        vertex_layout,
     } = options;
+    let (vertex_stride, vertex_attributes) = match vertex_layout {
+        MeshVertexLayout::Static => (
+            std::mem::size_of::<StaticVertex>() as u64,
+            &STATIC_VERTEX_ATTRIBUTES[..],
+        ),
+        MeshVertexLayout::Skinned => (
+            std::mem::size_of::<SkinnedVertex>() as u64,
+            &VERTEX_ATTRIBUTES[..],
+        ),
+    };
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
@@ -614,9 +950,9 @@ fn create_color_pipeline(
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             buffers: &[
                 wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    array_stride: vertex_stride,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &VERTEX_ATTRIBUTES,
+                    attributes: vertex_attributes,
                 },
                 wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<RawInstance>() as u64,

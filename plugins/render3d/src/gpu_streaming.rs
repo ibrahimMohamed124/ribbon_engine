@@ -7,7 +7,7 @@
 //! `shader_pipeline` registry; skeletal animation/skinning remains a separate renderer lifecycle
 //! and is not claimed to be covered by this mesh/material queue.
 
-use crate::mesh::Vertex;
+use crate::mesh::{legacy_vertices_require_skinning, SkinnedVertex, StaticVertex, Vertex};
 use crate::renderer::{GpuSamplerDesc, MaterialId, MeshId, SamplerId, TextureId};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
@@ -93,14 +93,21 @@ pub enum GpuResourceData {
 
 impl GpuResourceData {
     /// Estimated upload bytes used for per-frame admission. Texture estimates include a mip
-    /// allowance; mesh data uses its exact vertex/index payload sizes.
+    /// allowance; mesh estimates use the same static-versus-skinned layout selection as upload.
     pub fn estimated_upload_bytes(&self) -> u64 {
         match self {
-            Self::Mesh { vertices, indices } => (vertices.len() as u64)
-                .saturating_mul(std::mem::size_of::<Vertex>() as u64)
-                .saturating_add(
-                    (indices.len() as u64).saturating_mul(std::mem::size_of::<u32>() as u64),
-                ),
+            Self::Mesh { vertices, indices } => {
+                let vertex_stride = (if legacy_vertices_require_skinning(vertices) {
+                    std::mem::size_of::<SkinnedVertex>()
+                } else {
+                    std::mem::size_of::<StaticVertex>()
+                }) as u64;
+                (vertices.len() as u64)
+                    .saturating_mul(vertex_stride)
+                    .saturating_add(
+                        (indices.len() as u64).saturating_mul(std::mem::size_of::<u32>() as u64),
+                    )
+            }
             Self::Texture { image, .. } => image.estimated_bytes(),
             Self::Sampler(_) => 64,
             Self::PbrMaterial(material) => {
@@ -809,6 +816,23 @@ mod tests {
             ],
             indices: vec![0, 1, 2],
         }
+    }
+
+    #[test]
+    fn legacy_mesh_warmup_estimate_matches_static_and_weighted_gpu_streams() {
+        let static_mesh = triangle();
+        assert_eq!(static_mesh.estimated_upload_bytes(), 3 * 56 + 3 * 4);
+
+        let mut vertices = match triangle() {
+            GpuResourceData::Mesh { vertices, .. } => vertices,
+            _ => unreachable!(),
+        };
+        vertices[0].weights[0] = 1.0;
+        let skinned_mesh = GpuResourceData::Mesh {
+            vertices,
+            indices: vec![0, 1, 2],
+        };
+        assert_eq!(skinned_mesh.estimated_upload_bytes(), 3 * 104 + 3 * 4);
     }
 
     #[test]

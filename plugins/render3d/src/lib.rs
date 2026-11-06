@@ -43,9 +43,11 @@ pub use preload::{
     ModelWarmupStatus,
 };
 pub use renderer::{
+    DirectionalShadowCasterSettings, DirectionalShadowDebugMode, DirectionalShadowDebugOptions,
     Draw, GpuSamplerAddressMode, GpuSamplerDesc, GpuSamplerFilter, MaterialId, MeshId,
     MeshRenderer, PbrMaterialDesc, PbrMaterialRenderOptions, SamplerId, Scene, SkinnedDraw,
-    TextureData, TextureId, MAX_POINT_LIGHTS,
+    TextureData, TextureId, DEFAULT_DIRECTIONAL_SHADOW_CASTER_EXTRUSION_DISTANCE,
+    MAX_DIRECTIONAL_SHADOW_CASTER_EXTRUSION_DISTANCE, MAX_POINT_LIGHTS,
 };
 pub use ribbon_plugin_gltf::AlphaMode;
 pub use ribbon_render::gpu::{
@@ -1415,8 +1417,14 @@ impl MeshPass {
             let mesh_id = if let Some(cached) = self.dynamic_meshes.get(&key) {
                 cached.mesh
             } else {
+                let vertex_stride =
+                    (if crate::mesh::legacy_vertices_require_skinning(&placement.mesh.vertices) {
+                        std::mem::size_of::<crate::mesh::SkinnedVertex>()
+                    } else {
+                        std::mem::size_of::<crate::mesh::StaticVertex>()
+                    }) as u64;
                 let estimated_bytes = (placement.mesh.vertices.len() as u64)
-                    .saturating_mul(std::mem::size_of::<crate::mesh::Vertex>() as u64)
+                    .saturating_mul(vertex_stride)
                     .saturating_add(
                         (placement.mesh.indices.len() as u64)
                             .saturating_mul(std::mem::size_of::<u32>() as u64),
@@ -1785,7 +1793,20 @@ impl MeshPass {
         )
         .inverse();
         let view_proj = camera.camera.projection(width as f32 / height as f32) * view;
+        let shadow_debug_options = world
+            .try_resource::<DirectionalShadowDebugOptions>()
+            .copied()
+            .unwrap_or_default();
+        let caster_settings = world
+            .try_resource::<DirectionalShadowCasterSettings>()
+            .copied()
+            .unwrap_or_default()
+            .sanitized();
         if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_directional_shadow_debug(shadow_debug_options);
+            renderer.set_directional_shadow_caster_extrusion_distance(
+                caster_settings.max_extrusion_distance,
+            );
             let scene = Scene {
                 view_proj,
                 camera_position: camera.transform.translation,

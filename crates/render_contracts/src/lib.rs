@@ -88,7 +88,8 @@ impl Default for SunLight {
 }
 
 /// A world-space cone light. The direction points from the light into the scene.
-/// At most one light with `casts_shadows` is rendered with a perspective shadow map.
+/// The current renderer ranks valid lights deterministically and renders at most one
+/// `casts_shadows` light with its perspective shadow map.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpotLight {
     pub position: Vec3,

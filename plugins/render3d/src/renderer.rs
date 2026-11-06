@@ -1,7 +1,7 @@
 //! wgpu pipeline that draws instanced, textured meshes with a depth buffer.
 
 use crate::components::{FogSettings, PointLight, SpotLight, SunLight};
-use crate::mesh::{self, Vertex};
+use crate::mesh;
 use crate::profiling::{GpuCompletedSample, GpuTimestampProfiler, GpuTimingSnapshot};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3, Vec4};
@@ -19,6 +19,102 @@ mod particles;
 
 /// Depth format used by the mesh pass.
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// Default maximum upstream distance, in world units, for directional shadow casters.
+/// This is intentionally finite so a distant off-screen object cannot collapse cascade depth
+/// precision. Applications with larger worlds should set an explicit value on `MeshRenderer`.
+pub const DEFAULT_DIRECTIONAL_SHADOW_CASTER_EXTRUSION_DISTANCE: f32 = 100.0;
+/// Hard safety limit applied by the runtime setting to keep depth ranges and matrices finite.
+pub const MAX_DIRECTIONAL_SHADOW_CASTER_EXTRUSION_DISTANCE: f32 = 10_000.0;
+
+/// Small CPU-side AABB used for conservative renderer visibility and shadow-caster fitting.
+/// The transform helper enumerates all eight corners, so affine rotation, shear, negative scale,
+/// and non-uniform scale remain conservative.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Aabb3 {
+    min: Vec3,
+    max: Vec3,
+}
+
+impl Aabb3 {
+    fn is_valid(self) -> bool {
+        self.min.is_finite() && self.max.is_finite() && self.min.cmple(self.max).all()
+    }
+
+    fn from_min_max(min: Vec3, max: Vec3) -> Option<Self> {
+        if !min.is_finite() || !max.is_finite() || min.x > max.x || min.y > max.y || min.z > max.z {
+            return None;
+        }
+        Some(Self { min, max })
+    }
+
+    fn from_points(points: impl IntoIterator<Item = Vec3>) -> Option<Self> {
+        let mut bounds: Option<Self> = None;
+        for point in points {
+            if !point.is_finite() {
+                return None;
+            }
+            if let Some(bounds) = &mut bounds {
+                bounds.include_point(point);
+            } else {
+                bounds = Some(Self {
+                    min: point,
+                    max: point,
+                });
+            }
+        }
+        bounds
+    }
+
+    fn include_point(&mut self, point: Vec3) {
+        self.min = self.min.min(point);
+        self.max = self.max.max(point);
+    }
+
+    fn include_bounds(&mut self, other: Self) {
+        self.min = self.min.min(other.min);
+        self.max = self.max.max(other.max);
+    }
+
+    fn corners(self) -> [Vec3; 8] {
+        [
+            Vec3::new(self.min.x, self.min.y, self.min.z),
+            Vec3::new(self.max.x, self.min.y, self.min.z),
+            Vec3::new(self.min.x, self.max.y, self.min.z),
+            Vec3::new(self.max.x, self.max.y, self.min.z),
+            Vec3::new(self.min.x, self.min.y, self.max.z),
+            Vec3::new(self.max.x, self.min.y, self.max.z),
+            Vec3::new(self.min.x, self.max.y, self.max.z),
+            Vec3::new(self.max.x, self.max.y, self.max.z),
+        ]
+    }
+
+    fn transformed(self, matrix: Mat4) -> Option<Self> {
+        if !self.is_valid()
+            || !matrix.to_cols_array().iter().all(|value| value.is_finite())
+            || matrix.x_axis.w.abs() > 1.0e-5
+            || matrix.y_axis.w.abs() > 1.0e-5
+            || matrix.z_axis.w.abs() > 1.0e-5
+            || (matrix.w_axis.w - 1.0).abs() > 1.0e-5
+        {
+            return None;
+        }
+        Self::from_points(
+            self.corners()
+                .into_iter()
+                .map(|corner| matrix.transform_point3(corner)),
+        )
+    }
+
+    fn scaled_from_origin(self, scale: f32) -> Option<Self> {
+        if !scale.is_finite() || scale < 1.0 {
+            return None;
+        }
+        let a = self.min * scale;
+        let b = self.max * scale;
+        Self::from_min_max(a.min(b), a.max(b))
+    }
+}
 
 /// Generation-checked handle to a mesh stored in a [`MeshRenderer`].
 ///
@@ -171,6 +267,37 @@ impl Default for PbrMaterialRenderOptions {
     }
 }
 
+/// glTF texture-coordinate set selected independently by each material texture. Only UV0 and
+/// UV1 are supported by the current vertex formats; higher indices safely fall back to UV0.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MaterialTextureCoordinates {
+    pub base_color: u32,
+    pub metallic_roughness: u32,
+    pub normal: u32,
+    pub occlusion: u32,
+    pub emissive: u32,
+}
+
+/// Pack material texture selectors into the two `vec4<u32>` fields shared by all mesh shaders.
+/// Only set 1 is represented explicitly; set 0 and unsupported sets greater than 1 use UV0.
+pub(crate) fn encode_material_texture_coordinates(
+    coordinates: MaterialTextureCoordinates,
+) -> ([u32; 4], [u32; 4]) {
+    (
+        [
+            if coordinates.base_color == 1 { 1 } else { 0 },
+            if coordinates.metallic_roughness == 1 {
+                1
+            } else {
+                0
+            },
+            if coordinates.normal == 1 { 1 } else { 0 },
+            if coordinates.occlusion == 1 { 1 } else { 0 },
+        ],
+        [if coordinates.emissive == 1 { 1 } else { 0 }, 0, 0, 0],
+    )
+}
+
 /// One object to draw.
 #[derive(Clone, Copy, Debug)]
 pub struct Draw {
@@ -224,7 +351,8 @@ pub struct Scene<'a> {
     pub camera_rotation: Quat,
     /// Directional light and ambient term.
     pub sun: &'a SunLight,
-    /// World-space spot lights. The renderer uses at most one shadow-casting light.
+    /// World-space spot lights. The renderer ranks valid records deterministically and currently
+    /// renders at most one shadow-casting light; a multi-caster atlas remains future work.
     pub spot_lights: &'a [SpotLight],
     /// Point lights ranked by estimated contribution; the strongest eight are consumed.
     pub point_lights: &'a [PointLight],
@@ -249,7 +377,11 @@ struct RawInstance {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Globals {
     view_proj: [[f32; 4]; 4],
-    light_view_proj: [[f32; 4]; 4],
+    light_view_proj: [[[f32; 4]; 4]; shadows::DIRECTIONAL_CASCADE_COUNT],
+    cascade_splits: [f32; 4],
+    /// x: camera near depth, y: cascade blend fraction, z: debug mode, w: selected depth layer.
+    cascade_params: [f32; 4],
+    camera_forward: [f32; 4],
     spot_view_proj: [[f32; 4]; 4],
     sun_dir: [f32; 4],
     sun_color: [f32; 4],
@@ -281,6 +413,10 @@ struct MaterialUniform {
     emissive: [f32; 4],
     /// x: alpha mode (0 opaque, 1 mask, 2 blend), y: alpha cutoff.
     render: [f32; 4],
+    /// UV set indices: base color, metallic-roughness, normal, occlusion.
+    texture_uv_sets: [u32; 4],
+    /// x: emissive UV set index; remaining values reserved.
+    texture_uv_sets_extra: [u32; 4],
 }
 
 struct DepthTarget {
@@ -289,18 +425,130 @@ struct DepthTarget {
     sample_count: u32,
 }
 
+struct DirectionalShadowTarget {
+    // Keep the layered texture alive alongside its sampling and per-layer render views.
+    _texture: wgpu::Texture,
+    sample_view: wgpu::TextureView,
+    layer_views: [wgpu::TextureView; shadows::DIRECTIONAL_CASCADE_COUNT],
+}
+
 struct ShadowTarget {
     // Keep the texture alive alongside its view.
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MeshVertexLayout {
+    Static,
+    Skinned,
+}
+
+/// Runtime policy for directional shadow caster depth coverage.
+///
+/// Insert this resource into the application `World` to control how far upstream from the
+/// camera-frustum receiver region opaque/masked shadow casters may extend a cascade's light-space
+/// depth interval. The distance is measured in world units along the directional-light ray.
+/// A value of zero disables off-frustum caster extension while preserving receiver-only fitting.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DirectionalShadowCasterSettings {
+    /// Maximum upstream caster-to-receiver extrusion distance in world units.
+    pub max_extrusion_distance: f32,
+}
+
+impl Default for DirectionalShadowCasterSettings {
+    fn default() -> Self {
+        Self {
+            max_extrusion_distance: DEFAULT_DIRECTIONAL_SHADOW_CASTER_EXTRUSION_DISTANCE,
+        }
+    }
+}
+
+impl DirectionalShadowCasterSettings {
+    /// Return settings with a finite, bounded extrusion distance suitable for GPU fitting.
+    pub fn sanitized(self) -> Self {
+        Self {
+            max_extrusion_distance: if self.max_extrusion_distance.is_finite() {
+                self.max_extrusion_distance
+                    .clamp(0.0, MAX_DIRECTIONAL_SHADOW_CASTER_EXTRUSION_DISTANCE)
+            } else {
+                DEFAULT_DIRECTIONAL_SHADOW_CASTER_EXTRUSION_DISTANCE
+            },
+        }
+    }
+}
+
+/// Optional visualization modes for diagnosing cascaded directional shadows.
+///
+/// These modes only affect the diagnostic color output; they do not change directional or
+/// spotlight shadow generation. The default is `Disabled`, preserving normal PBR rendering.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DirectionalShadowDebugMode {
+    /// Normal PBR shading and shadowing.
+    #[default]
+    Disabled = 0,
+    /// Paint visible geometry by the selected directional cascade.
+    CascadeIndex = 1,
+    /// Visualize the blend weight used while transitioning to the next cascade.
+    BlendWeight = 2,
+    /// Replace the scene with a grayscale preview of one directional depth-array layer.
+    DepthLayer = 3,
+    /// Render the final directional shadow visibility after sampling and blending cascades.
+    ShadowVisibility = 4,
+    /// Render current-cascade visibility, next-cascade visibility, and their final mix in RGB.
+    ShadowVisibilityComponents = 5,
+}
+
+/// Runtime controls for the directional-shadow diagnostic renderer.
+///
+/// `Render3dPlugin` installs this as a world resource and reads it every frame. Applications can
+/// change it at runtime with `world.resource_mut::<DirectionalShadowDebugOptions>()`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DirectionalShadowDebugOptions {
+    /// Visualization mode; defaults to normal rendering.
+    pub mode: DirectionalShadowDebugMode,
+    /// Depth-array layer shown by `DepthLayer`, clamped to the supported range `0..=3`.
+    pub depth_layer: u32,
+}
+
+impl DirectionalShadowDebugOptions {
+    fn sanitized(self) -> Self {
+        Self {
+            depth_layer: self
+                .depth_layer
+                .min(shadows::DIRECTIONAL_CASCADE_COUNT.saturating_sub(1) as u32),
+            ..self
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ShadowDepthDebugUniform {
+    /// x = selected depth-array layer; yzw are reserved and must remain zero.
+    selected_layer: [u32; 4],
+    /// xy = output dimensions used to letterbox the square shadow map without distortion.
+    target_size: [u32; 4],
+}
+
 struct GpuMesh {
     vertices: wgpu::Buffer,
+    vertex_layout: MeshVertexLayout,
     indices: wgpu::Buffer,
     index_count: u32,
     bounds_center: Vec3,
     bounds_radius: f32,
+    /// Valid local-space geometry bounds. Kept separately from the legacy sphere used by culling.
+    local_bounds: Option<Aabb3>,
+    /// Sorted (joint index, local influence AABB) pairs precomputed at skinned-mesh upload.
+    joint_influence_bounds: Vec<(u16, Aabb3)>,
+    /// Vertices for which the production shader's `weight_sum <= 1e-6` path skips skinning.
+    unweighted_bounds: Option<Aabb3>,
+    /// Maximum accepted positive weight sum. Values up to 1.001 are permitted by model upload.
+    max_skin_weight_sum: f32,
+    min_skin_weight_sum: f32,
+    skin_bounds_valid: bool,
     estimated_bytes: u64,
 }
 
@@ -373,7 +621,7 @@ pub struct MeshRendererResourceStats {
     pub particle_instances_drawn: usize,
     /// Number of particle batches drawn in the latest main pass.
     pub particle_batches_drawn: usize,
-    /// Number of grouped indexed draw calls issued by the directional shadow pass.
+    /// Number of grouped indexed draw calls issued across directional cascades and the selected spotlight pass.
     pub shadow_draw_calls: usize,
     /// Skinned draws retained for the current frame's color/shadow submissions.
     pub skinned_draws_after_palette_budget: usize,
@@ -433,21 +681,45 @@ pub struct MeshRenderer {
     blend_pipeline: wgpu::RenderPipeline,
     /// Alpha-blended double-sided pipeline.
     blend_double_sided_pipeline: wgpu::RenderPipeline,
+    /// Compact-vertex opaque/masked pipeline.
+    static_pipeline: wgpu::RenderPipeline,
+    /// Compact-vertex double-sided opaque/masked pipeline.
+    static_double_sided_pipeline: wgpu::RenderPipeline,
+    /// Compact-vertex alpha-blended pipeline.
+    static_blend_pipeline: wgpu::RenderPipeline,
+    /// Compact-vertex alpha-blended double-sided pipeline.
+    static_blend_double_sided_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     /// Directional shadow variant for glTF double-sided materials.
     shadow_double_sided_pipeline: wgpu::RenderPipeline,
+    /// Static-vertex directional shadow pipeline.
+    static_shadow_pipeline: wgpu::RenderPipeline,
+    /// Static-vertex double-sided directional shadow pipeline.
+    static_shadow_double_sided_pipeline: wgpu::RenderPipeline,
     spot_shadow_pipeline: wgpu::RenderPipeline,
+    /// Static-vertex spotlight shadow pipeline.
+    static_spot_shadow_pipeline: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
     globals_group: wgpu::BindGroup,
-    shadow_globals: wgpu::Buffer,
-    shadow_globals_group: wgpu::BindGroup,
+    directional_shadow_globals: [wgpu::Buffer; shadows::DIRECTIONAL_CASCADE_COUNT],
+    directional_shadow_globals_groups: [wgpu::BindGroup; shadows::DIRECTIONAL_CASCADE_COUNT],
     /// Fixed-capacity per-frame storage palette shared by color and shadow vertex stages.
     skin_matrices: wgpu::Buffer,
     spot_shadow_globals: wgpu::Buffer,
     spot_shadow_globals_group: wgpu::BindGroup,
-    shadow_target: ShadowTarget,
+    shadow_target: DirectionalShadowTarget,
     spot_shadow_target: ShadowTarget,
     _shadow_sampler: wgpu::Sampler,
+    /// Full-screen inspector for one layer of the directional depth texture array.
+    shadow_depth_debug_pipeline: wgpu::RenderPipeline,
+    shadow_depth_debug_params: wgpu::Buffer,
+    shadow_depth_debug_group: wgpu::BindGroup,
+    directional_shadow_debug: DirectionalShadowDebugOptions,
+    /// Maximum upstream caster distance from the receiver depth interval, in world units.
+    /// Zero disables off-frustum caster extension while retaining receiver-only fitting.
+    directional_shadow_caster_extrusion_distance: f32,
+    /// Reused projected caster bounds; capacity is retained between frames.
+    directional_shadow_caster_bounds_scratch: Vec<Aabb3>,
     material_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     meshes: Vec<MeshSlot>,
@@ -493,6 +765,34 @@ impl MeshRenderer {
         self.sample_count
     }
 
+    /// Set optional directional-shadow diagnostic output. Passing the default options restores
+    /// normal PBR rendering. The selected depth-array layer is clamped to the four valid layers.
+    pub fn set_directional_shadow_debug(&mut self, options: DirectionalShadowDebugOptions) {
+        self.directional_shadow_debug = options.sanitized();
+    }
+
+    /// Return the currently active directional-shadow diagnostic settings.
+    pub fn directional_shadow_debug(&self) -> DirectionalShadowDebugOptions {
+        self.directional_shadow_debug
+    }
+
+    /// Configure the maximum upstream caster distance used by directional CSM depth fitting.
+    /// The value is measured in world units along the sun-ray direction. Zero disables caster
+    /// extension; non-finite values restore the safe default and finite values are clamped to the
+    /// supported range `0..=MAX_DIRECTIONAL_SHADOW_CASTER_EXTRUSION_DISTANCE`.
+    pub fn set_directional_shadow_caster_extrusion_distance(&mut self, distance: f32) {
+        self.directional_shadow_caster_extrusion_distance = DirectionalShadowCasterSettings {
+            max_extrusion_distance: distance,
+        }
+        .sanitized()
+        .max_extrusion_distance;
+    }
+
+    /// Return the configured maximum upstream directional-shadow caster distance in world units.
+    pub fn directional_shadow_caster_extrusion_distance(&self) -> f32 {
+        self.directional_shadow_caster_extrusion_distance
+    }
+
     /// Main scene depth view used by the screen-space ambient-occlusion post pass.
     /// The view is valid until the renderer is resized or its device is lost.
     pub(crate) fn depth_view(&self) -> Option<&wgpu::TextureView> {
@@ -518,11 +818,11 @@ const INSTANCE_BUFFER_SHRINK_AFTER_FRAMES: u32 = 120;
 /// Per-frame storage palette capacity (mat4x4<f32> per joint); overflow is rejected, never indexed.
 pub const MAX_SKIN_MATRICES_PER_FRAME: usize = 65_536;
 
-// `Vertex` stores all eight joint indices before all eight weights. The shader's
-// locations are grouped by influence set, so locations 4 and 5 deliberately do not
-// follow increasing byte offsets. Keep these offsets explicit: `vertex_attr_array!`
-// lays attributes out consecutively and would interpret JOINTS_1 as WEIGHTS_0.
-const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 7] = [
+// `SkinnedVertex` stores all eight joint indices before all eight weights. The shader's
+// locations are grouped by influence set: locations 5/6 are JOINTS_0/1 and 7/8 are
+// WEIGHTS_0/1. Keep these offsets explicit because their shader order differs from the
+// struct's byte order; `vertex_attr_array!` would otherwise interpret JOINTS_1 as WEIGHTS_0.
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 9] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x3,
         offset: 0,
@@ -539,28 +839,65 @@ const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 7] = [
         shader_location: 2,
     },
     wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Uint16x4,
+        format: wgpu::VertexFormat::Float32x4,
         offset: 32,
         shader_location: 3,
     },
     wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x4,
+        format: wgpu::VertexFormat::Float32x2,
         offset: 48,
         shader_location: 4,
     },
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Uint16x4,
-        offset: 40,
+        offset: 56,
         shader_location: 5,
     },
     wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x4,
+        format: wgpu::VertexFormat::Uint16x4,
         offset: 64,
         shader_location: 6,
     },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 72,
+        shader_location: 7,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 88,
+        shader_location: 8,
+    },
+];
+const STATIC_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 5] = [
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x3,
+        offset: 0,
+        shader_location: 0,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x3,
+        offset: 12,
+        shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x2,
+        offset: 24,
+        shader_location: 2,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 32,
+        shader_location: 3,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x2,
+        offset: 48,
+        shader_location: 4,
+    },
 ];
 const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
-    7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Uint32
+    9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32x4, 13 => Float32x4, 14 => Uint32
 ];
 
 fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
@@ -946,9 +1283,127 @@ fn select_point_lights(lights: &[PointLight], camera_position: Vec3) -> Vec<Poin
         .collect()
 }
 
-fn select_spot_lights(lights: &[SpotLight]) -> (Option<SpotLight>, Option<SpotLight>) {
-    let shadow = lights.iter().copied().find(|light| light.casts_shadows);
-    let active = shadow.or_else(|| lights.first().copied());
+/// Estimate a spotlight's contribution near the active camera.
+///
+/// This is a bounded selection heuristic, not a substitute for evaluating every visible
+/// fragment. It combines range-limited inverse-square falloff, linear color luminance, intensity,
+/// and the cone's solid-angle coverage. Invalid or non-contributing lights are rejected before
+/// they reach the uniforms or shadow pass.
+fn spot_light_importance(light: SpotLight, camera_position: Vec3) -> f32 {
+    let direction_length_squared = light.direction.length_squared();
+    if !light.position.is_finite()
+        || !light.direction.is_finite()
+        || !direction_length_squared.is_finite()
+        || direction_length_squared <= 1.0e-12
+        || !light.color.is_finite()
+        || !light.intensity.is_finite()
+        || !light.range.is_finite()
+        || !light.inner_cone_angle.is_finite()
+        || !light.outer_cone_angle.is_finite()
+        || !camera_position.is_finite()
+        || light.intensity <= 0.0
+        || light.range <= 0.0
+        || light.outer_cone_angle <= 0.0
+        || light.inner_cone_angle < 0.0
+        || light.inner_cone_angle > light.outer_cone_angle
+    {
+        return 0.0;
+    }
+
+    let distance_squared = light.position.distance_squared(camera_position);
+    if !distance_squared.is_finite() {
+        return 0.0;
+    }
+
+    let color = light.color.max(Vec3::ZERO);
+    let luminance = color.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+    if !luminance.is_finite() || luminance <= 0.0 {
+        return 0.0;
+    }
+
+    let outer_angle = light.outer_cone_angle.clamp(0.01, 1.55);
+    let cone_solid_angle_factor = (1.0 - outer_angle.cos()).max(0.0);
+    let range_squared = light.range * light.range;
+    let denominator = distance_squared + (range_squared * 0.04).max(1.0e-4);
+    let score = light.intensity * luminance * range_squared * cone_solid_angle_factor / denominator;
+    if score.is_finite() {
+        score
+    } else {
+        f32::MAX
+    }
+}
+
+/// Break equal scores by light values, not by incidental ECS extraction order. Identical light
+/// records are interchangeable in the single-shadow-map renderer.
+fn compare_spot_light_identity(a: &SpotLight, b: &SpotLight) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let a_values = [
+        a.position.x,
+        a.position.y,
+        a.position.z,
+        a.direction.x,
+        a.direction.y,
+        a.direction.z,
+        a.color.x,
+        a.color.y,
+        a.color.z,
+        a.intensity,
+        a.range,
+        a.inner_cone_angle,
+        a.outer_cone_angle,
+    ];
+    let b_values = [
+        b.position.x,
+        b.position.y,
+        b.position.z,
+        b.direction.x,
+        b.direction.y,
+        b.direction.z,
+        b.color.x,
+        b.color.y,
+        b.color.z,
+        b.intensity,
+        b.range,
+        b.inner_cone_angle,
+        b.outer_cone_angle,
+    ];
+
+    for (a_value, b_value) in a_values.into_iter().zip(b_values) {
+        let order = a_value.total_cmp(&b_value);
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+    a.casts_shadows.cmp(&b.casts_shadows)
+}
+
+/// Select the most important valid spotlight and, independently, the most important valid
+/// shadow caster. The current renderer still supports one spotlight shadow map; selection is
+/// deterministic and camera-aware until the bounded multi-caster atlas is implemented.
+fn select_spot_lights(
+    lights: &[SpotLight],
+    camera_position: Vec3,
+) -> (Option<SpotLight>, Option<SpotLight>) {
+    let mut ranked: Vec<(f32, SpotLight)> = lights
+        .iter()
+        .copied()
+        .filter_map(|light| {
+            let score = spot_light_importance(light, camera_position);
+            (score > 0.0).then_some((score, light))
+        })
+        .collect();
+    ranked.sort_by(|(score_a, light_a), (score_b, light_b)| {
+        score_b
+            .total_cmp(score_a)
+            .then_with(|| compare_spot_light_identity(light_a, light_b))
+    });
+
+    let shadow = ranked
+        .iter()
+        .find(|(_, light)| light.casts_shadows)
+        .map(|(_, light)| *light);
+    let active = shadow.or_else(|| ranked.first().map(|(_, light)| *light));
     (active, shadow)
 }
 

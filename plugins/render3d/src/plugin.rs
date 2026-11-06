@@ -17,6 +17,20 @@ impl Plugin for Render3dPlugin {
     }
 
     fn build(&self, app: &mut App) {
+        if app
+            .world
+            .try_resource::<DirectionalShadowDebugOptions>()
+            .is_none()
+        {
+            app.insert_resource(DirectionalShadowDebugOptions::default());
+        }
+        if app
+            .world
+            .try_resource::<DirectionalShadowCasterSettings>()
+            .is_none()
+        {
+            app.insert_resource(DirectionalShadowCasterSettings::default());
+        }
         if app.world.try_resource::<SunLight>().is_none() {
             app.insert_resource(SunLight::default());
         }

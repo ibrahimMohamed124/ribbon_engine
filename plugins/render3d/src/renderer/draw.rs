@@ -246,7 +246,11 @@ impl MeshRenderer {
         self.last_particle_instances_drawn = particle_instances;
         self.last_particle_batches_drawn = particle_batches;
         let mut phase_started = profile_cpu.then(Instant::now);
-        if scene.draws.is_empty() && skinned_draws.is_empty() && scene.particles.is_empty() {
+        if scene.draws.is_empty()
+            && skinned_draws.is_empty()
+            && scene.particles.is_empty()
+            && self.directional_shadow_debug.mode != super::DirectionalShadowDebugMode::DepthLayer
+        {
             self.maintain_instance_buffers(device, 0);
             return cpu_phases;
         }
@@ -305,7 +309,9 @@ impl MeshRenderer {
             draws.iter().filter(|draw| draw.palette.is_some()).count();
         self.last_skinned_draws_rejected_palette_capacity = rejected_skin_palettes;
         self.last_skin_palette_matrices_staged = skin_matrices.len();
-        if draws.is_empty() && scene.particles.is_empty() {
+        let depth_layer_debug =
+            self.directional_shadow_debug.mode == super::DirectionalShadowDebugMode::DepthLayer;
+        if draws.is_empty() && scene.particles.is_empty() && !depth_layer_debug {
             self.maintain_instance_buffers(device, 0);
             return cpu_phases;
         }
@@ -345,7 +351,7 @@ impl MeshRenderer {
                 (left.draw.mesh, left.draw.material) == (right.draw.mesh, right.draw.material)
             })
             .count();
-        self.last_shadow_draw_calls = shadow_draws
+        let shadow_draw_calls_per_pass = shadow_draws
             .chunk_by(|left, right| {
                 (left.draw.mesh, left.draw.material) == (right.draw.mesh, right.draw.material)
             })
@@ -381,15 +387,45 @@ impl MeshRenderer {
         if !shadow_raw.is_empty() {
             queue.write_buffer(&self.shadow_instances, 0, bytemuck::cast_slice(&shadow_raw));
         }
-        queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&visible_raw));
+        if !visible_raw.is_empty() {
+            queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&visible_raw));
+        }
         record_cpu_phase(
             &mut cpu_phases,
             "instance buffer updates",
             phase_started.take(),
         );
         phase_started = profile_cpu.then(Instant::now);
-        let light_view_proj = Self::directional_shadow_matrix(scene);
-        let (active_spot, shadow_spot) = select_spot_lights(scene.spot_lights);
+        // Build world-space caster bounds from the exact accepted opaque/masked shadow draw set.
+        // This list already excludes rejected skin palettes and blended materials, matching the
+        // draw calls submitted below. The cascade builder projects these bounds once and reuses
+        // them for all four cascades.
+        self.directional_shadow_caster_bounds_scratch.clear();
+        for prepared in &shadow_draws {
+            if let Some(world_bounds) = self.directional_shadow_caster_bounds(prepared) {
+                self.directional_shadow_caster_bounds_scratch
+                    .push(world_bounds);
+            }
+        }
+        let directional_cascades = Self::directional_shadow_cascades_with_casters(
+            scene,
+            &self.directional_shadow_caster_bounds_scratch,
+            self.directional_shadow_caster_extrusion_distance,
+        );
+        record_cpu_phase(
+            &mut cpu_phases,
+            "directional caster bounds and cascade fitting",
+            phase_started.take(),
+        );
+        phase_started = profile_cpu.then(Instant::now);
+        let (active_spot, shadow_spot) =
+            select_spot_lights(scene.spot_lights, scene.camera_position);
+        let shadow_pass_count = if shadow_spot.is_some() {
+            super::shadows::DIRECTIONAL_CASCADE_COUNT + 1
+        } else {
+            super::shadows::DIRECTIONAL_CASCADE_COUNT
+        };
+        self.last_shadow_draw_calls = shadow_draw_calls_per_pass.saturating_mul(shadow_pass_count);
         let spot_view_proj = shadow_spot
             .map(Self::spot_shadow_matrix)
             .unwrap_or(Mat4::IDENTITY);
@@ -399,7 +435,17 @@ impl MeshRenderer {
         let spot = active_spot.unwrap_or_default();
         let globals = Globals {
             view_proj: scene.view_proj.to_cols_array_2d(),
-            light_view_proj: light_view_proj.to_cols_array_2d(),
+            light_view_proj: directional_cascades
+                .matrices
+                .map(|matrix| matrix.to_cols_array_2d()),
+            cascade_splits: directional_cascades.split_depths,
+            cascade_params: [
+                directional_cascades.near_depth,
+                super::shadows::DIRECTIONAL_CASCADE_BLEND,
+                self.directional_shadow_debug.mode as u32 as f32,
+                self.directional_shadow_debug.depth_layer as f32,
+            ],
+            camera_forward: directional_cascades.camera_forward.extend(0.0).to_array(),
             spot_view_proj: spot_view_proj.to_cols_array_2d(),
             sun_dir: scene
                 .sun
@@ -453,10 +499,25 @@ impl MeshRenderer {
             ],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
-        let shadow_globals = ShadowGlobals {
-            light_view_proj: light_view_proj.to_cols_array_2d(),
+        let depth_debug_uniform = super::ShadowDepthDebugUniform {
+            selected_layer: [self.directional_shadow_debug.depth_layer, 0, 0, 0],
+            target_size: [size.0, size.1, 0, 0],
         };
-        queue.write_buffer(&self.shadow_globals, 0, bytemuck::bytes_of(&shadow_globals));
+        queue.write_buffer(
+            &self.shadow_depth_debug_params,
+            0,
+            bytemuck::bytes_of(&depth_debug_uniform),
+        );
+        for (buffer, matrix) in self
+            .directional_shadow_globals
+            .iter()
+            .zip(directional_cascades.matrices)
+        {
+            let shadow_globals = ShadowGlobals {
+                light_view_proj: matrix.to_cols_array_2d(),
+            };
+            queue.write_buffer(buffer, 0, bytemuck::bytes_of(&shadow_globals));
+        }
         if let Some(light) = shadow_spot {
             let spot_globals = ShadowGlobals {
                 light_view_proj: Self::spot_shadow_matrix(light).to_cols_array_2d(),
@@ -490,29 +551,40 @@ impl MeshRenderer {
             label: Some("mesh and directional shadow passes"),
         });
         phase_started = profile_cpu.then(Instant::now);
+        for (cascade_index, (layer_view, shadow_globals_group)) in self
+            .shadow_target
+            .layer_views
+            .iter()
+            .zip(self.directional_shadow_globals_groups.iter())
+            .enumerate()
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("directional shadow map"),
+                label: Some("directional shadow cascade"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_target.view,
+                    view: layer_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: timestamp_query_set.map(|query_set| {
-                    wgpu::RenderPassTimestampWrites {
-                        query_set,
-                        beginning_of_pass_write_index: Some(0),
-                        end_of_pass_write_index: shadow_spot.is_none().then_some(1),
-                    }
+                timestamp_writes: timestamp_query_set.and_then(|query_set| {
+                    let is_first_cascade = cascade_index == 0;
+                    let is_last_cascade_without_spot = cascade_index + 1
+                        == super::shadows::DIRECTIONAL_CASCADE_COUNT
+                        && shadow_spot.is_none();
+                    (is_first_cascade || is_last_cascade_without_spot).then_some(
+                        wgpu::RenderPassTimestampWrites {
+                            query_set,
+                            beginning_of_pass_write_index: is_first_cascade.then_some(0),
+                            end_of_pass_write_index: is_last_cascade_without_spot.then_some(1),
+                        },
+                    )
                 }),
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.shadow_pipeline);
-            pass.set_bind_group(0, &self.shadow_globals_group, &[]);
+            pass.set_bind_group(0, shadow_globals_group, &[]);
             pass.set_vertex_buffer(1, self.shadow_instances.slice(..));
             let mut start = 0;
             while start < shadow_draws.len() {
@@ -533,11 +605,13 @@ impl MeshRenderer {
                     .material
                     .as_ref()
                     .expect("shadow draw material was validated before recording the pass");
-                pass.set_pipeline(if material.double_sided {
-                    &self.shadow_double_sided_pipeline
-                } else {
-                    &self.shadow_pipeline
-                });
+                let shadow_pipeline = match (mesh.vertex_layout, material.double_sided) {
+                    (MeshVertexLayout::Static, false) => &self.static_shadow_pipeline,
+                    (MeshVertexLayout::Static, true) => &self.static_shadow_double_sided_pipeline,
+                    (MeshVertexLayout::Skinned, false) => &self.shadow_pipeline,
+                    (MeshVertexLayout::Skinned, true) => &self.shadow_double_sided_pipeline,
+                };
+                pass.set_pipeline(shadow_pipeline);
                 pass.set_bind_group(1, &material.bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -566,7 +640,6 @@ impl MeshRenderer {
                 }),
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.spot_shadow_pipeline);
             pass.set_bind_group(0, &self.spot_shadow_globals_group, &[]);
             pass.set_vertex_buffer(1, self.shadow_instances.slice(..));
             let mut start = 0;
@@ -588,6 +661,11 @@ impl MeshRenderer {
                     .material
                     .as_ref()
                     .expect("spotlight shadow material was validated before recording the pass");
+                let spot_pipeline = match mesh.vertex_layout {
+                    MeshVertexLayout::Static => &self.static_spot_shadow_pipeline,
+                    MeshVertexLayout::Skinned => &self.spot_shadow_pipeline,
+                };
+                pass.set_pipeline(spot_pipeline);
                 pass.set_bind_group(1, &material.bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -601,17 +679,12 @@ impl MeshRenderer {
             phase_started.take(),
         );
         phase_started = profile_cpu.then(Instant::now);
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("meshes"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target: resolve_view,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+        if depth_layer_debug {
+            // Keep the main depth attachment deterministic for downstream GTAO/post-processing,
+            // even though the depth-layer visualization itself is a fullscreen pass.
+            let _depth_clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("clear main depth before directional shadow depth preview"),
+                color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &depth.view,
                     depth_ops: Some(wgpu::Operations {
@@ -620,6 +693,41 @@ impl MeshRenderer {
                     }),
                     stencil_ops: None,
                 }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+        }
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(if depth_layer_debug {
+                    "directional shadow depth-layer debug preview"
+                } else {
+                    "meshes and directional shadow diagnostics"
+                }),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: resolve_view,
+                    ops: wgpu::Operations {
+                        load: if depth_layer_debug {
+                            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: if depth_layer_debug {
+                    None
+                } else {
+                    Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &depth.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    })
+                },
                 timestamp_writes: timestamp_query_set.map(|query_set| {
                     wgpu::RenderPassTimestampWrites {
                         query_set,
@@ -629,45 +737,71 @@ impl MeshRenderer {
                 }),
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.globals_group, &[]);
-            pass.set_vertex_buffer(1, self.instances.slice(..));
-            let mut start = 0;
-            while start < visible_draws.len() {
-                let key = (
-                    visible_draws[start].draw.mesh,
-                    visible_draws[start].draw.material,
-                );
-                let end = start
-                    + visible_draws[start..]
-                        .iter()
-                        .take_while(|d| (d.draw.mesh, d.draw.material) == key)
-                        .count();
-                let mesh = self.meshes[key.0.slot]
-                    .mesh
-                    .as_ref()
-                    .expect("draw list was validated before recording the mesh pass");
-                let material = self.materials[key.1.slot]
-                    .material
-                    .as_ref()
-                    .expect("draw list was validated before recording the material pass");
-                let pipeline = match color_pipeline_key(material.alpha_mode, material.double_sided)
+            if depth_layer_debug {
+                // Inspect the full selected depth-array layer after this frame's shadow passes.
+                pass.set_pipeline(&self.shadow_depth_debug_pipeline);
+                pass.set_bind_group(0, &self.shadow_depth_debug_group, &[]);
+                pass.draw(0..3, 0..1);
+            } else {
+                pass.set_bind_group(0, &self.globals_group, &[]);
+                pass.set_vertex_buffer(1, self.instances.slice(..));
+                let mut start = 0;
+                while start < visible_draws.len() {
+                    let key = (
+                        visible_draws[start].draw.mesh,
+                        visible_draws[start].draw.material,
+                    );
+                    let end = start
+                        + visible_draws[start..]
+                            .iter()
+                            .take_while(|d| (d.draw.mesh, d.draw.material) == key)
+                            .count();
+                    let mesh = self.meshes[key.0.slot]
+                        .mesh
+                        .as_ref()
+                        .expect("draw list was validated before recording the mesh pass");
+                    let material = self.materials[key.1.slot]
+                        .material
+                        .as_ref()
+                        .expect("draw list was validated before recording the material pass");
+                    let pipeline = match mesh.vertex_layout {
+                        MeshVertexLayout::Static => {
+                            match color_pipeline_key(material.alpha_mode, material.double_sided) {
+                                ColorPipelineKey::OpaqueCull => &self.static_pipeline,
+                                ColorPipelineKey::OpaqueDoubleSided => {
+                                    &self.static_double_sided_pipeline
+                                }
+                                ColorPipelineKey::BlendCull => &self.static_blend_pipeline,
+                                ColorPipelineKey::BlendDoubleSided => {
+                                    &self.static_blend_double_sided_pipeline
+                                }
+                            }
+                        }
+                        MeshVertexLayout::Skinned => {
+                            match color_pipeline_key(material.alpha_mode, material.double_sided) {
+                                ColorPipelineKey::OpaqueCull => &self.pipeline,
+                                ColorPipelineKey::OpaqueDoubleSided => &self.double_sided_pipeline,
+                                ColorPipelineKey::BlendCull => &self.blend_pipeline,
+                                ColorPipelineKey::BlendDoubleSided => {
+                                    &self.blend_double_sided_pipeline
+                                }
+                            }
+                        }
+                    };
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(1, &material.bind_group, &[]);
+                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
+                    start = end;
+                }
+                // Diagnostic modes deliberately suppress particles so cascade colors and blend
+                // weights remain attributable to mesh fragments only.
+                if self.directional_shadow_debug.mode == super::DirectionalShadowDebugMode::Disabled
                 {
-                    ColorPipelineKey::OpaqueCull => &self.pipeline,
-                    ColorPipelineKey::OpaqueDoubleSided => &self.double_sided_pipeline,
-                    ColorPipelineKey::BlendCull => &self.blend_pipeline,
-                    ColorPipelineKey::BlendDoubleSided => &self.blend_double_sided_pipeline,
-                };
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(1, &material.bind_group, &[]);
-                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.index_count, 0, start as u32..end as u32);
-                start = end;
+                    self.particles.draw(&mut pass, &self.globals_group);
+                }
             }
-            // Particle pipelines target the same HDR/MSAA color format as this pass. Keep
-            // them out of the depth-only shadow passes, whose color attachment list is empty.
-            self.particles.draw(&mut pass, &self.globals_group);
         }
         record_cpu_phase(
             &mut cpu_phases,
