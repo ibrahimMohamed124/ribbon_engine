@@ -5,20 +5,25 @@
 //! the renderer's job. External buffer/image files are not resolved: use `.glb`
 //! or embed the data.
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3};
 use ribbon_assets::{AssetLoader, AssetMemoryBreakdown, LoadContext, LoadError, LoadErrorKind};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
-/// Indexed triangle geometry with per-vertex normals and first UV set.
+/// Indexed triangle geometry with normals, tangent frames, and two texture-coordinate sets.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrimitiveData {
     /// Object-space positions.
     pub positions: Vec<[f32; 3]>,
     /// Unit normals (computed when the file has none).
     pub normals: Vec<[f32; 3]>,
-    /// Texture coordinates, zeros when the file has none.
+    /// First texture-coordinate set; zeros when the file has none.
     pub uvs: Vec<[f32; 2]>,
+    /// Second texture-coordinate set; falls back to UV0 when the file has no TEXCOORD_1.
+    pub uv1s: Vec<[f32; 2]>,
+    /// Object-space tangent xyz and handedness sign in w. Imported from TANGENT or generated
+    /// from triangle geometry and UV0 when missing/invalid.
+    pub tangents: Vec<[f32; 4]>,
     /// Triangle list indices.
     pub indices: Vec<u32>,
     /// Index into [`ModelAsset::materials`]; `None` selects the default material.
@@ -52,16 +57,26 @@ pub struct MaterialData {
     pub roughness_factor: f32,
     /// Index into [`ModelAsset::images`] for the sRGB base color texture.
     pub base_color_texture: Option<usize>,
+    /// TEXCOORD_n selected by the base-color texture (0 or 1; higher sets fall back to 0).
+    pub base_color_tex_coord: u32,
     /// Index into [`ModelAsset::images`] for the linear G=roughness/B=metallic texture.
     pub metallic_roughness_texture: Option<usize>,
+    /// TEXCOORD_n selected by the metallic-roughness texture.
+    pub metallic_roughness_tex_coord: u32,
     /// Index into images for tangent-space normal data.
     pub normal_texture: Option<usize>,
+    /// TEXCOORD_n selected by the normal texture.
+    pub normal_tex_coord: u32,
     /// Index into images for the red-channel ambient-occlusion texture.
     pub occlusion_texture: Option<usize>,
+    /// TEXCOORD_n selected by the occlusion texture.
+    pub occlusion_tex_coord: u32,
     /// glTF occlusion strength.
     pub occlusion_strength: f32,
     /// Index into images for emissive color (sRGB).
     pub emissive_texture: Option<usize>,
+    /// TEXCOORD_n selected by the emissive texture.
+    pub emissive_tex_coord: u32,
     /// Linear emissive multiplier.
     pub emissive_factor: [f32; 3],
     /// glTF alpha compositing mode. Missing values default to OPAQUE.
@@ -359,7 +374,12 @@ impl ModelAsset {
             bytes = bytes.saturating_add(allocated_vec_bytes::<[f32; 3]>(
                 primitive.normals.capacity(),
             ));
-            bytes = bytes.saturating_add(allocated_vec_bytes::<[f32; 2]>(primitive.uvs.capacity()));
+            bytes = bytes
+                .saturating_add(allocated_vec_bytes::<[f32; 2]>(primitive.uvs.capacity()))
+                .saturating_add(allocated_vec_bytes::<[f32; 2]>(primitive.uv1s.capacity()))
+                .saturating_add(allocated_vec_bytes::<[f32; 4]>(
+                    primitive.tangents.capacity(),
+                ));
             bytes = bytes.saturating_add(allocated_vec_bytes::<u32>(primitive.indices.capacity()));
             bytes =
                 bytes.saturating_add(allocated_vec_bytes::<[u16; 8]>(primitive.joints.capacity()));
@@ -409,6 +429,10 @@ impl ModelAsset {
                     primitive.normals.capacity(),
                 ))
                 .saturating_add(allocated_vec_bytes::<[f32; 2]>(primitive.uvs.capacity()))
+                .saturating_add(allocated_vec_bytes::<[f32; 2]>(primitive.uv1s.capacity()))
+                .saturating_add(allocated_vec_bytes::<[f32; 4]>(
+                    primitive.tangents.capacity(),
+                ))
                 .saturating_add(allocated_vec_bytes::<u32>(primitive.indices.capacity()))
                 .saturating_add(allocated_vec_bytes::<[u16; 8]>(primitive.joints.capacity()))
                 .saturating_add(allocated_vec_bytes::<[f32; 8]>(
@@ -465,26 +489,52 @@ impl ModelAsset {
     }
 
     /// Estimate bytes the current renderer upload path will submit for this model. This is a
-    /// pacing estimate, not driver VRAM telemetry. It includes unique placed primitive vertex/
-    /// index buffers (including eight skinning influences), referenced material records, and
-    /// each unique image transfer-function variant with its actual prepared mip byte count.
+    /// pacing estimate, not driver VRAM telemetry. It accounts for separate 56-byte static and
+    /// 104-byte skinned vertex streams, duplicated only when a primitive is placed by both node
+    /// kinds, plus the index buffers, referenced materials, and prepared image mip variants.
     pub fn estimated_gpu_upload_bytes(&self) -> u64 {
         let mut bytes = 0_u64;
-        let used_primitives: std::collections::HashSet<usize> =
-            self.nodes.iter().map(|node| node.primitive).collect();
-        for index in used_primitives {
-            let Some(primitive) = self.primitives.get(index) else {
+        let mut static_primitive_used = vec![false; self.primitives.len()];
+        let mut skinned_primitive_used = vec![false; self.primitives.len()];
+        for node in &self.nodes {
+            if let Some(used) = if node.skin.is_some() {
+                skinned_primitive_used.get_mut(node.primitive)
+            } else {
+                static_primitive_used.get_mut(node.primitive)
+            } {
+                *used = true;
+            }
+        }
+        for (index, primitive) in self.primitives.iter().enumerate() {
+            let static_used = static_primitive_used[index];
+            let skinned_used = skinned_primitive_used[index];
+            if !static_used && !skinned_used {
                 continue;
-            };
+            }
             let vertices = primitive.positions.len() as u64;
-            bytes = bytes.saturating_add(vertices.saturating_mul(
-                (std::mem::size_of::<[f32; 3]>() * 2
-                    + std::mem::size_of::<[f32; 2]>()
-                    + std::mem::size_of::<[u16; 8]>()
-                    + std::mem::size_of::<[f32; 8]>()) as u64,
-            ));
+            let mut vertex_stride = 0_u64;
+            let mut layout_count = 0_u64;
+            if static_used {
+                vertex_stride = vertex_stride
+                    .saturating_add(std::mem::size_of::<[f32; 3]>() as u64 * 2)
+                    .saturating_add(std::mem::size_of::<[f32; 2]>() as u64 * 2)
+                    .saturating_add(std::mem::size_of::<[f32; 4]>() as u64);
+                layout_count += 1;
+            }
+            if skinned_used {
+                vertex_stride = vertex_stride
+                    .saturating_add(std::mem::size_of::<[f32; 3]>() as u64 * 2)
+                    .saturating_add(std::mem::size_of::<[f32; 2]>() as u64 * 2)
+                    .saturating_add(std::mem::size_of::<[f32; 4]>() as u64)
+                    .saturating_add(std::mem::size_of::<[u16; 8]>() as u64)
+                    .saturating_add(std::mem::size_of::<[f32; 8]>() as u64);
+                layout_count += 1;
+            }
+            bytes = bytes.saturating_add(vertices.saturating_mul(vertex_stride));
             bytes = bytes.saturating_add(
-                (primitive.indices.len() as u64).saturating_mul(std::mem::size_of::<u32>() as u64),
+                (primitive.indices.len() as u64)
+                    .saturating_mul(std::mem::size_of::<u32>() as u64)
+                    .saturating_mul(layout_count),
             );
         }
 
@@ -642,21 +692,32 @@ pub fn parse(bytes: &[u8]) -> Result<ModelAsset, String> {
             base_color_texture: pbr
                 .base_color_texture()
                 .map(|info| info.texture().source().index()),
+            base_color_tex_coord: pbr.base_color_texture().map_or(0, |info| info.tex_coord()),
             metallic_roughness_texture: pbr
                 .metallic_roughness_texture()
                 .map(|info| info.texture().source().index()),
+            metallic_roughness_tex_coord: pbr
+                .metallic_roughness_texture()
+                .map_or(0, |info| info.tex_coord()),
             normal_texture: material
                 .normal_texture()
                 .map(|info| info.texture().source().index()),
+            normal_tex_coord: material.normal_texture().map_or(0, |info| info.tex_coord()),
             occlusion_texture: material
                 .occlusion_texture()
                 .map(|info| info.texture().source().index()),
+            occlusion_tex_coord: material
+                .occlusion_texture()
+                .map_or(0, |info| info.tex_coord()),
             occlusion_strength: material
                 .occlusion_texture()
                 .map_or(1.0, |info| info.strength()),
             emissive_texture: material
                 .emissive_texture()
                 .map(|info| info.texture().source().index()),
+            emissive_tex_coord: material
+                .emissive_texture()
+                .map_or(0, |info| info.tex_coord()),
             emissive_factor: material.emissive_factor(),
             alpha_mode: match material.alpha_mode() {
                 gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
@@ -894,19 +955,141 @@ fn build_primitive(
         Some(coords) => coords.into_f32().collect(),
         None => vec![[0.0, 0.0]; positions.len()],
     };
-    if normals.len() != positions.len() || uvs.len() != positions.len() {
+    let uv1s = match reader.read_tex_coords(1) {
+        Some(coords) => coords.into_f32().collect(),
+        // Missing UV1 safely aliases UV0, preserving existing material behavior for assets that
+        // request TEXCOORD_1 without actually providing it.
+        None => uvs.clone(),
+    };
+    if normals.len() != positions.len()
+        || uvs.len() != positions.len()
+        || uv1s.len() != positions.len()
+    {
         return Err("vertex attribute counts do not match".to_owned());
     }
+    let tangents = match reader.read_tangents() {
+        Some(source) => {
+            let imported: Vec<[f32; 4]> = source.collect();
+            if imported.len() == positions.len()
+                && imported.iter().all(|tangent| {
+                    tangent.iter().all(|value| value.is_finite())
+                        && Vec3::new(tangent[0], tangent[1], tangent[2]).length_squared() > 1.0e-12
+                        && tangent[3].abs() > 1.0e-6
+                })
+            {
+                imported
+                    .into_iter()
+                    .map(|tangent| {
+                        let direction = Vec3::new(tangent[0], tangent[1], tangent[2]).normalize();
+                        [
+                            direction.x,
+                            direction.y,
+                            direction.z,
+                            if tangent[3] < 0.0 { -1.0 } else { 1.0 },
+                        ]
+                    })
+                    .collect()
+            } else {
+                generate_tangents(&positions, &normals, &uvs, &indices)
+            }
+        }
+        None => generate_tangents(&positions, &normals, &uvs, &indices),
+    };
     let (joints, weights) = read_skinning_attributes(&reader, positions.len())?;
     Ok(Some(PrimitiveData {
         positions,
         normals,
         uvs,
+        uv1s,
+        tangents,
         indices,
         material: primitive.material().index(),
         joints,
         weights,
     }))
+}
+
+fn generate_tangents(
+    positions: &[[f32; 3]],
+    normals: &[[f32; 3]],
+    uvs: &[[f32; 2]],
+    indices: &[u32],
+) -> Vec<[f32; 4]> {
+    let mut tangent_sum = vec![Vec3::ZERO; positions.len()];
+    let mut bitangent_sum = vec![Vec3::ZERO; positions.len()];
+    for triangle in indices.as_chunks::<3>().0 {
+        let [i0, i1, i2] = [
+            triangle[0] as usize,
+            triangle[1] as usize,
+            triangle[2] as usize,
+        ];
+        if [i0, i1, i2]
+            .iter()
+            .any(|&index| index >= positions.len() || index >= normals.len() || index >= uvs.len())
+        {
+            continue;
+        }
+        let p0 = Vec3::from_array(positions[i0]);
+        let p1 = Vec3::from_array(positions[i1]);
+        let p2 = Vec3::from_array(positions[i2]);
+        let uv0 = Vec2::from_array(uvs[i0]);
+        let uv1 = Vec2::from_array(uvs[i1]);
+        let uv2 = Vec2::from_array(uvs[i2]);
+        let edge1 = p1 - p0;
+        let edge2 = p2 - p0;
+        let delta1 = uv1 - uv0;
+        let delta2 = uv2 - uv0;
+        let determinant = delta1.x * delta2.y - delta1.y * delta2.x;
+        if !determinant.is_finite() || determinant.abs() <= 1.0e-8 {
+            continue;
+        }
+        let inverse = determinant.recip();
+        let tangent = (edge1 * delta2.y - edge2 * delta1.y) * inverse;
+        let bitangent = (edge2 * delta1.x - edge1 * delta2.x) * inverse;
+        if !tangent.is_finite() || !bitangent.is_finite() {
+            continue;
+        }
+        let area = edge1.cross(edge2).length().max(1.0e-8);
+        for index in [i0, i1, i2] {
+            tangent_sum[index] += tangent * area;
+            bitangent_sum[index] += bitangent * area;
+        }
+    }
+    (0..positions.len())
+        .map(|index| {
+            let normal = normals
+                .get(index)
+                .copied()
+                .map(Vec3::from_array)
+                .filter(|normal| normal.is_finite() && normal.length_squared() > 1.0e-12)
+                .map(Vec3::normalize)
+                .unwrap_or(Vec3::Z);
+            let projected = tangent_sum[index] - normal * normal.dot(tangent_sum[index]);
+            let tangent = if projected.is_finite() && projected.length_squared() > 1.0e-12 {
+                projected.normalize()
+            } else {
+                let axis = if normal.y.abs() < 0.9 {
+                    Vec3::Y
+                } else {
+                    Vec3::X
+                };
+                axis.cross(normal).normalize_or_zero()
+            };
+            let tangent = if tangent.length_squared() > 1.0e-12 {
+                tangent
+            } else {
+                Vec3::X
+            };
+            let handedness = if bitangent_sum[index].is_finite()
+                && normal.cross(tangent).dot(bitangent_sum[index]) < 0.0
+            {
+                -1.0
+            } else {
+                1.0
+            };
+            [tangent.x, tangent.y, tangent.z, handedness]
+        })
+        .collect()
 }
 
 fn build_skeleton_nodes(document: &gltf::Document) -> Vec<SkeletonNode> {
@@ -1268,6 +1451,8 @@ mod tests {
 
     const CUBE: &[u8] = include_bytes!("../../../assets/models/checker_cube.glb");
     const TRIANGLE: &[u8] = include_bytes!("../../../assets/models/bare_triangle.glb");
+    const UV1_TANGENT_FIXTURE: &[u8] =
+        include_bytes!("../../../assets/models/uv1_tangent_fixture.glb");
     const SKINNED_TRIANGLE: &[u8] = br#"{"asset":{"version":"2.0","generator":"Ribbon skeletal animation fixture"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0,"skin":0,"children":[1]},{"translation":[0,1,0]}],"meshes":[{"primitives":[{"attributes":{"POSITION":0,"JOINTS_0":1,"WEIGHTS_0":2,"JOINTS_1":3,"WEIGHTS_1":4},"indices":5}]}],"skins":[{"inverseBindMatrices":6,"joints":[1]}],"animations":[{"name":"move_joint","samplers":[{"input":7,"output":8,"interpolation":"LINEAR"}],"channels":[{"sampler":0,"target":{"node":1,"path":"translation"}}]}],"buffers":[{"byteLength":284,"uri":"data:application/octet-stream;base64,AAAAvwAAAAAAAAAAAAAAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAAAPgAAAD4AAAA+AAABAAIAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAgD8AAAAAAACAPwAAAAAAAAAAAAAAQAAAAAA="}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962},{"buffer":0,"byteOffset":36,"byteLength":24,"target":34962},{"buffer":0,"byteOffset":60,"byteLength":48,"target":34962},{"buffer":0,"byteOffset":108,"byteLength":24,"target":34962},{"buffer":0,"byteOffset":132,"byteLength":48,"target":34962},{"buffer":0,"byteOffset":180,"byteLength":6,"target":34963},{"buffer":0,"byteOffset":188,"byteLength":64},{"buffer":0,"byteOffset":252,"byteLength":8},{"buffer":0,"byteOffset":260,"byteLength":24}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[-0.5,0,0],"max":[0.5,1,0]},{"bufferView":1,"componentType":5123,"count":3,"type":"VEC4"},{"bufferView":2,"componentType":5126,"count":3,"type":"VEC4"},{"bufferView":3,"componentType":5123,"count":3,"type":"VEC4"},{"bufferView":4,"componentType":5126,"count":3,"type":"VEC4"},{"bufferView":5,"componentType":5123,"count":3,"type":"SCALAR"},{"bufferView":6,"componentType":5126,"count":1,"type":"MAT4"},{"bufferView":7,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[1]},{"bufferView":8,"componentType":5126,"count":2,"type":"VEC3"}]}"#;
 
     #[test]
@@ -1306,7 +1491,7 @@ mod tests {
             model.memory_breakdown().total_bytes(),
             model.estimated_size_bytes()
         );
-        assert!(model.estimated_gpu_upload_bytes() >= 3 * 80);
+        assert!(model.estimated_gpu_upload_bytes() >= 3 * 104);
     }
 
     #[test]
@@ -1316,6 +1501,23 @@ mod tests {
         let cube = &model.primitives[0];
         assert_eq!((cube.positions.len(), cube.indices.len()), (24, 36));
         assert_eq!(cube.material, Some(0));
+        assert_eq!(cube.uv1s.len(), cube.positions.len());
+        assert_eq!(cube.tangents.len(), cube.positions.len());
+        assert_eq!(
+            cube.uv1s, cube.uvs,
+            "missing TEXCOORD_1 falls back to TEXCOORD_0"
+        );
+        assert!(cube.tangents.iter().all(|tangent| {
+            tangent.iter().all(|value| value.is_finite())
+                && (glam::Vec3::new(tangent[0], tangent[1], tangent[2]).length() - 1.0).abs()
+                    < 1.0e-4
+                && tangent[3].abs() == 1.0
+        }));
+        assert_eq!(model.materials[0].base_color_tex_coord, 0);
+        assert_eq!(model.materials[0].metallic_roughness_tex_coord, 0);
+        assert_eq!(model.materials[0].normal_tex_coord, 0);
+        assert_eq!(model.materials[0].occlusion_tex_coord, 0);
+        assert_eq!(model.materials[0].emissive_tex_coord, 0);
         assert_eq!(model.materials[0].base_color_texture, Some(0));
         assert_eq!(model.materials[0].base_color, [1.0; 4]);
         // The fixture omits metallicFactor; glTF 2.0 defines its default as 1.0.
@@ -1345,6 +1547,26 @@ mod tests {
         let (min, max) = model.bounds().expect("bounds");
         assert!(min.abs_diff_eq(Vec3::new(1.1, 0.1, -0.4), 1e-5), "{min}");
         assert!(max.abs_diff_eq(Vec3::new(1.9, 0.9, 0.4), 1e-5), "{max}");
+    }
+
+    #[test]
+    fn gltf_imports_uv1_tangents_and_per_texture_tex_coord_selection() {
+        let model = parse(UV1_TANGENT_FIXTURE).expect("UV1/tangent fixture parses");
+        let primitive = &model.primitives[0];
+        assert_eq!(primitive.positions.len(), 3);
+        assert_eq!(primitive.uvs, vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+        assert_eq!(
+            primitive.uv1s,
+            vec![[0.25, 0.25], [0.75, 0.25], [0.25, 0.75]]
+        );
+        assert_eq!(primitive.tangents, vec![[0.0, 1.0, 0.0, -1.0]; 3]);
+        let material = &model.materials[0];
+        assert_eq!(material.base_color_texture, Some(0));
+        assert_eq!(material.base_color_tex_coord, 1);
+        assert_eq!(material.metallic_roughness_tex_coord, 0);
+        assert_eq!(material.normal_tex_coord, 0);
+        assert_eq!(material.occlusion_tex_coord, 0);
+        assert_eq!(material.emissive_tex_coord, 0);
     }
 
     #[test]
@@ -1393,11 +1615,16 @@ mod tests {
                     metallic_factor: 0.0,
                     roughness_factor: 1.0,
                     base_color_texture: Some(0),
+                    base_color_tex_coord: 0,
                     metallic_roughness_texture: None,
+                    metallic_roughness_tex_coord: 0,
                     normal_texture: Some(1),
+                    normal_tex_coord: 0,
                     occlusion_texture: None,
+                    occlusion_tex_coord: 0,
                     occlusion_strength: 1.0,
                     emissive_texture: Some(2),
+                    emissive_tex_coord: 0,
                     emissive_factor: [0.0; 3],
                     alpha_mode: AlphaMode::Opaque,
                     alpha_cutoff: 0.5,
@@ -1408,11 +1635,16 @@ mod tests {
                     metallic_factor: 0.0,
                     roughness_factor: 1.0,
                     base_color_texture: None,
+                    base_color_tex_coord: 0,
                     metallic_roughness_texture: Some(2),
+                    metallic_roughness_tex_coord: 0,
                     normal_texture: None,
+                    normal_tex_coord: 0,
                     occlusion_texture: None,
+                    occlusion_tex_coord: 0,
                     occlusion_strength: 1.0,
                     emissive_texture: None,
+                    emissive_tex_coord: 0,
                     emissive_factor: [0.0; 3],
                     alpha_mode: AlphaMode::Opaque,
                     alpha_cutoff: 0.5,
@@ -1423,11 +1655,16 @@ mod tests {
                     metallic_factor: 0.0,
                     roughness_factor: 1.0,
                     base_color_texture: Some(3),
+                    base_color_tex_coord: 0,
                     metallic_roughness_texture: None,
+                    metallic_roughness_tex_coord: 0,
                     normal_texture: None,
+                    normal_tex_coord: 0,
                     occlusion_texture: None,
+                    occlusion_tex_coord: 0,
                     occlusion_strength: 1.0,
                     emissive_texture: None,
+                    emissive_tex_coord: 0,
                     emissive_factor: [0.0; 3],
                     alpha_mode: AlphaMode::Opaque,
                     alpha_cutoff: 0.5,
@@ -1439,6 +1676,8 @@ mod tests {
                     positions: vec![[0.0; 3]; 3],
                     normals: vec![[0.0, 0.0, 1.0]; 3],
                     uvs: vec![[0.0; 2]; 3],
+                    uv1s: vec![[0.0; 2]; 3],
+                    tangents: vec![[1.0, 0.0, 0.0, 1.0]; 3],
                     indices: vec![0, 1, 2],
                     material: Some(0),
                     joints: vec![[0; 8]; 3],
@@ -1448,6 +1687,8 @@ mod tests {
                     positions: vec![[0.0; 3]; 3],
                     normals: vec![[0.0, 0.0, 1.0]; 3],
                     uvs: vec![[0.0; 2]; 3],
+                    uv1s: vec![[0.0; 2]; 3],
+                    tangents: vec![[1.0, 0.0, 0.0, 1.0]; 3],
                     indices: vec![0, 1, 2],
                     material: Some(1),
                     joints: vec![[0; 8]; 3],
@@ -1495,6 +1736,8 @@ mod tests {
                 positions: vec![[0.0; 3]; 3],
                 normals: vec![[0.0, 0.0, 1.0]; 3],
                 uvs: vec![[0.0; 2]; 3],
+                uv1s: vec![[0.0; 2]; 3],
+                tangents: vec![[1.0, 0.0, 0.0, 1.0]; 3],
                 indices: vec![0, 1, 2],
                 material: Some(0),
                 joints: vec![[0; 8]; 3],
@@ -1505,11 +1748,16 @@ mod tests {
                 metallic_factor: 0.0,
                 roughness_factor: 1.0,
                 base_color_texture: Some(0),
+                base_color_tex_coord: 0,
                 metallic_roughness_texture: None,
+                metallic_roughness_tex_coord: 0,
                 normal_texture: Some(0),
+                normal_tex_coord: 0,
                 occlusion_texture: None,
+                occlusion_tex_coord: 0,
                 occlusion_strength: 1.0,
                 emissive_texture: None,
+                emissive_tex_coord: 0,
                 emissive_factor: [0.0; 3],
                 alpha_mode: AlphaMode::Opaque,
                 alpha_cutoff: 0.5,
@@ -1533,12 +1781,11 @@ mod tests {
             skeletal_animations: Vec::new(),
         };
 
-        // 3 vertices * 80 bytes (position/normal/UV/eight joint indices/eight weights) +
-        // 3 indices * 4 bytes + one 256-byte material uniform, plus two transfer-function-
-        // specific texture allocations (base + 1x1 mip each).
+        // This unskinned placement uses 3 * 56-byte static vertices plus its index buffer,
+        // one material uniform, and two transfer-function-specific image allocations.
         assert_eq!(
             model.estimated_gpu_upload_bytes(),
-            240 + 12 + 256 + (16 + 4) * 2
+            168 + 12 + 256 + (16 + 4) * 2
         );
     }
 
