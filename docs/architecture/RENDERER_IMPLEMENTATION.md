@@ -21,10 +21,15 @@ confusing integrated capabilities with features that remain in the roadmap.
    Reinhard tone mapper writes the acquired surface image. The post pass includes basic bloom,
    optional GPU-adapted exposure, display color grading, FXAA, vignette, animated film grain,
    chromatic aberration and an optional depth-reconstructed spatial GTAO-style pass.
-4. **Directional and spotlight shadows.** Depth-only passes create one camera-frustum-fitted,
-   texel-snapped directional shadow map and one selected perspective spotlight shadow map.
-   Both are sampled with depth-comparison PCF. Cascades, multiple spotlight casters, point-light
-   shadows, runtime quality settings and cascade blending remain incomplete.
+4. **Directional and spotlight shadows.** Four depth-only directional passes render separate
+   overlapped camera-frustum slices into a four-layer `Depth32Float` texture array. Practical
+   logarithmic/linear splits, rotation-stable light-space bounds, per-cascade texel snapping,
+   3x3 depth-comparison PCF and a 10% transition blend are applied. Static and current-pose
+   skinned bounds from the accepted opaque/masked shadow-draw set can extend only the lower depth
+   edge for overlapping upstream casters within the configured extrusion distance; receiver XY
+   fitting remains unchanged. A separately selected perspective spotlight retains its own depth
+   map and PCF path. Per-cascade caster culling, configurable shadow distance/resolution, multiple
+   spotlight casters and point-light shadows remain incomplete.
 5. **Main-pass visibility.** Conservative bounding-sphere/frustum tests reduce
    the color-pass instance list. The shadow list retains valid off-screen draws
    so objects outside the camera view can still cast shadows.
@@ -49,8 +54,9 @@ confusing integrated capabilities with features that remain in the roadmap.
 - The PBR shader supports normal, material AO and emissive textures, plus up to eight
   deterministically selected unshadowed point lights. Vertex colors, image-based lighting,
   multiple spotlight shadow casters and point-light shadow visibility remain unimplemented.
-- Directional shadows use one fixed-resolution, frustum-fitted and texel-snapped map with 3x3 PCF;
-  cascades and configurable shadow distance/resolution remain unimplemented.
+- Directional shadows use four fixed-resolution frustum-slice layers with practical splits,
+  texel-snapped fits, 3x3 PCF and adjacent-cascade transition blending. Configurable shadow
+  distance/resolution and per-cascade caster culling remain unimplemented.
 - The render graph is a scheduling/dependency graph, not a transient GPU resource
   allocator or complete graph of every internal render subpass.
 - Normal/AO/emissive texture sampling, height/distance fog, alpha material modes, per-material

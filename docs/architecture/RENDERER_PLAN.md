@@ -71,7 +71,7 @@ implemented:
 ```text
  1  Extract       ECS -> render-facing snapshot
  2  Cull          CPU frustum culling; instance batching (GPU culling later)
- 3  Shadows       single directional map now; cascades / point / spot later
+ 3  Shadows       four directional cascades and one selected spot map; point shadows later
  4  Depth         opaque depth buffer now; dedicated pre-pass later if measured
  5  Opaque PBR    Cook-Torrance metallic-roughness into HDR RGBA16F
  6  Sky and fog   future sky model and volumetric fog
@@ -87,8 +87,8 @@ implemented:
 | --- | --- | --- |
 | Frame graph | Validated resource dependency graph; native `GpuWindow` passes chained by color versions | Transient resource allocation, explicit graph nodes for every internal mesh subpass, detailed tracing/profiling |
 | Mesh backend | Native wgpu surface, indexed meshes, depth buffer, GPU instance buffers | GPU-driven rendering, robust asset eviction, async upload, resource lifetime policy |
-| Materials | Cook-Torrance/GGX, base-color/normal/AO/emissive maps, generated mips, OPAQUE/MASK/BLEND, per-material double-sided variants | Vertex colors, tangents/UV1, compression, material caching/sharing improvements, OIT/refraction |
-| Lighting | Directional sun/ambient, one frustum-fitted texel-snapped directional map, one selected spotlight shadow, up to eight importance-ranked unshadowed point lights | Cascades, multiple spotlight casters, point-light shadows, configurable soft shadows, image-based lighting |
+| Materials | Cook-Torrance/GGX, base-color/normal/AO/emissive maps, generated mips, OPAQUE/MASK/BLEND, per-material double-sided variants, glTF tangents, UV0/UV1, per-texture UV selection | Vertex colors, MikkTSpace-compatible tangent fallback, KHR_texture_transform, compression, material caching/sharing improvements, OIT/refraction |
+| Lighting | Directional sun/ambient, four overlapped frustum-fitted and texel-snapped cascades with split blending, one selected spotlight shadow, up to eight importance-ranked unshadowed point lights | Per-cascade caster culling, configurable shadow distance/resolution, multiple spotlight casters, point-light shadows, configurable soft shadows, image-based lighting |
 | HDR/post | `Rgba16Float` scene color, Reinhard tone mapping, basic bloom and exponential fog; negotiated 2x/4x/8x MSAA, post-tone-map FXAA, GPU-adapted average-log-luminance exposure, runtime color grading/effects, and optional depth-reconstructed GTAO-style AO for single-sample and MSAA depth | Temporal AO reprojection/denoising, geometry-normal/G-buffer AO, configurable multi-level bloom, temporal AA, histogram-based exposure and HDR display output |
 | Visibility | Conservative CPU frustum sphere culling for main color pass; off-screen objects remain in shadow draws | Better bounds for animated/deformed meshes, occlusion culling, LOD, GPU culling, metrics |
 | Voxels | Mutable `ChunkedVoxelWorld`, edit revisions, dirty-owner/neighbor invalidation, incremental greedy remeshing, boundary culling, Y-up conversion, GPU uploads/eviction/reused slots, STUDS GPU route uses `studs_voxel_gpu::OffscreenVoxelRenderer`; Windows runtime smoke checks reported passing | Material atlas/texture IDs, chunk streaming/async remeshing, in-game block-edit mechanic, native-surface STUDS presentation |
@@ -106,8 +106,8 @@ implemented:
 | 1–3: runtime, first mesh, glTF, shared 3D transforms | Implemented foundation | Windowed scene and imported GLB render; parented transforms propagate |
 | 4a: first PBR/HDR path | Implemented foundation | Base color + metallic/roughness factors and packed map feed Cook-Torrance shader; HDR tone mapping runs |
 | 4b: full material system | In progress | Normal, occlusion, emissive maps; alpha handling; conformance scenes and GPU verification |
-| 5a: directional shadows | Implemented baseline | Single directional depth map is rendered and sampled |
-| 5b: shadow quality | In progress | Multi-tap PCF, stable shadow bounds, acne/peter-panning regression coverage, cascades and additional light types |
+| 5a: directional shadows | Four-cascade implementation; RTX 2050/Vulkan validation passed | Four directional depth-array layers render and sample with practical splits and transition blending; static and current-pose skinned off-frustum casters are covered by bounded depth extension |
+| 5b: shadow quality | CSM GPU validation passed on RTX 2050/Vulkan | Split math, layer rendering, sampled boundary/PCF-mix diagnostics, sub-texel depth-layer checks and static/skinned caster regressions pass; continuous arbitrary camera motion, per-cascade caster culling and configurable distance/resolution remain future work |
 | 6a: HDR/post foundation | Implemented baseline | HDR tone mapping, bloom, fog, auto exposure, display color grading, vignette, film grain, chromatic aberration and AA controls; spatial depth-based AO added in Phase 4, while temporal AO/TAA remain deferred |
 | 6b: screen-space AO | Implemented baseline | Depth-reconstructed deterministic horizon AO; single-sample and multisampled depth paths; bounded Low/Medium/High presets; GPU readback validation on hardware remains required |
 | 7a: voxel-to-mesh vertical slice | Implemented | Greedy mesher and native mesh pipeline render chunk-local meshes at their world origins |
